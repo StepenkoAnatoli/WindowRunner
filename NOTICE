@@ -1,0 +1,14 @@
+Windows Runner
+Copyright 2026 the WindowsRunner contributors
+
+WindowsRunner is an independent, local-first coding agent. It is not
+affiliated with, endorsed by, or connected to any other coding-agent product,
+and it ships no third-party agent code: the agent loop, tool implementations,
+provider adapters, skills and user interface in this repository were written
+for this project.
+
+Third-party
+-----------
+This product includes software developed by the Node.js, React, Vite,
+Express, Tailwind CSS, highlight.js, diff, gray-matter, ignore and
+picomatch projects, among others, each under its own license.

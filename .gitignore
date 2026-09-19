@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+release/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+*.log
+.vite/
+
+# Mock-provider demo artifact
+MOCK_DEMO.md
+
+# Crash reports from error-handler skill — users upload .md manually to GitHub, not via git
+.windows-runner/crash-reports/
+crash-reports/

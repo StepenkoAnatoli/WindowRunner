@@ -1,0 +1,32 @@
+services:
+  windows-runner:
+    build: .
+    # Reap child processes (the agent spawns MCP servers and terminal commands).
+    init: true
+    ports:
+      # Loopback only (F10). Change to "7634:7634" AND set
+      # WINDOWS_RUNNER_ALLOW_REMOTE=1 only if you intentionally want LAN access;
+      # the API requires a bearer token in either mode, and non-loopback Host
+      # headers are rejected unless that variable is set.
+      - "127.0.0.1:7634:7634"
+    volumes:
+      # Config, sessions and crash reports persist across container restarts.
+      - windows-runner-data:/home/node/.windows-runner
+      # The folder the agent may read and edit. The container runs as the
+      # unprivileged `node` user, so nothing outside this mount and the data
+      # volume is written to.
+      - ${PWD:-.}:/work
+    working_dir: /work
+    environment:
+      - HOST=0.0.0.0
+      - PORT=7634
+      # Acknowledges that the container binds all interfaces inside its own
+      # network namespace; the published port above is still loopback-only.
+      - WINDOWS_RUNNER_ALLOW_REMOTE=1
+    # `node` (uid 1000 in the image) needs write access to ${PWD}. If your host
+    # uid differs, run with `user: "${UID}:${GID}"` or fix ownership; see
+    # docs/INSTALL.md.
+    user: node
+
+volumes:
+  windows-runner-data:

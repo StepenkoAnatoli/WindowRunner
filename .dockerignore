@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.windows-runner
+dist
+packages/*/dist
+packages/*/node_modules
+npm-pack
+*.tgz
+.DS_Store
+.env
+.env.*
+coverage
+.next
+.npm-cache
