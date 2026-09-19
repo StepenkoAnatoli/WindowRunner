@@ -1,7 +1,8 @@
 # Checkout Integrity Audit — WindowsRunner
 
 **Audit date:** 2026-09-19 (file written 2026-09-19)
-**Repository:** `StepenkoAnatoli/WindowRunner` @ `7c25254feba4ecab75b8792dfa58fbe0e93771b1` (`main`)
+**Repository:** `StepenkoAnatoli/WindowRunner`
+**Audited revision:** `7c25254feba4ecab75b8792dfa58fbe0e93771b1` — the tip of `main` at audit time. Later commits to `main` (including the merge of this document) do not change what was audited: every check below was run against `7c25254`, so re-running one against a newer `main` tests a different revision and may legitimately give a different result.
 **Audited branch:** `arena/01a0bb0a-windowrunner` (branched from the same commit)
 **Auditor role:** investigative researcher / fact-checker / adversarial analyst
 **Verification environment:** Node `v22.22.3`, npm `10.9.8`, git `2.39.5`, Linux 6.1.158+ x86_64, UTC
@@ -84,7 +85,7 @@ Evidence class is stated for each claim because confidence here rests on **metho
 
 | ID | Claim | Evidence | Class | Verdict | Confidence |
 |---|---|---|---|---|---|
-| V-01 | `main` and the audited branch both point at `7c25254`; the checkout matches upstream exactly | `git rev-parse` for `main`, `origin/main`, `HEAD`; `git ls-remote origin` returns the same SHA for `refs/heads/main` | Executed | **VERIFIED** | Very high |
+| V-01 | At audit time the audited revision, `main` and `origin/main` all pointed at `7c25254`, and the checkout matched upstream exactly. **Snapshot claim** — scoped to 2026-09-19; a reader on a later `main` should read `7c25254` as the audited revision, not as the current tip | `git rev-parse` for `main`, `origin/main`, `HEAD`; `git ls-remote origin` returned the same SHA for `refs/heads/main` | Executed | **VERIFIED** (as of the audit date) | Very high |
 | V-02 | The checkout contains 14 tracked files and no source files | `git ls-files`; extension census returns `0` for `.ts/.tsx/.js/.jsx/.mjs/.cjs/.css/.html` | Executed | **VERIFIED** | Very high |
 | V-03 | 74 of 77 documented file paths do not exist | Extracted every backticked path matching `packages/|bin/|scripts/|docs/|.github/|.windows-runner/|install.|PROJECT_|src/|test/` from all markdown and tested existence | Executed | **VERIFIED** | Very high |
 | V-04 | No implementation exists in any commit | `git rev-list --all` (3 commits) × `git ls-tree -r` → 0 files under `packages/` in every commit | Executed | **VERIFIED** | Very high |
@@ -288,6 +289,9 @@ Once this audit file existed at `docs/research/…` (two levels deep), `docs/*/*
 
 **CN-4 — npm script count stated imprecisely, then corrected.**
 An earlier draft said "13 of 14 npm scripts fail". `package.json` declares **15** scripts, and what I actually executed was **13 npm commands** (12 `npm run <script>` invocations plus `npm start`). The two not executed — `prestart` and `prepack` — are lifecycle hooks (`node scripts/ensure-built.mjs` and `npm run build`) that invoke targets already proven to fail, so their failure is inferred rather than observed and is labelled as such. No conclusion changes; the imprecision was in the denominator, not the finding.
+
+**CN-5 — Temporal scoping added before merge (V-01, document header).**
+V-01 originally read "`main` and the audited branch both point at `7c25254`" in the present tense, and the header pinned the repository to that commit as if it were current. Merging this document moves `main` off `7c25254`, which would have falsified V-01 on the very next commit — the audit would have shipped a statement that was false the moment it landed. Both are now explicitly scoped as of the audit date, and the header distinguishes *the audited revision* from *the current tip*. Found by asking the question the protocol demands of the missing implementation, but turning it on my own work: what does this claim depend on, and what would make it wrong? Nothing else in this document depends on `main`'s position (the remaining `7c25254`/`2794ac9`/`025ce19` references in V-12 and §12 are historical commit references, which stay accurate regardless).
 
 **Standing method note.** All claims in §5 marked *Executed* are reproducible from this checkout using §Appendix. Claims resting on reasoning rather than execution are marked as such and capped below *Very high* (Q-02, and V-11 at *High*). No claim about the missing implementation's quality, security or completeness is made anywhere in this document, because none of it was ever observed.
 
