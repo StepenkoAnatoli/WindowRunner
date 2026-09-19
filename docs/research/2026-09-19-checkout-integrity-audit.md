@@ -16,7 +16,7 @@ The checkout holds 14 tracked files: documentation, licence, CI/ignore config, i
 
 `README.md` describes a working local-first coding agent with an Express server, React UI, agent loop, provider adapters, tools, MCP support, skills and crash reporting. `AGENTS.md` and the attached implementation plan (`docs/superpowers/plans/2026-09-19-robust-turn-execution.md`, 1,029 lines) describe in detail how to modify that codebase. **None of the referenced code exists.**
 
-Every advertised entry path fails when executed on this commit. Of 77 file paths named by the documents, 3 exist and 74 do not (see the correction in §17). All 13 npm scripts that touch the product fail; only `npm ci` "succeeds", and it is a false positive (see §5, V-09).
+Every advertised entry path fails when executed on this commit. Of 77 file paths named by the documents, 3 exist and 74 do not (see the correction in §17). All 13 npm commands I executed fail — 12 `npm run` invocations plus `npm start`, which dies in its `prestart` hook; of the 15 scripts declared in `package.json`, the other two are lifecycle hooks that call those same failing targets. Only `npm ci` "succeeds", and it is a false positive (see §5, V-09).
 
 The strongest counter-hypothesis — that the documents are aspirational marketing written before any code — is **rejected**. Forensic evidence (§5, V-11) shows the repository is a *partial upload* of a repository that did contain the implementation: the lockfile carries full dependency manifests for three workspaces (`@windows-runner/shared`, `@windows-runner/server`, `@windows-runner/web`) and `node_modules` symlink entries pointing at `packages/*`, while `install.sh`, `install.ps1`, `Dockerfile` and `docker-compose.yml` are coherent and functional *relative to a repository that has those directories*.
 
@@ -66,7 +66,7 @@ Each was tested. All five failed. See §5.
 1. **F-01 — No source code exists on this commit.** 14 tracked files; zero source files by extension census (4 `.md`, 2 `.json`, 1 `.yml`, 1 `.sh`, 1 `.ps1`, 1 `.gitignore`, 1 `.dockerignore`, plus `LICENSE`/`NOTICE`). Verified.
 2. **F-02 — No source code exists in any commit in history.** Full history is three commits. No commit contains any path under `packages/`. Verified across all reachable objects (22 objects total).
 3. **F-03 — The history is not recoverable-in-reverse.** No tags, no stashes, no `.gitmodules`, no grafts, no dangling or unreachable objects, no packed remnants of a larger tree. Verified.
-4. **F-04 — Every advertised path fails when run.** 74 of 77 documented paths are absent; 13 of 14 npm scripts fail; `npm start` fails at `prestart`. Verified by execution.
+4. **F-04 — Every advertised path fails when run.** 74 of 77 documented paths are absent; all 13 npm commands executed fail (12 `npm run` scripts plus `npm start`, which fails in its `prestart` hook); of the 15 declared scripts the two not executed are lifecycle hooks (`prestart`, `prepack`) that invoke those same failing targets. Verified by execution.
 5. **F-05 — The `windows-runner` package is not published on npm.** The registry returns `E404`. README's npm/npx/`wr` install path is marked "**Verified**" and cannot be reproduced by anyone today. Verified against the authoritative registry.
 6. **F-06 — There is no CI, and no `.github/` directory at all.** `RELEASE_CHECKLIST.md` states "Windows CI green" and that "Linux/Windows/packed/Docker jobs all gating". No workflow file exists in the repository. Contradiction recorded (§8, C-01).
 7. **F-07 — `RELEASE_CHECKLIST.md` cites a commit that does not exist here.** Its status snapshot is anchored to HEAD `b9ae7ac`, which is not a valid object in this repository. The checklist was written against a different repository state.
@@ -285,6 +285,9 @@ Once this audit file existed at `docs/research/…` (two levels deep), `docs/*/*
 
 **CN-3 — Self-test artefacts were removed.**
 `npm run desktop:install` left a stub `packages/desktop/package-lock.json` behind, and `npm ci` created `node_modules/`. Neither is repository content (neither appears in any commit; the stub is an empty `{"packages":{}}`). Both were deleted and the working tree restored. See the corresponding row in §12. The `packages/` entry that a re-run of the census will still report is the *path reference*, not the directory — confirm with `ls packages 2>&1` before concluding otherwise.
+
+**CN-4 — npm script count stated imprecisely, then corrected.**
+An earlier draft said "13 of 14 npm scripts fail". `package.json` declares **15** scripts, and what I actually executed was **13 npm commands** (12 `npm run <script>` invocations plus `npm start`). The two not executed — `prestart` and `prepack` — are lifecycle hooks (`node scripts/ensure-built.mjs` and `npm run build`) that invoke targets already proven to fail, so their failure is inferred rather than observed and is labelled as such. No conclusion changes; the imprecision was in the denominator, not the finding.
 
 **Standing method note.** All claims in §5 marked *Executed* are reproducible from this checkout using §Appendix. Claims resting on reasoning rather than execution are marked as such and capped below *Very high* (Q-02, and V-11 at *High*). No claim about the missing implementation's quality, security or completeness is made anywhere in this document, because none of it was ever observed.
 
