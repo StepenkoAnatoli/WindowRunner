@@ -295,6 +295,49 @@ scripts/
 install.sh / install.ps1  curl installers
 ```
 
+## Persistence
+
+WindowsRunner supports two persistence modes with strong safety guarantees:
+
+- **Memory (default)**: `InMemoryTurnLogStore` — deterministic test double, no durability, restart loses all, UI treats as failed.
+- **File (production)**: `FileTurnLogStore` + `FileSessionStore` — JSONL per turn under `WINDOWS_RUNNER_DATA_DIR/sessions/<sessionId>/turns/<turnId>.jsonl` (primary) with `turns/<turnId>.jsonl` legacy flat fallback, plus `sessions/<sessionId>/meta.json` versioned metadata.
+
+**File layout:**
+```
+WINDOWS_RUNNER_DATA_DIR/
+  sessions/<sessionId>/meta.json  {version:1, sessionId, canonicalRoot, realRoot, createdAt, lastActivityAt, activeTurnId|null, allowedRootsSnapshot?}
+  sessions/<sessionId>/turns/<turnId>.jsonl  JSONL per turn
+  turns/<turnId>.jsonl  legacy flat fallback
+  quarantine/<turnId>.jsonl.quarantined  >50% invalid lines moved here, cannot be loaded as active
+```
+
+**Durability:**
+- Per-turn serialized queue `Map<turnId, Promise>` ensures serialized writes within one process.
+- O_APPEND atomic <4KB, optional fsync (`WINDOWS_RUNNER_FSYNC=true` does open+write+fsync+close).
+- `durableBeforeNotify` (default true for file mode): `appendAsync` awaits persistence before SSE — never emits before durable. Async mode (false) notifies before persist, faster but possible loss, RESTART appended on recovery.
+- Crash recovery truncates incomplete last line before next append.
+- Recovery: truncated final ignored, malformed middle skip+warn, duplicate seq keep first, out-of-order sorted on read with diagnostic (never rewrites file automatically except RESTART and truncated cleanup), gaps warn, identity mismatches reject/quarantine.
+- Boot: re-validates every session root via `ProjectRoot.create(canonicalRoot, currentAllowedRoots)` with current config, never trusts persisted `canonicalRoot`, `realRoot`, `allowedRootsSnapshot` for authorization. Clears stale `activeTurnId`, persists updated meta. Appends exactly one `RESTART` at `maxSeq+1` for non-terminal turns, persisted and boot-idempotent across process restarts (file still 3 lines after second boot, not 4).
+- Retention: `evictOldest` only evicts terminal turns, preserves active. `deleteTurnFile` for eviction.
+- Diagnostics: `BootDiagnostics` {turnsLoaded, turnsWithRestart, eventsSkipped, truncatedLinesIgnored, gapsDetected, outOfOrderDetected, duplicatesSkipped, quarantinedFiles, warnings, persistenceFailures} observable via `/api/health` and `/api/diagnostics/persistence`.
+
+**Single-process writer limitation (prominent):**
+```
+SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process writers UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Run single server instance per dataDir.
+```
+Documented in `FileTurnLogStore` header, `CONTEXT.md`, `/api/health`, and deployment docs. For production, run single instance per dataDir or use external lock (future).
+
+**Configuration defaults (safe):**
+- `WINDOWS_RUNNER_DATA_DIR`: OS temp or `./data` if not set, absolute path.
+- `WINDOWS_RUNNER_PERSISTENCE_MODE`: `memory` default (safe for dev), `file` for prod.
+- `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY`: true default for file mode (correctness), false for memory (performance).
+- `WINDOWS_RUNNER_FSYNC`: false default (performance), true for durability.
+- `WINDOWS_RUNNER_ALLOWED_ROOTS`: comma-separated allowed project roots, default empty (allow any for tests, prod should set).
+- `FileTurnLogStore`: fsync false default, maxLineBytes 1MB.
+- `TurnManager`: durableBeforeNotify false default for backward compat, true recommended for file.
+
+See `docs/architecture/exploration-7-persistence/config-defaults.md` for complete defaults.
+
 ## Environment variables
 
 | Variable | Default | Purpose |

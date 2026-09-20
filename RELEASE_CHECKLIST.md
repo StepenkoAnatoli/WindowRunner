@@ -303,6 +303,31 @@ Acceptance criteria:
 
 ---
 
+## Persistence Operational Hardening (Phase 7)
+
+### [x] P2-03: File persistence with safe defaults and operational observability
+Title: File persistence C Hybrid with durability, security revalidation, and single-process writer boundary
+
+Files:
+- `packages/server/src/agent/file-turn-log-store.ts`
+- `packages/server/src/agent/file-session-store.ts`
+- `packages/server/src/agent/turn-manager.ts`
+- `packages/server/src/agent/session-manager.ts`
+- `packages/server/src/app.ts`
+
+Acceptance:
+- [x] Per-session meta.json + per-turn JSONL, serialized per-turn queue Map<turnId, Promise>
+- [x] O_APPEND atomic <4KB, optional fsync, crash recovery truncates incomplete tail
+- [x] Recovery: truncated final ignored, malformed middle skip+warn, duplicate keep first, out-of-order sorted with diagnostic never rewrites file automatically, gaps warn, identity mismatches reject/quarantine
+- [x] Quarantine >50% invalid moved to quarantine/ dir, cannot be loaded as active
+- [x] Boot re-validates every root via ProjectRoot.create with current allowedRoots, never trusts persisted canonicalRoot/realRoot/allowedRootsSnapshot
+- [x] RESTART persisted and boot-idempotent across process restarts (file still 3 lines after second boot, not 4)
+- [x] Durable-before-notify true never emits SSE before persistence succeeds, async mode records persistenceFailures and warnings
+- [x] Retention: evictOldest only terminal, preserves active, deleteTurnFile
+- [x] Diagnostics observable via /api/health and /api/diagnostics/persistence (boot diagnostics, persistenceFailures, quarantinedFiles, warnings)
+- [x] Single-process writer limitation documented prominently: SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Run single instance per dataDir.
+- [x] 101 tests passing, clean-install/clean-build verified
+
 ## Release gate
 
 ### [ ] All P0 items are complete
@@ -312,6 +337,7 @@ Acceptance criteria:
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
+### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 
 ---
 
