@@ -150,6 +150,34 @@ export function isTerminalEvent(event: { type: string }): boolean {
   return TERMINAL.has(event.type);
 }
 
+/**
+ * A client-side configuration fault: the request was never sent because
+ * something the caller supplied cannot be transmitted. Distinct from
+ * `ApiRequestError` (the server answered) and from a transport failure, so the
+ * stream reconnect loop can fail fast instead of retrying six times.
+ */
+export class ApiConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApiConfigError";
+  }
+}
+
+/**
+ * A header value must be printable ASCII (0x20-0x7E). Anything else — most
+ * often a U+2022 bullet or a smart quote that arrived via copy/paste — makes
+ * `fetch` itself throw a `TypeError` about invalid header characters before the
+ * request is ever sent, which reads as a network failure. Rejecting here turns
+ * that into a message that says what to fix.
+ */
+export function invalidHeaderCharacter(value: string): string | undefined {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.codePointAt(i)!;
+    if (code < 0x20 || code > 0x7e) return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+  }
+  return undefined;
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -162,6 +190,10 @@ export class ApiClient {
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
+    const bad = invalidHeaderCharacter(this.token);
+    if (bad) {
+      throw new ApiConfigError(`the token contains a character that cannot be sent in an HTTP header (${bad}); retype it instead of pasting, or paste through a plain-text editor first`);
+    }
     return { authorization: `Bearer ${this.token}`, ...extra };
   }
 
@@ -183,7 +215,10 @@ export class ApiClient {
     }
     if (!res.ok) {
       const code = parsed?.code ?? (res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`);
-      throw new ApiRequestError(res.status, code, parsed?.error ?? `${method} ${path} failed with ${res.status}`, parsed?.details);
+      // The whole body is carried as `details`: validation failures put their
+      // per-field list in a top-level `errors` array (see the provider routes),
+      // so reading only `parsed.details` here dropped every one of them.
+      throw new ApiRequestError(res.status, code, parsed?.error ?? `${method} ${path} failed with ${res.status}`, parsed);
     }
     return { status: res.status, body: parsed as T };
   }
@@ -296,6 +331,11 @@ export class ApiClient {
         // Stream ended without a terminal event: server closed it early. Fall through to reconnect.
       } catch (err: any) {
         if (options.signal?.aborted || err?.name === "AbortError") return { seq, terminal: false, reason: "aborted" };
+        if (err instanceof ApiConfigError) {
+          // Nothing about retrying will make a malformed header valid.
+          handlers.onError?.(err);
+          throw err;
+        }
         if (err instanceof ApiRequestError) {
           handlers.onError?.(err);
           throw err;
