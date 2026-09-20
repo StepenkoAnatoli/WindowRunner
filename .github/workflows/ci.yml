@@ -234,7 +234,24 @@ jobs:
         run: npm run build
 
       - name: Test
-        run: npm test
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "test-${{ matrix.os }}.log"
+
+      # Surfaces failing test names as run annotations (and keeps the full log
+      # in the diagnostics artifact), so a red matrix leg is diagnosable without
+      # downloading and grepping the whole log.
+      - name: Report failing tests
+        if: failure() && steps.test.conclusion == 'failure'
+        shell: bash
+        run: |
+          echo "Failing tests (${{ matrix.os }}):"
+          grep -E "not ok" "test-${{ matrix.os }}.log" | head -n 30 | while IFS= read -r line; do
+            clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+            echo "::error title=Failing test (${{ matrix.os }})::${clean}"
+          done
 
       - name: Packed-artifact smoke test
         run: npm run smoke:packed
@@ -287,6 +304,7 @@ jobs:
           name: platform-diagnostics-${{ matrix.os }}
           path: |
             diagnostics-${{ matrix.os }}.txt
+            test-${{ matrix.os }}.log
             npm-logs/
           if-no-files-found: ignore
           retention-days: 7

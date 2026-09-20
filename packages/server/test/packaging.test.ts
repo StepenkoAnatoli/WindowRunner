@@ -379,10 +379,15 @@ describe("Packaging contract", () => {
         const data = (await res.json()) as { status: string };
         assert.equal(data.status, "ok");
 
-        // Stop gracefully
+        // Stop gracefully. Windows has no SIGTERM delivery: the kill terminates
+        // the process but the exit code is not the graceful-shutdown 0, so
+        // there (as in boot.test.ts and smoke-start.mjs) the exit event itself
+        // is the whole assertion.
         child.kill("SIGTERM");
         const exitCode = await new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
-        assert.equal(exitCode, 0);
+        if (process.platform !== "win32") {
+          assert.equal(exitCode, 0);
+        }
       } finally {
         await fsp.rm(tmp, { recursive: true, force: true });
       }
