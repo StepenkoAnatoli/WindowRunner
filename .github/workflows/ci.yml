@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           docker compose logs --no-color --timestamps > docker-logs.txt 2>&1 || true
-          docker inspect "$(docker compose ps -q windows-runner)" > docker-inspect.json 2>&1 || true
+          docker inspect "$(docker compose ps -q --all windows-runner)" > docker-inspect.json 2>&1 || true
 
       - name: Upload container diagnostics on failure
         if: failure()
