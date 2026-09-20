@@ -35,6 +35,8 @@ export interface ModelConfig {
   model?: string;
   /** From WINDOWS_RUNNER_MODEL_API_KEY (or OPENAI_API_KEY). Optional for local servers. Never printed. */
   apiKey?: string;
+  /** Extra attempts for retryable model errors (429/5xx/connection/broken stream) before any output. Default 2; 0 disables. */
+  maxRetries: number;
 }
 
 /** Tool sandbox settings (Phase 3 minimal tool set). */
@@ -97,6 +99,7 @@ export const DEFAULT_PORT = 7634;
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PROVIDER = "mock";
 export const DEFAULT_MODEL_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_MODEL_MAX_RETRIES = 2;
 export const DEFAULT_TERMINAL_TIMEOUT_MS = 60_000;
 export const DEFAULT_TERMINAL_OUTPUT_LIMIT = 64 * 1024;
 export const DEFAULT_SHUTDOWN_GRACE_MS = 5_000;
@@ -113,6 +116,7 @@ export const ENV = {
   modelName: "WINDOWS_RUNNER_MODEL",
   modelApiKey: "WINDOWS_RUNNER_MODEL_API_KEY",
   modelApiKeyFallback: "OPENAI_API_KEY",
+  modelMaxRetries: "WINDOWS_RUNNER_MODEL_MAX_RETRIES",
   toolsEnabled: "WINDOWS_RUNNER_TOOLS",
   terminalTimeoutMs: "WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS",
   terminalOutputLimit: "WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT",
@@ -155,6 +159,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
     baseUrl: parseBaseUrl(env[ENV.modelBaseUrl]),
     model: isBlank(env[ENV.modelName]) ? undefined : env[ENV.modelName]!.trim(),
     apiKey: parseSecret(ENV.modelApiKey, env[ENV.modelApiKey]) ?? parseSecret(ENV.modelApiKeyFallback, env[ENV.modelApiKeyFallback]),
+    maxRetries: parseNonNegativeInteger(ENV.modelMaxRetries, env[ENV.modelMaxRetries], DEFAULT_MODEL_MAX_RETRIES),
   };
   if (provider === "openai-compatible" && model.model === undefined) {
     throw new ConfigError(`${ENV.modelName} is required when ${ENV.provider}=openai-compatible (e.g. gpt-4o-mini, llama3.1).`, ENV.modelName);
@@ -223,7 +228,7 @@ export function describeConfig(config: ServerConfig): string[] {
   // The auth line is printed by boot.ts once the token source is known.
   const lines = [
     `bind:        ${config.host}:${config.port}${bindNote}`,
-    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"}`}`,
+    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"} retries=${config.model.maxRetries}`}`,
     `persistence: ${config.persistence.mode}${config.persistence.mode === "memory" ? " (sessions and turns are lost on restart)" : ""}`,
   ];
   if (config.persistence.mode === "file") {

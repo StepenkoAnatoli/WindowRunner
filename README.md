@@ -408,6 +408,7 @@ boot with a message naming the variable; the full table with semantics is in
 | `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Explicit browser origins allowed to call the API (no wildcard) |
 | `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline) or `openai-compatible` |
 | `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for `openai-compatible`), endpoint base URL, key (never printed) |
+| `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Retries for transient model errors (429/5xx/network) before any output streamed; `0` disables |
 | `WINDOWS_RUNNER_TOOLS` | `1` | `0` disables the built-in tools |
 | `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` / `_TERMINAL_OUTPUT_LIMIT` | `60000` / `65536` | `run_terminal` wall-clock limit and output cap |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |

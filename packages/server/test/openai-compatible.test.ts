@@ -9,7 +9,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import * as os from "node:os";
 import { OpenAICompatibleProvider } from "../src/providers/openai-compatible.js";
-import { ProviderError, type LLMChunk, type LLMRequest } from "../src/providers/types.js";
+import { ProviderError, type LLMChunk, type LLMProvider, type LLMRequest } from "../src/providers/types.js";
 import { runModelCall } from "../src/providers/model-call.js";
 import { startFakeOpenAI, type FakeOpenAIServer } from "./fakes/fake-openai-server.js";
 import { startServer, type StartedServer } from "../src/boot.js";
@@ -33,7 +33,7 @@ const KEY = "sk-test-secret-key-000000";
 const provider = (baseUrl: string, extra: Partial<ConstructorParameters<typeof OpenAICompatibleProvider>[0]> = {}) =>
   new OpenAICompatibleProvider({ baseUrl, model: "fake-model", apiKey: KEY, ...extra });
 
-async function collect(p: OpenAICompatibleProvider, req: LLMRequest = { messages: [{ role: "user", content: "hi" }], tools: [] }, signal = new AbortController().signal) {
+async function collect(p: LLMProvider, req: LLMRequest = { messages: [{ role: "user", content: "hi" }], tools: [] }, signal = new AbortController().signal) {
   const out: LLMChunk[] = [];
   for await (const c of p.stream(req, { signal })) out.push(c);
   return out;
@@ -124,6 +124,26 @@ describe("openai-compatible adapter", () => {
     });
   }
 
+  it("surfaces Retry-After on 429 as retryAfterMs", async () => {
+    const s = await fake([{ kind: "http_error", status: 429, headers: { "retry-after": "7" }, body: { error: { message: "slow down" } } }]);
+    await assert.rejects(collect(provider(s.url)), (err: any) => err instanceof ProviderError && err.code === "MODEL_RATE_LIMITED" && err.retryAfterMs === 7000);
+  });
+
+  it("createProvider wraps the adapter in retries: a 503 then a good stream yields the text once and logs the retry", async () => {
+    const s = await fake([
+      { kind: "http_error", status: 503, body: { error: { message: "overloaded" } } },
+      { kind: "text", text: "hello" },
+    ]);
+    const lines: string[] = [];
+    const p = createProvider("openai-compatible", { baseUrl: s.url, model: "m", apiKey: KEY, maxRetries: 2 }, (l) => lines.push(l));
+    const chunks = await collect(p);
+    assert.equal(chunks.filter((c) => c.type === "text_delta").map((c: any) => c.text).join(""), "hello");
+    assert.equal(s.requests.length, 2);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /MODEL_UNAVAILABLE \(503\); retry 1\/2 in \d+ms/);
+    assert.doesNotMatch(lines[0], new RegExp(KEY));
+  });
+
   it("maps a context-length 400 to MODEL_CONTEXT_EXHAUSTED", async () => {
     const s = await fake([{ kind: "http_error", status: 400, body: { error: { message: "This model's maximum context length is 8192 tokens.", code: "context_length_exceeded" } } }]);
     await assert.rejects(collect(provider(s.url)), (err: any) => err instanceof ProviderError && err.code === "MODEL_CONTEXT_EXHAUSTED" && !err.retryable);
@@ -193,7 +213,7 @@ describe("openai-compatible provider through config + boot", () => {
     );
     assert.equal(config.model.model, "fake-model");
     const p = createProvider(config.provider, config.model) as OpenAICompatibleProvider;
-    assert.deepEqual(p.describe(), { baseUrl: s.url, model: "fake-model", hasApiKey: true });
+    assert.deepEqual(p.describe(), { baseUrl: s.url, model: "fake-model", hasApiKey: true }, "describe() passes through the retry wrapper");
 
     const h = await startServer(config);
     started.push(h);

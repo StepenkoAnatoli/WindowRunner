@@ -1,6 +1,7 @@
 import type { LLMProvider } from "./types.js";
 import { MockProvider } from "./mock.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
+import { withRetry } from "./retry.js";
 import type { ModelConfig } from "../config.js";
 
 /**
@@ -37,7 +38,7 @@ export function isAvailableProvider(name: string): name is ProviderName {
   return (AVAILABLE_PROVIDERS as readonly string[]).includes(name);
 }
 
-export function createProvider(name: string, model?: ModelConfig): LLMProvider {
+export function createProvider(name: string, model?: ModelConfig, log?: (line: string) => void): LLMProvider {
   if (!isAvailableProvider(name)) {
     throw new UnknownProviderError(name);
   }
@@ -46,7 +47,11 @@ export function createProvider(name: string, model?: ModelConfig): LLMProvider {
       return new MockProvider();
     case "openai-compatible": {
       if (!model?.model) throw new Error("openai-compatible: WINDOWS_RUNNER_MODEL is required");
-      return new OpenAICompatibleProvider({ baseUrl: model.baseUrl, model: model.model, apiKey: model.apiKey, systemPrompt: DEFAULT_SYSTEM_PROMPT });
+      const inner = new OpenAICompatibleProvider({ baseUrl: model.baseUrl, model: model.model, apiKey: model.apiKey, systemPrompt: DEFAULT_SYSTEM_PROMPT });
+      return withRetry(inner, {
+        maxRetries: model.maxRetries,
+        onRetry: ({ attempt, delayMs, error }) => log?.(`model: ${error.code} (${error.status ?? "network"}); retry ${attempt}/${model.maxRetries} in ${delayMs}ms`),
+      });
     }
   }
 }

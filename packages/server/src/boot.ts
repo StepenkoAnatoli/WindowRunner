@@ -197,7 +197,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   // Fail on an unknown provider before touching the filesystem.
   let provider: LLMProvider;
   try {
-    provider = overrides.provider ?? createProvider(config.provider, config.model);
+    provider = overrides.provider ?? createProvider(config.provider, config.model, log);
   } catch (err) {
     if (err instanceof UnknownProviderError) throw new ConfigError(err.message, ENV.provider);
     throw err;

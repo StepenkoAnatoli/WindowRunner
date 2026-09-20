@@ -59,12 +59,15 @@ export class ProviderError extends Error {
   readonly code: ProviderErrorCode;
   readonly retryable: boolean;
   readonly status?: number;
-  constructor(code: ProviderErrorCode, message: string, opts: { retryable?: boolean; status?: number; cause?: unknown } = {}) {
+  /** Server-suggested wait before retrying (from Retry-After), when known. */
+  readonly retryAfterMs?: number;
+  constructor(code: ProviderErrorCode, message: string, opts: { retryable?: boolean; status?: number; cause?: unknown; retryAfterMs?: number } = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ProviderError";
     this.code = code;
     this.retryable = opts.retryable ?? false;
     this.status = opts.status;
+    this.retryAfterMs = opts.retryAfterMs;
   }
 }
 

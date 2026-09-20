@@ -18,10 +18,14 @@
  *   429 → MODEL_RATE_LIMITED (retryable), 5xx → MODEL_UNAVAILABLE (retryable),
  *   context-length 400s → MODEL_CONTEXT_EXHAUSTED, other 4xx → MODEL_BAD_REQUEST,
  *   a stream that ends without `[DONE]`/finish → MODEL_STREAM_BROKEN (retryable).
+ *   `Retry-After` on 429/5xx is surfaced as `retryAfterMs`.
+ * - This adapter does not retry itself; providers/retry.ts wraps it (see
+ *   WINDOWS_RUNNER_MODEL_MAX_RETRIES) and only retries before any chunk was yielded.
  *
  * The API key is read from the environment at construction time and is never
  * logged or included in error messages.
  */
+import { parseRetryAfter } from "./retry.js";
 import { ProviderError, type LLMChunk, type LLMMessage, type LLMProvider, type LLMRequest, type LLMToolCall, type LLMToolSpec } from "./types.js";
 
 export interface OpenAICompatibleOptions {
@@ -192,25 +196,26 @@ export class OpenAICompatibleProvider implements LLMProvider {
       text = await res.text();
       payload = JSON.parse(text);
     } catch {}
-    if (payload?.error) return this.errorFromPayload(payload.error, res.status);
-    return this.errorFromStatus(res.status, text.slice(0, 300) || res.statusText);
+    const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+    if (payload?.error) return this.errorFromPayload(payload.error, res.status, retryAfterMs);
+    return this.errorFromStatus(res.status, text.slice(0, 300) || res.statusText, retryAfterMs);
   }
 
-  private errorFromPayload(error: any, status: number): ProviderError {
+  private errorFromPayload(error: any, status: number, retryAfterMs?: number): ProviderError {
     const message: string = typeof error === "string" ? error : error?.message ?? JSON.stringify(error).slice(0, 300);
     const code: string | undefined = typeof error === "object" ? error?.code ?? error?.type : undefined;
     if (code === "context_length_exceeded" || /context length|maximum context|too many tokens|context_length/i.test(message)) {
       return new ProviderError("MODEL_CONTEXT_EXHAUSTED", `openai-compatible: ${message}`, { status });
     }
-    return this.errorFromStatus(status, message);
+    return this.errorFromStatus(status, message, retryAfterMs);
   }
 
-  private errorFromStatus(status: number, detail: string): ProviderError {
+  private errorFromStatus(status: number, detail: string, retryAfterMs?: number): ProviderError {
     const msg = `openai-compatible: HTTP ${status} from ${this.baseUrl}: ${redact(detail, this.apiKey)}`;
     if (status === 401 || status === 403) return new ProviderError("MODEL_AUTH", msg, { status });
-    if (status === 429) return new ProviderError("MODEL_RATE_LIMITED", msg, { status, retryable: true });
+    if (status === 429) return new ProviderError("MODEL_RATE_LIMITED", msg, { status, retryable: true, retryAfterMs });
     if (status === 404) return new ProviderError("MODEL_BAD_REQUEST", `${msg} (unknown model or wrong base URL?)`, { status });
-    if (status >= 500) return new ProviderError("MODEL_UNAVAILABLE", msg, { status, retryable: true });
+    if (status >= 500) return new ProviderError("MODEL_UNAVAILABLE", msg, { status, retryable: true, retryAfterMs });
     if (status === 400 && /context length|maximum context|too many tokens/i.test(detail)) {
       return new ProviderError("MODEL_CONTEXT_EXHAUSTED", msg, { status });
     }

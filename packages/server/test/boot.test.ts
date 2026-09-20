@@ -51,7 +51,7 @@ function baseConfig(overrides: ConfigOverrides = {}): ServerConfig {
     port: 0,
     allowRemote: false,
     provider: "mock",
-    model: { baseUrl: "https://api.openai.com/v1" },
+    model: { baseUrl: "https://api.openai.com/v1", maxRetries: 0 },
     tools: { enabled: false, terminalTimeoutMs: 60_000, terminalOutputLimit: 65_536 },
     allowedRoots: [os.tmpdir()],
     shutdownGraceMs: 2_000,

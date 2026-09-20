@@ -112,7 +112,7 @@ async function main() {
       port: E2E_PORT + 1,
       allowRemote: false,
       provider: "mock",
-      model: { baseUrl: "https://api.openai.com/v1" },
+      model: { baseUrl: "https://api.openai.com/v1", maxRetries: 0 },
       tools: { enabled: false, terminalTimeoutMs: 60_000, terminalOutputLimit: 65_536 },
       auth: { mode: "token", token: E2E_TOKEN, allowedHosts: [], allowedOrigins: [] },
       persistence: { mode: "memory", dataDir: path.join(os.tmpdir(), "unused"), durableBeforeNotify: false, fsync: false },
