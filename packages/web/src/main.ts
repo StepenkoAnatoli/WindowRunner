@@ -14,9 +14,19 @@ let streamAbort: AbortController | undefined;
 
 const root = document.getElementById("app")!;
 
+// Renders are coalesced to one per animation frame: with real providers a
+// turn produces many text_delta events per second and each render rebuilds
+// the DOM. (jsdom/Playwright still see every state change on the next frame.)
+let renderScheduled = false;
 function dispatch(action: AppAction): void {
   state = reduceApp(state, action);
-  render();
+  if (renderScheduled) return;
+  renderScheduled = true;
+  const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16);
+  raf(() => {
+    renderScheduled = false;
+    render();
+  });
 }
 
 // ---------------------------------------------------------------------------
