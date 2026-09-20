@@ -1046,7 +1046,10 @@ describe("Metrics/alerts — required adjustments", () => {
       const metrics = new MetricsRegistry({ now: () => clock.now() });
       const store = new InMemoryTurnLogStore();
       const manager = new TurnManager({ store, now: () => clock.now() });
-      const approvals = new ApprovalRegistry({ now: () => clock.now() });
+      // Pass clock so the never-settled approval's deadline uses the fake clock
+      // instead of a real 1-hour setTimeout that would keep the test process
+      // (and any CI job) alive long after the suite finished.
+      const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
       const sessionManager = new SessionManager({ now: () => clock.now() });
 
       // Create many sessions and turns, some stuck
