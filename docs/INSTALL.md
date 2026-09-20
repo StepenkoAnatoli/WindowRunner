@@ -113,12 +113,16 @@ toolchain. `dist/` is therefore plain `tsc` output, not a bundle.
 **G-04 — `dist/` is not self-contained.** The emitted server and web modules
 still `import … from "@windows-runner/shared"`. Inside this checkout that
 resolves through the `node_modules/@windows-runner/shared` workspace symlink to
-`packages/shared/src/index.ts`, which Node executes via type stripping
-(Node >= 22.18 strips types by default). That works locally — verified by
-loading `packages/server/dist/app.js` and `packages/web/dist/turn-state.js` and
-calling into them — but a published tarball has no workspace symlink, so the
-packed `dist/` would not run for a consumer. Bundling shared into the output
-(G-03) is the fix.
+`packages/shared/src/index.ts` — TypeScript source — which Node then executes via
+its type-stripping support. Verified by importing `packages/server/dist/app.js`
+(`createApp`) and `packages/web/dist/turn-state.js` (`initialTurnState`,
+`applyEvent`) on Node `v22.22.3`; the minimum Node version at which this works
+was **not** established, so treat it as "works on the version CI pins" rather
+than a supported floor.
+
+That it works at all is an accident of the monorepo layout, not a property of the
+artifact: a published tarball has no workspace symlink, so the packed `dist/`
+would not run for a consumer. Bundling shared into the output (G-03) is the fix.
 
 **G-05 — not published.** `npm view windows-runner` returns `E404`. Any README
 sentence presenting the npm/npx path as verified describes a state that does not
