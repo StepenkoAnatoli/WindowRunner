@@ -8,7 +8,7 @@
  * the "clone + npm run setup" path.
  *
  * This does not start anything: it prepares the checkout so that `npm start`
- * (packages/server/dist/index.js) runs immediately afterwards. The installers
+ * (the bundled packages/server/dist/index.cjs) runs immediately afterwards. The installers
  * decide whether to start the server; see docs/INSTALL.md for what the server
  * does and does not do in this checkout.
  */
@@ -74,7 +74,7 @@ function main() {
   console.log("\nSetup complete.");
   console.log("  npm start         start the server on http://127.0.0.1:7634");
   console.log("  npm test          run the test suite");
-  console.log("  npm run build     rebuild packages/*/dist");
+  console.log("  npm run build     rebuild workspace dist/ and the bundled server entry");
   console.log("");
   console.log("The server runs with the offline mock provider and no tools in this");
   console.log("checkout. Read docs/INSTALL.md before relying on any install path.");

@@ -2,17 +2,17 @@
 /**
  * windows-runner — `prestart` hook.
  *
- * `npm start` runs the compiled server entry, packages/server/dist/index.js.
+ * `npm start` runs the bundled server entry, packages/server/dist/index.cjs.
  * This hook makes that command work on a fresh checkout without a separate
  * build step, and refuses to start stale code after `src/` changes:
  *
- *   - build outputs missing            -> run `npm run build`
- *   - any src/**\/*.ts newer than dist  -> run `npm run build`
- *   - up to date                       -> exit 0 silently
+ *   - the runtime bundle is missing -> run `npm run build`
+ *   - any TypeScript source newer than it -> run `npm run build`
+ *   - up to date                    -> exit 0 silently
  *
  * It only ever *builds*; it never starts anything. In an installed package
- * (no src/, no TypeScript) a missing dist/ is reported as an error instead of
- * attempting a build that cannot succeed.
+ * (no src/, no TypeScript toolchain) a missing bundle is reported as an error
+ * instead of attempting a build that cannot succeed.
  */
 
 import { spawnSync } from "node:child_process";
@@ -24,11 +24,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(path.join(repoRoot, "package.json"));
 
-/** Build outputs `npm start` needs, in dependency order. */
-const OUTPUTS = [
-  "packages/shared/dist/index.js",
-  "packages/server/dist/index.js",
-];
+/** The one runtime output `npm start`, Docker and the tarball need. */
+const OUTPUTS = ["packages/server/dist/index.cjs"];
 
 /** Source trees whose changes must invalidate the outputs above. */
 const SOURCES = ["packages/shared/src", "packages/server/src"];
@@ -65,12 +62,14 @@ function reason() {
 }
 
 function canBuild() {
-  try {
-    require.resolve("typescript");
-    return true;
-  } catch {
-    return false;
+  for (const tool of ["typescript", "esbuild"]) {
+    try {
+      require.resolve(tool);
+    } catch {
+      return false;
+    }
   }
+  return true;
 }
 
 function main() {
@@ -78,9 +77,9 @@ function main() {
   if (why === null) return 0;
 
   if (!canBuild()) {
-    console.error(`windows-runner: ${why}, and no TypeScript toolchain is installed to rebuild.`);
+    console.error(`windows-runner: ${why}, and no build toolchain is installed to rebuild.`);
     console.error("  In a source checkout run `npm ci` first. In an installed package this means");
-    console.error("  the artifact is incomplete — see docs/INSTALL.md, \"Known packaging gaps\".");
+    console.error("  the runtime artifact is incomplete — see docs/INSTALL.md, \"Distribution contract\".");
     return 1;
   }
 

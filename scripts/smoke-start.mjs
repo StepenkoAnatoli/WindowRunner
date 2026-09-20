@@ -4,7 +4,7 @@
  *
  * `npm test` exercises the boot path in-process from TypeScript sources. This
  * script exercises what a user actually runs: the compiled entry point,
- * `node packages/server/dist/index.js`, as a child process, from a clean
+ * `node packages/server/dist/index.cjs`, as a child process, from a clean
  * environment, in file-persistence mode against a temporary data directory.
  *
  * It asserts, in order:
@@ -27,7 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const ENTRY = path.join(repoRoot, "packages", "server", "dist", "index.js");
+const ENTRY = path.join(repoRoot, "packages", "server", "dist", "index.cjs");
 const READY_RE = /^windows-runner listening on (http:\/\/\S+)$/m;
 const READY_TIMEOUT_MS = 20_000;
 const EXIT_TIMEOUT_MS = 10_000;

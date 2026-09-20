@@ -1,8 +1,8 @@
 /**
  * Windows Runner — server boot entry point.
  *
- * This is the executable: `npm start` runs the compiled `dist/index.js`,
- * `npm run dev` runs it through `tsx watch`. Importing it starts a server, so
+ * This is the executable source: `npm start` runs the bundled `dist/index.cjs`,
+ * while `npm run dev` runs this source through `tsx watch`. Importing it starts a server, so
  * import `./boot.js` instead when you need the API.
  *
  *   1. Read configuration from the environment (config.ts). Invalid values
@@ -14,13 +14,14 @@
  *   4. On SIGINT/SIGTERM/SIGHUP drain gracefully and exit 0. A second signal
  *      while draining exits immediately with 130.
  */
-import { createRequire } from "node:module";
 import { loadServerConfig, describeConfig, ConfigError } from "./config.js";
 import { startServer, type StartedServer } from "./boot.js";
 
 const TAG = "windows-runner";
-// Resolves from both src/ (tsx) and dist/ (node): the manifest is one level up either way.
-const VERSION: string = createRequire(import.meta.url)("../package.json").version;
+// The bundle replaces this expression with the root manifest version. Keeping a
+// source fallback avoids making `tsx` development depend on a package manifest
+// path that is intentionally absent from the published runtime artifact.
+const VERSION = process.env.WINDOWS_RUNNER_VERSION ?? "dev";
 const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 function fail(err: unknown): never {

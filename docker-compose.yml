@@ -1,43 +1,36 @@
-# BLOCKED: `docker compose up --build` cannot work while the Dockerfile's build
-# guard fails. The server boot entry point exists (docs/INSTALL.md, gap G-02 is
-# closed; `npm start` runs it from a checkout), but there is no bundler, so the
-# compiled dist/ is not self-contained and the image cannot carry it (gaps G-03,
-# G-04). This file describes the intended topology — including auth behavior
-# that is not implemented yet — and is kept so that intent is not lost. Do not
-# advertise it as a supported path.
+# Docker topology for the self-contained server artifact.
+#
+# The image runs packages/server/dist/index.cjs, which is bundled with express
+# and shared runtime code. No workspace node_modules or source tree is needed in
+# the final image. A Docker daemon/job is still part of final hardening; this
+# compose file is not a claim that Docker has been executed in the current CI.
 services:
   windows-runner:
     build: .
-    # Reap child processes (the agent spawns MCP servers and terminal commands).
+    # Reap child processes (the agent may spawn MCP servers and terminal commands).
     init: true
     ports:
-      # Loopback only (F10). Change to "7634:7634" AND set
-      # WINDOWS_RUNNER_ALLOW_REMOTE=1 only if you intentionally want LAN access;
-      # the API requires a bearer token in either mode, and non-loopback Host
-      # headers are rejected unless that variable is set.
+      # Loopback only on the host. Change to "7634:7634" only if LAN access is
+      # intentional, and keep the explicit remote-bind acknowledgement below.
       - "127.0.0.1:7634:7634"
     volumes:
-      # Config, sessions and crash reports persist across container restarts.
+      # Config, sessions and turn logs persist across container restarts.
       - windows-runner-data:/home/node/.windows-runner
       # The folder the agent may read and edit. The container runs as the
-      # unprivileged `node` user, so nothing outside this mount and the data
-      # volume is written to.
+      # unprivileged node user, so nothing outside this mount is authorized.
       - ${PWD:-.}:/work
     working_dir: /work
     environment:
       - HOST=0.0.0.0
       - PORT=7634
-      # Acknowledges that the container binds all interfaces inside its own
-      # network namespace; the published port above is still loopback-only.
-      # The entry point refuses a non-loopback bind without this.
+      # The container binds all interfaces inside its own network namespace;
+      # the published host port above remains loopback-only.
       - WINDOWS_RUNNER_ALLOW_REMOTE=1
-      # Sessions may only be rooted inside the mounted workspace.
       - WINDOWS_RUNNER_ALLOWED_ROOTS=/work
       - WINDOWS_RUNNER_PERSISTENCE_MODE=file
       - WINDOWS_RUNNER_DATA_DIR=/home/node/.windows-runner
-    # `node` (uid 1000 in the image) needs write access to ${PWD}. If your host
-    # uid differs, run with `user: "${UID}:${GID}"` or fix ownership; see
-    # docs/INSTALL.md.
+    # node (uid 1000 in the image) needs write access to ${PWD}. If your host
+    # uid differs, run with user: "${UID}:${GID}" or fix ownership.
     user: node
 
 volumes:

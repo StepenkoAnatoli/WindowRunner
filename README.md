@@ -9,7 +9,7 @@ WindowsRunner is a **Windows-first, local-first coding agent**: parallel local s
 - **Project context auto-discovery** — Point the agent at a folder and it automatically reads `package.json`, `tsconfig.json`, `Makefile`, `Cargo.toml`, and other build config files to understand how to build, test, and run your project (inspired by Claude Code).
 - **Auto-build & Manual-build skills** — Two modes: autonomous implementation (agent does everything end-to-end) or teaching mode (agent coaches you through building it yourself).
 - **Premium dark UI** — glassmorphism, subtle gradients, Inter + JetBrains Mono, animated micro-interactions inspired by Linear/Raycast/Vercel.
-- **One-command source setup** — `npm run setup` installs, typechecks and builds a checkout, and `npm start` boots the server (building first if needed). The no-build packed path (`npx windows-runner`, `npm i -g windows-runner`) is **not available yet**: see [docs/INSTALL.md](./docs/INSTALL.md) for what is verified and what is blocked.
+- **One-command source setup** — `npm run setup` installs, typechecks and builds a checkout, and `npm start` boots the server (building first if needed). The bundled tarball runtime is also smoke-tested outside the source tree; the no-`bin` CLI path (`npx windows-runner`, `npm i -g windows-runner`) is still **not available**: see [docs/INSTALL.md](./docs/INSTALL.md) for the exact contract.
 
 ## 🚀 Installation
 
@@ -24,11 +24,13 @@ macOS or Docker job in this repository.
 | --- | --- |
 | Clone + `npm ci` / `npm run setup` / `npm test` / `npm run build` | **Verified** (Linux) |
 | `npm start` (HTTP API on `127.0.0.1:7634`, offline mock provider, no tools, no UI) | **Verified** (Linux) |
-| `npm run smoke:packed` (tarball contents) | **Verified** (Linux) |
-| `npm run smoke:start` (boots the built server, runs a turn, restarts, clean SIGTERM) | **Verified** (Linux) |
-| Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** — no `bin`, package unpublished |
-| `npm run dev` | **Server only** — `tsx watch` on the server entry; no web dev server or bundler |
-| Docker / `docker compose up` | **Blocked** — `dist/` is not self-contained; build fails loudly by design |
+| `npm run smoke:packed` (tarball contents + bundle import check) | **Verified** (Linux) |
+| `npm run smoke:runtime` (clean tarball install → `npm start` → turn → shutdown) | **Verified** (Linux) |
+| `npm run smoke:start` (boots the checkout bundle, runs a turn, restarts, clean SIGTERM) | **Verified** (Linux) |
+| Packed artifact: `npm start` from a tarball install | **Verified** (Linux) — no source tree or runtime `node_modules` required |
+| Packed CLI: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** — no `bin`, package unpublished |
+| `npm run dev` | **Server only** — `tsx watch` on the source entry; no web dev server/UI bundle |
+| Docker / `docker compose up` | **Artifact ready, Docker unverified** — no Docker job/daemon in this checkout |
 | `install.sh` | Experimental — sets up a checkout on Linux and offers `npm start` |
 | `install.ps1` | **Untested** — no Windows runner available |
 | Electron desktop shell | **Not available** — `packages/desktop` does not exist |
@@ -41,7 +43,7 @@ cd WindowRunner
 npm ci            # installs all three workspaces, runs the postinstall check
 npm run setup     # install -> typecheck -> build, in one step
 npm test          # full suite, no API keys required
-npm run build     # emit packages/*/dist
+npm run build     # emit workspace dist/ plus packages/server/dist/index.cjs
 npm start         # serve the API on http://127.0.0.1:7634
 ```
 
@@ -49,25 +51,32 @@ npm start         # serve the API on http://127.0.0.1:7634
 fails with an actionable message if it is broken. Set
 `WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
-`npm start` runs `packages/server/dist/index.js` (its `prestart` hook builds
-when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
-offline `mock` provider is the only provider in this checkout, no tools are
+`npm start` runs the self-contained `packages/server/dist/index.cjs` bundle (its
+`prestart` hook builds when the bundle is missing or stale). What starts is the
+**HTTP API alone**: the offline `mock` provider is the only provider in this
+checkout, no tools are
 registered, there is no web UI, and the server binds loopback only because the
 API has no authentication yet. Configuration, endpoints and limits are in
 [docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
 `npm run smoke:start` boots the built server and runs a turn against it.
 
-### Option 2 — Packed artifact (not available yet)
+### Option 2 — Packed runtime artifact (verified; CLI not available)
 
-`npx windows-runner`, `npm install -g windows-runner` and `wr` do not work. The
-package declares no `bin`, is not published (`npm view windows-runner` returns
-`E404`), and the built `dist/` is not self-contained — see gaps G-01, G-03, G-04
-and G-05 in [docs/INSTALL.md](./docs/INSTALL.md).
+The package build emits one distribution contract:
+`packages/server/dist/index.cjs`. It bundles the server, express and shared
+runtime code, so a consumer does not need the workspace symlink or runtime
+`node_modules`. `npm run smoke:runtime` packs it, installs the tarball into a
+clean directory outside the checkout with lifecycle scripts enabled, runs
+`npm start`, completes a mock turn over SSE, and shuts down the installed
+process.
 
-`npm run smoke:packed` *does* work: it packs the tarball and asserts it contains
-`dist/`, docs and licence, and no sources, tests or build config. It validates
-tarball **contents** only; it does not prove an installable CLI runs (that is
-what `npm run smoke:start` does for a checkout).
+`npx windows-runner`, `npm install -g windows-runner` and `wr` still do not work:
+the package declares no `bin` and is not published (`npm view windows-runner`
+returns `E404`). Those are separate gaps G-01 and G-05.
+
+`npm run smoke:packed` validates the tarball **contents** and checks that the
+bundle has no imports of `express` or `@windows-runner/shared` left to resolve.
+`npm run smoke:runtime` is the behavior check for the packed `npm start` path.
 
 ### Option 3 — Curl installer (Unix, experimental)
 
@@ -90,17 +99,19 @@ irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.
 No Windows runner is available to this repository and CI is Linux-only, so this
 script has no recorded smoke-test result (gap G-06).
 
-### Option 5 — Docker (blocked)
+### Option 5 — Docker (artifact ready; Docker unverified)
 
 ```bash
-docker compose up --build   # fails during the image build, by design
+docker compose up --build
 ```
 
-The boot entry point exists, but the compiled `dist/` is not self-contained —
-it imports `express` and `@windows-runner/shared` through `node_modules` and a
-workspace symlink the image does not carry (gaps G-03 and G-04) — so the
-Dockerfile fails the build with an explicit message instead of producing an
-image that dies at `docker run`. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
+The Dockerfile now copies only the self-contained
+`packages/server/dist/index.cjs` artifact into the runtime image; the final
+stage carries no workspace `node_modules` or source tree. The image binds
+`0.0.0.0` inside the container with the explicit unauthenticated-API opt-in and
+publishes the host port on loopback. This repository has no Docker daemon/job,
+so execution remains a final-hardening check rather than a verified status.
+See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
 ### Option 6 — Desktop app (Electron, not available)
 
@@ -114,8 +125,8 @@ The "paste an API key, click **New session**, ask for something" flow described
 elsewhere in this README requires a UI and a real provider. Neither exists in
 this checkout: `npm start` serves the API with the offline mock provider, and
 there is nothing to paste a key into. For development, `npm run dev` restarts
-the server on source changes (`tsx watch`); there is still no web dev server and
-no bundler (gap G-03).
+the server on source changes (`tsx watch`); the server bundle is produced by
+`npm run build`, but there is still no web dev server or UI bundle.
 
 > Scope note: this section covers install, build and packaging claims only. The
 > product-feature claims elsewhere in this README are tracked separately as
@@ -326,13 +337,15 @@ packages/
   web/       UI-side turn-state projection (no bundler, no React in this checkout)
 scripts/
   setup.mjs         install -> typecheck -> build
-  postinstall.mjs   verifies the workspace tree on npm ci / npm install
-  ensure-built.mjs  `prestart`: builds when dist/ is missing or older than src/
-  smoke-packed.mjs  validates the packed tarball against the manifest
-  smoke-start.mjs   boots the built server, runs a turn over SSE, restarts it, checks SIGTERM
-docs/INSTALL.md     install-path status, how to run the server, the known packaging gaps (G-01..G-06)
+  postinstall.mjs   verifies a workspace checkout or packed runtime install
+  ensure-built.mjs  `prestart`: builds when the bundled entry is missing/stale
+  bundle-server.mjs emits the self-contained packages/server/dist/index.cjs
+  smoke-packed.mjs  validates packed contents and bundle imports
+  smoke-runtime.mjs installs the tarball outside the checkout and runs npm start
+  smoke-start.mjs   boots the checkout bundle, runs a turn over SSE, restarts it, checks SIGTERM
+docs/INSTALL.md     install-path status, runtime distribution contract, known gaps (G-01..G-06)
 install.sh / install.ps1   clone-and-setup installers (offer `npm start` at the end)
-Dockerfile / docker-compose.yml   blocked: dist/ is not self-contained (G-03/G-04)
+Dockerfile / docker-compose.yml   final image runs the self-contained server bundle
 
 Not present, though earlier revisions of this README listed them: bin/ (no CLI),
 packages/desktop/ (no Electron shell) and scripts/desktop.mjs. Each absence is
