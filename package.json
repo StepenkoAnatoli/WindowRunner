@@ -44,10 +44,10 @@
     "prepack": "npm run build",
     "setup": "node scripts/setup.mjs",
     "postinstall": "node scripts/postinstall.mjs",
-    "typecheck": "npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
+    "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
     "desktop": "node scripts/desktop.mjs",
     "desktop:install": "npm --prefix packages/desktop install",
-    "test": "npm run test --workspace packages/server && npm run test --workspace packages/web",
+    "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
     "smoke:packed": "node scripts/smoke-packed.mjs",
     "skills:check": "tsx packages/server/src/skills-check.ts"
   },

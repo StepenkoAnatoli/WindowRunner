@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 import { FileTurnLogStore } from "../src/agent/file-turn-log-store.js";
 import { FileSessionStore } from "../src/agent/file-session-store.js";
 import { TurnManager } from "../src/agent/turn-manager.js";
@@ -447,8 +448,13 @@ describe("Production-readiness audit", () => {
     });
 
     it("single-process writer limitation documented prominently", async () => {
-      // Check that FileTurnLogStore header documents single-process limitation
-      const fileContent = await fs.readFile(path.join(process.cwd(), "packages/server/src/agent/file-turn-log-store.ts"), "utf8");
+      // Check that FileTurnLogStore header documents single-process limitation.
+      // Anchor on the test file's own location so this holds regardless of the
+      // working directory the test runner was launched from (npm workspace
+      // scripts run with cwd = packages/server, not the repository root).
+      const here = path.dirname(fileURLToPath(import.meta.url));
+      const repoRoot = path.resolve(here, "../../..");
+      const fileContent = await fs.readFile(path.join(repoRoot, "packages/server/src/agent/file-turn-log-store.ts"), "utf8");
       assert.ok(fileContent.includes("SERIALIZED WRITES WITHIN ONE PROCESS ONLY"));
       assert.ok(fileContent.includes("Multi-process writers UNSUPPORTED"));
       assert.ok(fileContent.includes("O_APPEND alone does NOT provide session-level correctness"));
