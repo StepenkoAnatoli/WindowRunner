@@ -112,7 +112,7 @@ elsewhere in this README requires a UI and a real provider. Neither exists in
 this checkout: `npm start` serves the API with the offline mock provider, and
 there is nothing to paste a key into. For development, `npm run dev` restarts
 the server on source changes (`tsx watch`); there is still no web dev server and
-no bundler (gap G-03).
+no web bundler (gap G-03 web residual).
 
 > Scope note: this section covers install, build and packaging claims only. The
 > product-feature claims elsewhere in this README are tracked separately as

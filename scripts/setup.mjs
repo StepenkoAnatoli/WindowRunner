@@ -8,7 +8,7 @@
  * the "clone + npm run setup" path.
  *
  * This does not start anything: it prepares the checkout so that `npm start`
- * (packages/server/dist/index.js) runs immediately afterwards. The installers
+ * (packages/server/dist/index.cjs) runs immediately afterwards. The installers
  * decide whether to start the server; see docs/INSTALL.md for what the server
  * does and does not do in this checkout.
  */
