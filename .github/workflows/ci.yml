@@ -197,3 +197,148 @@ jobs:
       - name: Tear down the stack
         if: always()
         run: docker compose down -v
+
+  # Windows/macOS validation (gap G-06): the lifecycle, the packed-tarball and
+  # startup smokes, and the native installer scripts, where shells, installers
+  # and path behavior differ from Linux. Runs after `ci` so a broken build
+  # fails fast; fail-fast is off so one OS result never hides the other.
+  platform:
+    name: Platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: [ci]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as the Linux job: one exact version everywhere until the
+          # supported-range decision (RELEASE_CHECKLIST.md, step 3) lands.
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "test-${{ matrix.os }}.log"
+
+      - name: Packed-artifact smoke test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:packed 2>&1 | tee smoke-packed.log
+
+      - name: Packed-tarball start smoke test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:packed:start 2>&1 | tee smoke-packed-start.log
+
+      - name: Startup smoke test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:start 2>&1 | tee smoke-start.log
+
+      # Exercises the Unix installer end to end in checkout mode (prerequisite
+      # checks, checkout detection, `npm run setup` orchestration). --no-start
+      # skips the interactive offer; there is no TTY under CI.
+      - name: Run install.sh in checkout mode
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -o pipefail
+          bash install.sh --no-start 2>&1 | tee installer.log
+
+      # Same for the Windows installer. -ExecutionPolicy Bypass is CI-only
+      # plumbing so the script is guaranteed to execute; it validates the
+      # script logic, not the policy UX (see docs/INSTALL.md troubleshooting).
+      - name: Run install.ps1 in checkout mode
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart 2>&1 | Tee-Object -FilePath installer.log
+          exit $LASTEXITCODE
+
+      # Surfaces the failure from the most recent step log as run annotations (and
+      # keeps every step log in the diagnostics artifact), so a red matrix leg
+      # is diagnosable without downloading and grepping the whole log. The last
+      # log written is the failed step's, because later steps are skipped.
+      - name: Report failure output
+        if: failure()
+        shell: bash
+        run: |
+          latest="$(ls -t *.log 2>/dev/null | head -n 1)"
+          if [ -z "${latest}" ]; then
+            echo "no step logs captured"
+            exit 0
+          fi
+          echo "===== ${latest} (tail) ====="
+          tail -n 40 "${latest}"
+          # TAP suites: the failing test names. Anything else (smokes,
+          # installers): the trailing lines, where the error summary lives.
+          if grep -q "not ok" "${latest}"; then
+            grep -E "not ok" "${latest}" | head -n 10 | while IFS= read -r line; do
+              clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+              echo "::error title=${latest}::${clean}"
+            done
+          else
+            tail -n 12 "${latest}" | while IFS= read -r line; do
+              clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+              [ -n "${clean}" ] || continue
+              echo "::error title=${latest}::${clean}"
+            done
+          fi
+
+      - name: Collect diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "== os =="
+            uname -a 2>/dev/null || systeminfo 2>/dev/null | head -n 5
+            echo "== node =="
+            node --version
+            echo "== npm =="
+            npm --version
+            echo "== git =="
+            git --version
+            echo "== git status =="
+            git status --short
+          } > "diagnostics-${{ matrix.os }}.txt"
+          mkdir -p npm-logs
+          cp -r "$HOME/.npm/_logs/." npm-logs/ 2>/dev/null || cp -r "$APPDATA/npm-cache/_logs/." npm-logs/ 2>/dev/null || true
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-diagnostics-${{ matrix.os }}
+          path: |
+            diagnostics-${{ matrix.os }}.txt
+            test-${{ matrix.os }}.log
+            smoke-packed.log
+            smoke-packed-start.log
+            smoke-start.log
+            installer.log
+            npm-logs/
+          if-no-files-found: ignore
+          retention-days: 7

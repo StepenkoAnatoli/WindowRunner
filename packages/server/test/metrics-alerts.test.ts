@@ -117,15 +117,17 @@ describe("Metrics/alerts — required adjustments", () => {
       });
 
       const controller = new AbortController();
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
       const runPromise = runner.run({
         sessionId: "s1",
         turnId: "t1",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [] },
         limits: { maxSteps: 1, modelCallTimeoutMs: 50, toolTimeoutMs: 50, approvalTimeoutMs: 50 },
         signal: controller.signal,
-        allowedRoots: ["/tmp"],
-        projectRoot: await (await import("../src/project-root.js")).ProjectRoot.create("/tmp", ["/tmp"]),
+        allowedRoots: [sysTmp],
+        projectRoot: await (await import("../src/project-root.js")).ProjectRoot.create(sysTmp, [sysTmp]),
       });
 
       // Abort after 60ms (after model timeout 50ms, during grace)
@@ -184,7 +186,8 @@ describe("Metrics/alerts — required adjustments", () => {
       const metrics = new MetricsRegistry({ now: () => clock.now() });
       const { executeTool } = await import("../src/agent/tools/executor.js");
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const root = await ProjectRoot.create(os.tmpdir(), [os.tmpdir()]);
 
       // Tool that hangs ignoring abort
       const hangingTool: any = {
@@ -252,7 +255,9 @@ describe("Metrics/alerts — required adjustments", () => {
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
 
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
 
       // Use real timers for this integration, but with short timeouts, to avoid fake clock complexity
       const realMetrics = new MetricsRegistry({ now: () => Date.now() });
@@ -278,11 +283,11 @@ describe("Metrics/alerts — required adjustments", () => {
       const p = runner.run({
         sessionId: "s2",
         turnId: "t_shutdown",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [] },
         limits: { maxSteps: 1, modelCallTimeoutMs: 80, toolTimeoutMs: 80, approvalTimeoutMs: 80 },
         signal: ctrl.signal,
-        allowedRoots: ["/tmp"],
+        allowedRoots: [sysTmp],
         projectRoot: root,
       });
 
@@ -476,7 +481,8 @@ describe("Metrics/alerts — required adjustments", () => {
       // Temporarily set clock back to create session at old time
       const origNow = clock.now.bind(clock);
       (clock as any).nowMs = oldTime;
-      const session = await sessionManager.createSession("sess_old", "/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const session = await sessionManager.createSession("sess_old", os.tmpdir(), [os.tmpdir()]);
       // Advance to now, session is 25h old, idle
       (clock as any).nowMs = 1_000_000;
       // Mark lastActivity as old
@@ -534,8 +540,10 @@ describe("Metrics/alerts — required adjustments", () => {
 
       // Create session and start a turn that will be stuck
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
-      const sess = await sessionManager.createSession("sess_active", "/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
+      const sess = await sessionManager.createSession("sess_active", sysTmp, [sysTmp]);
       manager.ensureLog("sess_active", "t_stuck", { maxSteps: 10, modelCallTimeoutMs: 1000, toolTimeoutMs: 1000, approvalTimeoutMs: 1000 } as any);
       // Simulate turn_started 3h ago
       const startedAt = clock.now();
@@ -568,7 +576,7 @@ describe("Metrics/alerts — required adjustments", () => {
       assert.equal(metrics.getGauge("stuckTurns"), 1);
       assert.equal(metrics.getGauge("activeTurns"), 1);
       // Ensure session age alone not counted: create another old idle session 25h old
-      const oldSess = await sessionManager.createSession("sess_idle_old", "/tmp", ["/tmp"]);
+      const oldSess = await sessionManager.createSession("sess_idle_old", sysTmp, [sysTmp]);
       (oldSess as any).lastActivityAt = clock.now() - 25 * 60 * 60 * 1000;
       const v2 = app._doValidation();
       assert.equal(v2.stuckTurns.length, 1, "still only stuck turn, idle not counted as stuck");
@@ -985,7 +993,9 @@ describe("Metrics/alerts — required adjustments", () => {
       const manager = new TurnManager({ store, now: () => clock.now() });
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
 
       const provider = new FakeProvider([
         () => ({ chunks: [{ type: "tool_call", call: { id: "c1", name: "run_terminal", input: { command: "echo hi" } } }] }),
@@ -1009,11 +1019,11 @@ describe("Metrics/alerts — required adjustments", () => {
       const runPromise = runner.run({
         sessionId: "s_dur",
         turnId: "t_dur",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [{ name: "run_terminal", description: "run" }] },
         limits: { maxSteps: 3, modelCallTimeoutMs: 1000, toolTimeoutMs: 1000, approvalTimeoutMs: 1000 },
         signal: new AbortController().signal,
-        allowedRoots: ["/tmp"],
+        allowedRoots: [sysTmp],
         projectRoot: root,
       });
 
@@ -1052,10 +1062,12 @@ describe("Metrics/alerts — required adjustments", () => {
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
       const sessionManager = new SessionManager({ now: () => clock.now() });
 
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
       // Create many sessions and turns, some stuck
       for (let i = 0; i < 5; i++) {
         const sessId = `sess_${i}`;
-        await sessionManager.createSession(sessId, "/tmp", ["/tmp"]);
+        await sessionManager.createSession(sessId, sysTmp, [sysTmp]);
         if (i < 2) {
           // Make 2 with active stuck turns 3h old
           const turnId = `t_stuck_${i}`;

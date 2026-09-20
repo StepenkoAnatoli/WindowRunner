@@ -277,6 +277,22 @@ describe("Packaging contract", () => {
     });
   });
 
+  describe("installer scripts", () => {
+    it("install.ps1 starts with a UTF-8 BOM so Windows PowerShell parses it", () => {
+      // Windows PowerShell 5.1 reads a BOM-less script as Windows-1252, which
+      // decodes this file's box-drawing/checkmark characters into bytes that
+      // include U+201C/U+201D smart quotes — and 5.1 tokenizes those as string
+      // delimiters, producing "Missing closing '}'" cascades. The BOM makes 5.1
+      // decode UTF-8. This broke silently once already (Linux and macOS never
+      // execute the script, and the failure is a parse error), so pin the BOM.
+      const bytes = fs.readFileSync(path.join(repoRoot, "install.ps1"));
+      assert.ok(
+        bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf,
+        "install.ps1 must start with the UTF-8 BOM (EF BB BF)"
+      );
+    });
+  });
+
   describe("CI exercises the install lifecycle", () => {
     const workflowPath = ".github/workflows/ci.yml";
 
@@ -298,7 +314,7 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test, the startup smoke test and the Docker compose stack", () => {
+    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test, the startup smoke test, the Docker compose stack and the Windows/macOS platform matrix", () => {
       const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
       for (const command of [
         "npm run typecheck",
@@ -308,6 +324,10 @@ describe("Packaging contract", () => {
         "npm run smoke:packed:start",
         "npm run smoke:start",
         "docker compose up --build -d",
+        "windows-latest",
+        "macos-latest",
+        "install.sh --no-start",
+        "install.ps1 -NoStart",
       ]) {
         assert.match(text, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `CI does not run \`${command}\``);
       }
@@ -375,10 +395,15 @@ describe("Packaging contract", () => {
         const data = (await res.json()) as { status: string };
         assert.equal(data.status, "ok");
 
-        // Stop gracefully
+        // Stop gracefully. Windows has no SIGTERM delivery: the kill terminates
+        // the process but the exit code is not the graceful-shutdown 0, so
+        // there (as in boot.test.ts and smoke-start.mjs) the exit event itself
+        // is the whole assertion.
         child.kill("SIGTERM");
         const exitCode = await new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
-        assert.equal(exitCode, 0);
+        if (process.platform !== "win32") {
+          assert.equal(exitCode, 0);
+        }
       } finally {
         await fsp.rm(tmp, { recursive: true, force: true });
       }

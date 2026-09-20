@@ -10,9 +10,10 @@ set -e
 # Override the clone source for forks/local testing:
 #   WINDOWS_RUNNER_REPO_URL=https://github.com/you/WindowRunner.git ./install.sh
 #
-# Status: this path is *experimental* (see docs/INSTALL.md). It has been run on
-# Linux against a local checkout; macOS is untested. The clone + `npm run setup`
-# flow it drives is verified; the packed `npm install -g windows-runner` /
+# Status: this path is *experimental* (see docs/INSTALL.md). CI executes it on
+# macOS in checkout mode with --no-start; fresh-clone and interactive modes are
+# untested. The clone + `npm run setup` flow it drives is verified on Linux; the
+# packed `npm install -g windows-runner` /
 # `npx windows-runner` path is NOT available, because the package declares no
 # bin and is not published (docs/INSTALL.md, gaps G-01 and G-05).
 #
