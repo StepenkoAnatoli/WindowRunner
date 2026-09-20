@@ -62,12 +62,15 @@ this checklist tracks.
 Branch protection on `main` is not set. The automation token used to open and
 merge these PRs is refused read *and* write access to the protection rules
 (HTTP 403), so it could not enable them and could not verify whether they exist.
-Until a repository admin requires the `CI` status check and at least one approval
-on `main`, a green `CI` run is **informational**: it does not block a merge, and
-"failed CI gates block release" (P1-06) is not true.
+Until a repository admin requires the `CI`, `Docker`, `Platform (windows-latest)`,
+and `Platform (macos-latest)` status checks and at least one approval on `main`,
+a green `CI` run is **informational**: it does not block a merge, and "failed CI
+gates block release" (P1-06) is not true.
 
-**Outstanding admin action:** on `main`, require status check `CI` and >= 1
-approving review. This is the only item in this section that cannot be done from
+**Outstanding admin action:** on `main`, require the four status checks `CI`,
+`Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)`, plus >= 1
+approving review. All four are required so no merge can skip a platform leg or
+the Docker job. This is the only item in this section that cannot be done from
 a pull request.
 
 ---
@@ -420,7 +423,7 @@ Acceptance:
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
-### [ ] Branch protection on `main`: required `CI` check + >= 1 approval (admin action)
+### [ ] Branch protection on `main`: required `CI`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action)
 ### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 
