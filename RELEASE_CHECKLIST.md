@@ -34,6 +34,7 @@ manifests, per-workspace scripts, `npm` logs) is uploaded on failure.
 | Build — emits `packages/*/dist` | `npm run build` |
 | Full test suite | `npm test` |
 | Packed-artifact contents | `npm run smoke:packed` |
+| Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
 
 `npm ci` runs without `--ignore-scripts` because `scripts/postinstall.mjs` now
 exists and verifies the workspace tree. Skipping lifecycle scripts was a
@@ -46,8 +47,8 @@ this checklist tracks.
 | --- | --- |
 | Windows job ("Windows CI green") | No Windows runner in any workflow. `install.ps1` has never been executed (gap G-06). |
 | macOS coverage | No job. |
-| Docker build / `npm run smoke:docker` | No Docker job, and no `smoke:docker` script exists. The image is **blocked**, not merely unverified (gaps G-02, G-03). |
-| Packed CLI smoke (`npx windows-runner`, `wr`) | Cannot exist: no `bin`, package unpublished (gaps G-01, G-05). `smoke:packed` validates tarball *contents* only. |
+| Docker build / `npm run smoke:docker` | No Docker job, and no `smoke:docker` script exists. The image is **blocked**, not merely unverified: the boot entry exists (G-02 closed) but `dist/` is not self-contained (gaps G-03, G-04). |
+| Packed CLI smoke (`npx windows-runner`, `wr`) | Cannot exist: no `bin`, package unpublished (gaps G-01, G-05). `smoke:packed` validates tarball *contents* only; `smoke:start` boots the server from a *checkout*, not from the tarball. |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
 | Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
 | Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
@@ -85,7 +86,7 @@ a pull request.
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
 | P1-05 | Claimed complete in Batch 6. **"Windows CI green" is not reproducible: there has never been a Windows job in this repository** (see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
-| P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test and a packed-contents smoke test, and is enforced on `push`/`pull_request`. **Windows, packed-CLI and Docker jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
+| P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test and a startup smoke test that boots the built server, and is enforced on `push`/`pull_request`. **Windows, packed-CLI and Docker jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
 | P1-07 | Open (Phase 5 unchecked tasks). |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | Open (Phase 5). |
@@ -109,7 +110,7 @@ Acceptance criteria:
 - [ ] CORS is replaced with explicit allowed origins; wildcard origins are not used.
 - [ ] Origin/Host validation rejects untrusted origins and DNS rebinding attempts.
 - [ ] Missing or null Origin headers are handled safely and do not grant access.
-- [ ] Default bind remains loopback-only; remote access is explicit and documented.
+- [ ] Default bind remains loopback-only; remote access is explicit and documented. *(Partial, 2026-09-20: the boot entry `packages/server/src/index.ts` defaults to `127.0.0.1` and refuses a non-loopback `HOST` unless `WINDOWS_RUNNER_ALLOW_REMOTE=1`; the rest of this issue — auth, CORS, Host validation — is untouched.)*
 - [ ] Browser and Electron flows still work with valid credentials.
 - [ ] Unauthorized requests cannot read files, change settings, start turns, or approve actions.
 - [ ] Regression tests cover auth failure, host rejection, and valid client access.
@@ -293,14 +294,16 @@ Acceptance criteria:
 - [x] Linux job included for core validation.
 - [ ] Windows job included for core validation — **not implemented**, no Windows runner.
 - [ ] Packed artifact validation runs from a clean directory without repository-only dependencies — **blocked**: the packed `dist/` imports `@windows-runner/shared` through a workspace symlink a tarball does not have (gap G-04), and there is no `bin` to execute (gap G-01). `scripts/smoke-packed.mjs` validates tarball contents only.
-- [ ] Docker build smoke tests run when Docker is available — **not implemented**, and the image build is blocked by gaps G-02/G-03. No `smoke:docker` script exists.
-- [ ] Security regressions remain in the normal suite — the referenced security modules (`auth.ts`, `access.ts`, `routes.ts`) are not present in this checkout.
-- [ ] Release artifacts are tested, not inferred from source-only tests — contents are tested; a runnable artifact does not exist yet.
+- [ ] Docker build smoke tests run when Docker is available — **not implemented**, and the image build is blocked by gaps G-03/G-04 (the boot entry itself exists, gap G-02 closed). No `smoke:docker` script exists.
+- [ ] Security regressions remain in the normal suite — the referenced security modules (`auth.ts`, `access.ts`, `routes.ts`) are not present in this checkout. The boot path's loopback-only default and `WINDOWS_RUNNER_ALLOW_REMOTE` refusal are covered by `packages/server/test/boot.test.ts` and `scripts/smoke-start.mjs`.
+- [x] The built server is tested as a running process, not inferred from source-only tests — `npm run smoke:start` boots `packages/server/dist/index.js` from a checkout. **The packed/published artifact is still not runnable** (gaps G-03/G-04), so this box covers the checkout artifact only.
 - [ ] Failed CI gates block release — **false today**: branch protection is unconfigured, so a red `CI` run does not block a merge. Requires admin action.
 
 Files that now exist and are exercised by CI: `.github/workflows/ci.yml`,
-`scripts/smoke-packed.mjs`, `docs/INSTALL.md`,
-`packages/server/test/packaging.test.ts`. Still absent: every path under
+`scripts/smoke-packed.mjs`, `scripts/smoke-start.mjs`, `scripts/ensure-built.mjs`,
+`docs/INSTALL.md`, `packages/server/src/index.ts` (boot entry), `src/boot.ts`,
+`src/config.ts`, `packages/server/test/packaging.test.ts`, `test/boot.test.ts`,
+`test/config.test.ts`. Still absent: every other path under
 `packages/server/src/` that this issue lists for inspection except the agent,
 provider and persistence modules.
 
@@ -398,9 +401,10 @@ Acceptance:
       not pinned, because a hardcoded number goes stale the way this one did.
       "Clean install" now means a plain `npm ci` with lifecycle scripts enabled —
       previously it required `--ignore-scripts` and so proved nothing about the
-      install path. "Clean build" means `npm run build` emits `packages/*/dist`;
-      it does **not** mean the output is runnable as a server (gap G-02) or
-      self-contained (gap G-04).
+      install path. "Clean build" means `npm run build` emits `packages/*/dist`,
+      and since gap G-02 closed the output **is** runnable as a server from the
+      checkout (`npm start`, verified by `npm run smoke:start`); it is still
+      **not** self-contained (gap G-04).
 
 ## Release gate
 
@@ -411,7 +415,7 @@ Acceptance:
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
-### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md)
+### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-02 closed 2026-09-20; G-01, G-03, G-04, G-05 open
 ### [ ] Branch protection on `main`: required `CI` check + >= 1 approval (admin action)
 ### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented

@@ -4,11 +4,11 @@ set -e
 # Windows Runner — installer for Unix-like systems.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/StepenkoAnatoli/WindowsRunner/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.sh | bash
 #   ./install.sh [--no-start]
 #
 # Override the clone source for forks/local testing:
-#   WINDOWS_RUNNER_REPO_URL=https://github.com/you/WindowsRunner.git ./install.sh
+#   WINDOWS_RUNNER_REPO_URL=https://github.com/you/WindowRunner.git ./install.sh
 #
 # Status: this path is *experimental* (see docs/INSTALL.md). It has been run on
 # Linux against a local checkout; macOS is untested. The clone + `npm run setup`
@@ -16,10 +16,12 @@ set -e
 # `npx windows-runner` path is NOT available, because the package declares no
 # bin and is not published (docs/INSTALL.md, gaps G-01 and G-05).
 #
-# This installer sets up a source checkout. It cannot start a server: the server
-# package has no boot entry point yet (gap G-02), so there is no `npm start`.
+# This installer sets up a source checkout and, when run from an interactive
+# terminal, offers to run `npm start` at the end. When piped (`curl … | bash`)
+# stdin is not a terminal, so it never prompts and never blocks: it prints the
+# command instead. `--no-start` skips the offer entirely.
 
-REPO_URL="${WINDOWS_RUNNER_REPO_URL:-https://github.com/StepenkoAnatoli/WindowsRunner.git}"
+REPO_URL="${WINDOWS_RUNNER_REPO_URL:-https://github.com/StepenkoAnatoli/WindowRunner.git}"
 
 # `bash install.sh --no-start`
 NO_START=0
@@ -107,20 +109,36 @@ echo ""
 echo "  ✓ Installed in $(pwd)"
 echo ""
 echo "  Available now:"
+echo "    npm start            start the server on http://127.0.0.1:7634"
+echo "                         (offline mock provider, no tools — see docs/INSTALL.md)"
 echo "    npm test             run the test suite"
 echo "    npm run build        emit packages/*/dist"
 echo "    npm run smoke:packed verify the packed artifact"
+echo "    npm run smoke:start  boot the built server and run a turn against it"
 echo ""
 echo "  Not available yet (see docs/INSTALL.md):"
-echo "    npm start            no server boot entry point (gap G-02)"
 echo "    npx windows-runner   no bin, package unpublished (gaps G-01, G-05)"
+echo "    docker compose up    dist/ is not self-contained (gaps G-03, G-04)"
 echo ""
 
 if [ "$NO_START" -eq 1 ]; then
   exit 0
 fi
 
-# --no-start used to gate an interactive "start the server?" prompt that ran
-# `npm start`. That command does not exist in this checkout, so prompting would
-# have offered a failure. The flag is still accepted for compatibility.
-echo "  Nothing to start: this checkout has no server entry point (gap G-02)."
+# Only prompt when a human can answer. Under `curl … | bash`, stdin is the
+# script itself, so `read` would consume the script or hang: print instead.
+if [ -t 0 ] && [ -t 1 ]; then
+  printf "  Start the server now? [Y/n] "
+  read -r answer
+  case "$answer" in
+    n|N|no|NO|No)
+      echo "  Run 'npm start' when you are ready."
+      ;;
+    *)
+      echo ""
+      exec npm start
+      ;;
+  esac
+else
+  echo "  To start the server: cd $(pwd) && npm start"
+fi

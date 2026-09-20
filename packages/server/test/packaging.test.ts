@@ -136,6 +136,34 @@ describe("Packaging contract", () => {
       }
     });
 
+    it("`npm start` runs the server workspace's compiled entry and pre-checks the build", () => {
+      // The boot entry point is packages/server/src/index.ts; `start` must run
+      // its compiled output, and `prestart` must be the ensure-built hook so a
+      // fresh checkout and a stale checkout both start the right code.
+      assert.equal(root.scripts?.start, "node packages/server/dist/index.js");
+      assert.equal(root.scripts?.prestart, "node scripts/ensure-built.mjs");
+      assert.ok(exists("packages/server/src/index.ts"), "server boot entry packages/server/src/index.ts is missing");
+
+      const server = readManifest("packages/server/package.json");
+      assert.equal(server.scripts?.start, "node dist/index.js", "server workspace must declare a start script for its own dist");
+      assert.match(server.scripts?.dev ?? "", /src\/index\.ts/, "server dev script must run the boot entry, not the app factory");
+    });
+
+    it("ships the prestart hook alongside postinstall in files[]", () => {
+      // Every scripts/*.mjs that a lifecycle script of the *published* package
+      // can invoke must be in the tarball, or `npm start` in an installed
+      // package dies with MODULE_NOT_FOUND — the same defect class as the
+      // missing postinstall hook.
+      for (const hook of ["scripts/postinstall.mjs", "scripts/ensure-built.mjs"]) {
+        assert.ok(root.files?.includes(hook), `files[] must include ${hook}`);
+      }
+    });
+
+    it("declares the startup smoke test next to the packed-contents one", () => {
+      assert.equal(root.scripts?.["smoke:start"], "node scripts/smoke-start.mjs");
+      assert.equal(root.scripts?.["smoke:packed"], "node scripts/smoke-packed.mjs");
+    });
+
     it("does not depend on tooling no script uses", () => {
       const declared = Object.keys(root.devDependencies ?? {});
       const allScripts = Object.values(root.scripts ?? {}).join(" ");
@@ -268,11 +296,18 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("runs typecheck, test, build and the packed-artifact smoke test", () => {
+    it("runs typecheck, test, build, the packed-artifact smoke test and the startup smoke test", () => {
       const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
-      for (const command of ["npm run typecheck", "npm test", "npm run build", "npm run smoke:packed"]) {
+      for (const command of ["npm run typecheck", "npm test", "npm run build", "npm run smoke:packed", "npm run smoke:start"]) {
         assert.match(text, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `CI does not run \`${command}\``);
       }
+    });
+
+    it("runs the startup smoke test after the build it depends on", () => {
+      const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
+      const build = text.indexOf("npm run build");
+      const smoke = text.indexOf("npm run smoke:start");
+      assert.ok(build >= 0 && smoke >= 0 && build < smoke, "smoke:start must come after the build step");
     });
   });
 });
