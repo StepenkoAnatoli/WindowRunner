@@ -23,12 +23,15 @@ describe("Production-readiness audit", () => {
       const sessionId = "sess_e2e";
       const turnId = "t_e2e";
 
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+
       // Create session meta
       await sessionStore.save({
         version: 1,
         sessionId,
-        canonicalRoot: "/tmp",
-        realRoot: "/tmp",
+        canonicalRoot: sysTmp,
+        realRoot: sysTmp,
         createdAt: Date.now(),
         lastActivityAt: Date.now(),
         activeTurnId: turnId,
@@ -58,7 +61,7 @@ describe("Production-readiness audit", () => {
       assert.equal(log!.events[2].seq, 3); // maxSeq+1
 
       // Session restart with same allowedRoots — valid recovers, stale active cleared
-      const sessDiag = await sessionStore.boot(["/tmp"], () => Date.now());
+      const sessDiag = await sessionStore.boot([sysTmp], () => Date.now());
       assert.equal(sessDiag.sessionsLoaded, 1);
       assert.equal(sessDiag.sessionsWithClearedActiveTurn, 1);
       const meta = await sessionStore.load(sessionId);
@@ -205,19 +208,22 @@ describe("Production-readiness audit", () => {
       const dir = await mkTmpDir();
       const sessionStore = new FileSessionStore({ dataDir: dir });
 
-      // Save session with root /tmp
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+
+      // Save session with the system temp root
       await sessionStore.save({
         version: 1,
         sessionId: "sess_sec",
-        canonicalRoot: "/tmp",
-        realRoot: "/tmp",
+        canonicalRoot: sysTmp,
+        realRoot: sysTmp,
         createdAt: Date.now(),
         lastActivityAt: Date.now(),
         activeTurnId: null,
       });
 
-      // Boot with allowedRoots that includes /tmp — should succeed and call ProjectRoot.create
-      const diag = await sessionStore.boot(["/tmp"], () => Date.now());
+      // Boot with allowedRoots that includes the persisted root — should succeed and call ProjectRoot.create
+      const diag = await sessionStore.boot([sysTmp], () => Date.now());
       assert.equal(diag.sessionsLoaded, 1);
 
       // Boot with allowedRoots that excludes /tmp — should skip, proving re-validation via ProjectRoot.create
@@ -233,11 +239,14 @@ describe("Production-readiness audit", () => {
 
       // Save meta with snapshot containing /etc but canonicalRoot /tmp, current allowedRoots only /home
       // Snapshot should never authorize
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+
       await sessionStore.save({
         version: 1,
         sessionId: "sess_snapshot",
-        canonicalRoot: "/tmp",
-        realRoot: "/tmp",
+        canonicalRoot: sysTmp,
+        realRoot: sysTmp,
         createdAt: Date.now(),
         lastActivityAt: Date.now(),
         activeTurnId: null,
@@ -248,19 +257,23 @@ describe("Production-readiness audit", () => {
       const diag = await sessionStore.boot(["/home"], () => Date.now());
       assert.equal(diag.sessionsSkipped, 1, "snapshot should not authorize, only current allowedRoots");
 
-      // Also test canonicalRoot and realRoot alone don't authorize — need ProjectRoot.create validation
+      // Also test canonicalRoot and realRoot alone don't authorize — need ProjectRoot.create validation.
+      // The outside root must EXIST on every OS, so the skip below proves the
+      // authorization reason (not mere nonexistence): the temp dir's parent
+      // always exists and is never inside the temp dir itself.
+      const outsideTmp = path.dirname(sysTmp);
       await sessionStore.save({
         version: 1,
         sessionId: "sess_canonical",
-        canonicalRoot: "/etc",
-        realRoot: "/etc",
+        canonicalRoot: outsideTmp,
+        realRoot: outsideTmp,
         createdAt: Date.now(),
         lastActivityAt: Date.now(),
         activeTurnId: null,
       });
 
-      const diag2 = await sessionStore.boot(["/tmp"], () => Date.now());
-      assert.equal(diag2.sessionsSkipped, 1, "canonicalRoot /etc should not authorize when allowedRoots is /tmp");
+      const diag2 = await sessionStore.boot([sysTmp], () => Date.now());
+      assert.equal(diag2.sessionsSkipped, 1, "canonicalRoot outside allowedRoots should not authorize");
 
       await fs.rm(dir, { recursive: true, force: true });
     });

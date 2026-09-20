@@ -540,8 +540,10 @@ describe("Metrics/alerts — required adjustments", () => {
 
       // Create session and start a turn that will be stuck
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
-      const sess = await sessionManager.createSession("sess_active", "/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
+      const sess = await sessionManager.createSession("sess_active", sysTmp, [sysTmp]);
       manager.ensureLog("sess_active", "t_stuck", { maxSteps: 10, modelCallTimeoutMs: 1000, toolTimeoutMs: 1000, approvalTimeoutMs: 1000 } as any);
       // Simulate turn_started 3h ago
       const startedAt = clock.now();
@@ -574,7 +576,7 @@ describe("Metrics/alerts — required adjustments", () => {
       assert.equal(metrics.getGauge("stuckTurns"), 1);
       assert.equal(metrics.getGauge("activeTurns"), 1);
       // Ensure session age alone not counted: create another old idle session 25h old
-      const oldSess = await sessionManager.createSession("sess_idle_old", "/tmp", ["/tmp"]);
+      const oldSess = await sessionManager.createSession("sess_idle_old", sysTmp, [sysTmp]);
       (oldSess as any).lastActivityAt = clock.now() - 25 * 60 * 60 * 1000;
       const v2 = app._doValidation();
       assert.equal(v2.stuckTurns.length, 1, "still only stuck turn, idle not counted as stuck");
@@ -991,7 +993,9 @@ describe("Metrics/alerts — required adjustments", () => {
       const manager = new TurnManager({ store, now: () => clock.now() });
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
 
       const provider = new FakeProvider([
         () => ({ chunks: [{ type: "tool_call", call: { id: "c1", name: "run_terminal", input: { command: "echo hi" } } }] }),
@@ -1015,11 +1019,11 @@ describe("Metrics/alerts — required adjustments", () => {
       const runPromise = runner.run({
         sessionId: "s_dur",
         turnId: "t_dur",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [{ name: "run_terminal", description: "run" }] },
         limits: { maxSteps: 3, modelCallTimeoutMs: 1000, toolTimeoutMs: 1000, approvalTimeoutMs: 1000 },
         signal: new AbortController().signal,
-        allowedRoots: ["/tmp"],
+        allowedRoots: [sysTmp],
         projectRoot: root,
       });
 
@@ -1058,10 +1062,12 @@ describe("Metrics/alerts — required adjustments", () => {
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
       const sessionManager = new SessionManager({ now: () => clock.now() });
 
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
       // Create many sessions and turns, some stuck
       for (let i = 0; i < 5; i++) {
         const sessId = `sess_${i}`;
-        await sessionManager.createSession(sessId, "/tmp", ["/tmp"]);
+        await sessionManager.createSession(sessId, sysTmp, [sysTmp]);
         if (i < 2) {
           // Make 2 with active stuck turns 3h old
           const turnId = `t_stuck_${i}`;
