@@ -67,8 +67,12 @@ async function main() {
     const tarballPath = packTarball(tmp);
     step(`packed tarball: ${path.basename(tarballPath)}`);
 
-    const extractDir = path.join(tmp, "unpacked");
-    const unpack = spawnSync("tar", ["-xzf", tarballPath, "-C", tmp], {
+    // Extract by relative name with cwd=tmp: absolute Windows paths (C:\…)
+    // make bsdtar parse the drive letter as a remote host ("Cannot connect
+    // to C: resolve failed"). The tarball is inside tmp (pack-destination),
+    // so the bare filename suffices on every OS.
+    const unpack = spawnSync("tar", ["-xzf", path.basename(tarballPath)], {
+      cwd: tmp,
       shell: IS_WINDOWS,
       encoding: "utf8",
     });
