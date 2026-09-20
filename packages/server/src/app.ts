@@ -13,6 +13,9 @@ export interface AppDeps {
   approvals: ApprovalRegistry;
   allowedRoots?: string[];
   sessionManager?: SessionManager;
+  // For operational observability — optional, exposed via /api/health
+  getBootDiagnostics?: () => any;
+  getPersistenceDiagnostics?: () => any;
 }
 
 export function createApp(deps: AppDeps) {
@@ -283,6 +286,48 @@ export function createApp(deps: AppDeps) {
     }
 
     res.status(204).end();
+  });
+
+  // GET /api/health — operational observability: boot diagnostics, persistence failures, single-process writer limitation
+  app.get("/api/health", (req, res) => {
+    const health: any = {
+      status: "ok",
+      timestamp: Date.now(),
+      persistence: {
+        mode: (deps.manager.getStore() as any).getDataDir ? "file" : "memory",
+        dataDir: (deps.manager.getStore() as any).getDataDir ? (deps.manager.getStore() as any).getDataDir() : undefined,
+        writer: {
+          mode: "single-process only",
+          limitation:
+            "SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process writers UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Run single server instance per dataDir.",
+          concurrency: "per-turn queue Map<turnId, Promise> ensures serialized writes within one process",
+        },
+      },
+      diagnostics: {
+        boot: deps.getBootDiagnostics ? deps.getBootDiagnostics() : undefined,
+        persistence: deps.getPersistenceDiagnostics
+          ? deps.getPersistenceDiagnostics()
+          : (deps.manager.getStore() as any).getDiagnostics
+            ? (deps.manager.getStore() as any).getDiagnostics()
+            : undefined,
+        approvals: {
+          pendingCount: (deps.approvals as any).entries ? (deps.approvals as any).entries.size : undefined,
+          byTurnCount: (deps.approvals as any).byTurn ? (deps.approvals as any).byTurn.size : undefined,
+        },
+      },
+    };
+
+    res.json(health);
+  });
+
+  // GET /api/diagnostics/persistence — detailed persistence failures and quarantine
+  app.get("/api/diagnostics/persistence", (req, res) => {
+    const store: any = deps.manager.getStore();
+    const diagnostics = store.getDiagnostics ? store.getDiagnostics() : { warnings: [], persistenceFailures: [] };
+    res.json({
+      ...diagnostics,
+      persistenceFailures: store.getPersistenceFailures ? store.getPersistenceFailures() : diagnostics.persistenceFailures || [],
+    });
   });
 
   return app;
