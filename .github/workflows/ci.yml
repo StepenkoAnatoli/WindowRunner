@@ -240,27 +240,43 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee "test-${{ matrix.os }}.log"
 
-      # Surfaces failing test names as run annotations (and keeps the full log
-      # in the diagnostics artifact), so a red matrix leg is diagnosable without
-      # downloading and grepping the whole log.
-      - name: Report failing tests
-        if: failure() && steps.test.conclusion == 'failure'
+      # Surfaces the failure from the most recent step log as run annotations (and
+      # keeps every step log in the diagnostics artifact), so a red matrix leg
+      # is diagnosable without downloading and grepping the whole log. The last
+      # log written is the failed step's, because later steps are skipped.
+      - name: Report failure output
+        if: failure()
         shell: bash
         run: |
-          echo "Failing tests (${{ matrix.os }}):"
-          grep -E "not ok" "test-${{ matrix.os }}.log" | head -n 30 | while IFS= read -r line; do
+          latest="$(ls -t *.log 2>/dev/null | head -n 1)"
+          if [ -z "${latest}" ]; then
+            echo "no step logs captured"
+            exit 0
+          fi
+          echo "===== ${latest} (tail) ====="
+          tail -n 40 "${latest}"
+          grep -E "FAILED|Error|error|not ok|failed|FAIL" "${latest}" | head -n 10 | while IFS= read -r line; do
             clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
-            echo "::error title=Failing test (${{ matrix.os }})::${clean}"
+            echo "::error title=${latest}::${clean}"
           done
 
       - name: Packed-artifact smoke test
-        run: npm run smoke:packed
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:packed 2>&1 | tee smoke-packed.log
 
       - name: Packed-tarball start smoke test
-        run: npm run smoke:packed:start
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:packed:start 2>&1 | tee smoke-packed-start.log
 
       - name: Startup smoke test
-        run: npm run smoke:start
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:start 2>&1 | tee smoke-start.log
 
       # Exercises the Unix installer end to end in checkout mode (prerequisite
       # checks, checkout detection, `npm run setup` orchestration). --no-start
@@ -268,7 +284,9 @@ jobs:
       - name: Run install.sh in checkout mode
         if: runner.os == 'macOS'
         shell: bash
-        run: bash install.sh --no-start
+        run: |
+          set -o pipefail
+          bash install.sh --no-start 2>&1 | tee installer.log
 
       # Same for the Windows installer. -ExecutionPolicy Bypass is CI-only
       # plumbing so the script is guaranteed to execute; it validates the
@@ -276,7 +294,9 @@ jobs:
       - name: Run install.ps1 in checkout mode
         if: runner.os == 'Windows'
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart 2>&1 | Tee-Object -FilePath installer.log
+          exit $LASTEXITCODE
 
       - name: Collect diagnostics
         if: failure()
@@ -305,6 +325,10 @@ jobs:
           path: |
             diagnostics-${{ matrix.os }}.txt
             test-${{ matrix.os }}.log
+            smoke-packed.log
+            smoke-packed-start.log
+            smoke-start.log
+            installer.log
             npm-logs/
           if-no-files-found: ignore
           retention-days: 7
