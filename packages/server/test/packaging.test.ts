@@ -277,6 +277,22 @@ describe("Packaging contract", () => {
     });
   });
 
+  describe("installer scripts", () => {
+    it("install.ps1 starts with a UTF-8 BOM so Windows PowerShell parses it", () => {
+      // Windows PowerShell 5.1 reads a BOM-less script as Windows-1252, which
+      // decodes this file's box-drawing/checkmark characters into bytes that
+      // include U+201C/U+201D smart quotes — and 5.1 tokenizes those as string
+      // delimiters, producing "Missing closing '}'" cascades. The BOM makes 5.1
+      // decode UTF-8. This broke silently once already (Linux and macOS never
+      // execute the script, and the failure is a parse error), so pin the BOM.
+      const bytes = fs.readFileSync(path.join(repoRoot, "install.ps1"));
+      assert.ok(
+        bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf,
+        "install.ps1 must start with the UTF-8 BOM (EF BB BF)"
+      );
+    });
+  });
+
   describe("CI exercises the install lifecycle", () => {
     const workflowPath = ".github/workflows/ci.yml";
 

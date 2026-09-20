@@ -1,4 +1,4 @@
-# Windows Runner - installer for Windows (PowerShell).
+﻿# Windows Runner - installer for Windows (PowerShell).
 #
 # Usage:
 #   irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex
