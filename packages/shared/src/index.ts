@@ -44,7 +44,7 @@ export interface TurnUsage {
 
 export type ToolResult =
   | { ok: true; output: string }
-  | { ok: false; code: ToolErrorCode; message: string; retryable: boolean };
+  | { ok: false; code: ToolErrorCode; message: string; retryable: boolean; details?: Record<string, unknown> };
 
 export interface ApprovalRequest {
   requestId: ApprovalId;

@@ -22,12 +22,14 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-Three jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
+Four jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
 cancels superseded runs on the same ref; each job has a 20-minute timeout; a
 diagnostics artifact is uploaded on failure. `CI` (`ubuntu-latest`) and
 `Platform` (`windows-latest` + `macos-latest` matrix, after `CI`) pin Node
 exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
-`node:22-alpine` images and needs no runner Node at all.
+`node:22-alpine` images and needs no runner Node at all; `Browser E2E`
+(`ubuntu-latest`, after `CI`) installs Chromium via Playwright and drives the
+web UI against the real server with a scripted offline provider.
 
 | Check | Command |
 | --- | --- |
@@ -38,6 +40,7 @@ exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
+| Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
 
@@ -54,7 +57,7 @@ this checklist tracks.
 | `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
-| Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
+| Fake-provider failure suite (P1-07) | No context-exhaustion / 429-backoff / malformed-tool-call fixtures; there is no real provider adapter to fail yet. |
 | Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
 
 ### Merge gating is NOT configured
@@ -94,7 +97,7 @@ a pull request.
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
 | P1-05 | Claimed complete in Batch 6. **"Windows CI green" was not reproducible when claimed: there was no Windows job in this repository then** (a `Platform` matrix with a Windows leg exists now; see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
 | P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
-| P1-07 | Open (Phase 5 unchecked tasks). |
+| P1-07 | **Partial as of 2026-09-20 (Phase 2 of the UI plan).** A runnable web UI exists (`packages/web`, served at `/` by the server) and a Playwright suite (`packages/web/e2e`) runs in the `Browser E2E` CI job against the mock/scripted provider with no keys: auth flow, session creation, streaming, reconnect with `Last-Event-ID`, cancellation, approval/denial, project trust, error display. Not covered: settings, edit/diff review, reload-resume, the fake-provider failure suite; no job gates merges. |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | Open (Phase 5). |
 
@@ -322,22 +325,28 @@ Title: Add end-to-end browser coverage and fake-provider failure tests
 Boundary note: P1-05 covers loop-level cancellation/retry correctness (unit and
 loop tests). P1-07 adds end-to-end breadth of the same behaviors through the
 real UI and provider boundary, plus the browser flows no other issue exercises.
-It builds on existing infrastructure: the mock provider, the OpenAI-shaped fake
-provider used by `mock-session-smoke.test.ts`, and the retry fixtures in
-`process-cleanup.test.ts`.
+
+Status 2026-09-20: the web UI and browser suite exist (see "CI enforcement
+status"). The UI is deliberately minimal — the smallest client that exercises
+every server boundary: token entry (form or `#token=` fragment, kept in
+`sessionStorage`, never in the URL), session create/delete, turn submission,
+`fetch`-streamed SSE (not `EventSource`, so the bearer header rides on every
+request, including reconnects, which resume with `Last-Event-ID`), streamed
+text, Stop, approval cards, the project-trust prompt (grant/revoke) and error
+banners. Electron, real providers and the broader product UI are out of scope.
 
 Files to inspect:
-- `packages/web/`
-- `packages/server/test/`
-- `.github/workflows/ci.yml`
-- `package.json`
+- `packages/web/src/{api,app-state,main}.ts`, `packages/web/e2e/`, `packages/web/playwright.config.ts`
+- `packages/server/src/app.ts` (static serving under `webDir`, protected prefixes bypass static), `packages/server/test/web-ui.test.ts`
+- `.github/workflows/ci.yml` (`Browser E2E` job)
+- `package.json` (`e2e`, `e2e:install`)
 
 Acceptance criteria:
-- [ ] Browser E2E suite runs against the mock provider, no API keys required.
-- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display.
-- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream.
-- [ ] Both suites run in the normal Linux CI job and gate merges.
-- [ ] No real-provider keys are required by ordinary CI.
+- [x] Browser E2E suite runs against the mock provider, no API keys required. *(`packages/web/e2e/ui.spec.ts`; scripted provider in `e2e/server.ts` reacts to the message text.)*
+- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display. *(Covered: auth, session creation + root refusal, streaming, reconnect, approval/denial, cancellation, provider failure, trust prompt, error banner. Not covered: settings, edit/diff review — no such UI yet; reload-resume of an in-flight turn.)*
+- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream. *(Needs a real provider adapter — Phase 3.)*
+- [ ] Both suites run in the normal Linux CI job and gate merges. *(E2E runs in its own `Browser E2E` job; merge gating is not configured.)*
+- [x] No real-provider keys are required by ordinary CI.
 
 ---
 

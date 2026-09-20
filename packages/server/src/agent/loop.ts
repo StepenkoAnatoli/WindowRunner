@@ -253,6 +253,12 @@ export class TurnRunner {
                   : `project ${realRoot} is not trusted to run ${trustRequirement.source} (${trustRequirement.configHash}); ` +
                     `grant trust via POST /api/sessions/${sessionId}/trust`,
                 retryable: false,
+                details: {
+                  realRoot,
+                  configHash: trustRequirement.configHash,
+                  source: trustRequirement.source,
+                  ...(stale ? { staleConfigHash: stale.configHash } : {}),
+                },
               };
               await append({ type: "tool_completed", callId: toolCall.id, toolName: toolCall.name, result });
               nextMessages.push({

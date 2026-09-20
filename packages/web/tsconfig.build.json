@@ -5,11 +5,27 @@
     "outDir": "dist",
     "noEmit": false,
     "declaration": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
-      "@windows-runner/shared": ["../shared/dist/index.d.ts"]
-    }
+      "@windows-runner/shared": [
+        "../shared/dist/index.d.ts"
+      ]
+    },
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["src"],
-  "exclude": ["test", "dist", "node_modules"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "test",
+    "e2e",
+    "dist",
+    "node_modules"
+  ]
 }

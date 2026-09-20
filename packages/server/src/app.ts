@@ -44,6 +44,12 @@ export interface AppDeps {
   security?: SecurityOptions | SecurityPolicy;
   /** Project trust registry; an in-memory one is created when omitted. */
   trust?: ProjectTrustRegistry;
+  /**
+   * Directory of the built web UI (packages/web/dist/app). When set, it is
+   * served at `/` — public assets, but behind Host/Origin validation. Unset
+   * when the UI has not been built; the API works without it.
+   */
+  webDir?: string;
 }
 
 export interface ValidationResult {
@@ -230,6 +236,31 @@ export function createApp(deps: AppDeps) {
   app._validationTimer = () => validationTimer;
   app._metrics = metrics;
   app._doValidation = doValidation;
+
+  // Static web UI. index.html is never cached so a rebuilt bundle is picked up
+  // and a stale page cannot keep an old API contract; hashed assets could be
+  // cached but the bundle is small, so keep it simple and uniform. The static
+  // handler is skipped for every protected prefix (/api/ …) so a file in the UI
+  // directory can never shadow or answer for an API route.
+  if (deps.webDir) {
+    const protectedPrefixes = security?.protectedPrefixes ?? ["/api/"];
+    const serveStatic = express.static(deps.webDir, {
+      index: "index.html",
+      fallthrough: true,
+      etag: true,
+      setHeaders: (res: any) => {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Referrer-Policy", "no-referrer");
+        res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'");
+      },
+    });
+    app.use((req: any, res: any, next: any) => {
+      const p: string = req.path ?? "";
+      if (p === "/healthz" || protectedPrefixes.some((prefix) => p.startsWith(prefix))) return next();
+      return serveStatic(req, res, next);
+    });
+  }
 
   // GET /healthz — liveness only: "the process is up and serving HTTP". It
   // deliberately runs no validation and touches no store, so it stays cheap

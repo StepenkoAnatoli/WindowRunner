@@ -52,11 +52,14 @@ fails with an actionable message if it is broken. Set
 `WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
 `npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
-when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
-offline `mock` provider is the only provider in this checkout, no tools are
-registered, there is no web UI, every `/api` route requires a bearer token
-(printed once in memory mode, stored at `~/.windows-runner/auth-token` in file
-mode), and the server binds loopback only. Configuration, endpoints and limits are in
+when `dist/` is missing or stale). What starts is the HTTP API plus a **minimal
+web UI** served at `/` (`packages/web`): the offline `mock` provider is the
+only provider in this checkout, no tools are registered, every `/api` route
+requires a bearer token (printed once in memory mode — the banner's `ui:` line
+carries it as a `#token=` fragment the page consumes and removes — and stored
+at `~/.windows-runner/auth-token` in file mode), and the server binds loopback
+only. The UI talks to the API with `fetch` only (bearer on every request,
+streamed SSE with `Last-Event-ID` resume); it is not exposed via any endpoint. Configuration, endpoints and limits are in
 [docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
 `npm run smoke:start` boots the built server and runs a turn against it.
 

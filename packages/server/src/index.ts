@@ -73,6 +73,14 @@ async function main(): Promise<void> {
     console.log(`  note:        replies come from the offline mock provider and are prefixed "[mock]"`);
   }
   console.log(`${TAG} listening on ${ready.url}`);
+  if (ready.webDir) {
+    // In memory mode the generated token was printed above; the fragment form
+    // lets the UI pick it up without retyping (fragments never reach the server).
+    const fragment = ready.authToken !== undefined && ready.boot.auth.tokenSource === "generated" && ready.boot.auth.tokenFile === undefined ? `/#token=${ready.authToken}` : "/";
+    console.log(`  ui:          ${ready.url}${fragment}`);
+  } else {
+    console.log(`  ui:          not built (run npm run build --workspace packages/web)`);
+  }
   console.log(`  health:      ${ready.url}/healthz  (liveness)   ${ready.url}/api/health  (diagnostics)`);
   console.log("  press Ctrl+C to stop");
 

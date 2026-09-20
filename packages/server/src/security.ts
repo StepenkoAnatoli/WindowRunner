@@ -24,8 +24,11 @@ import { isLoopbackHost } from "./config.js";
  *                  token (constant-time compare). Missing -> 401 AUTH_REQUIRED,
  *                  wrong -> 401 AUTH_INVALID, both with WWW-Authenticate.
  *
- * `/healthz` (liveness) is exempt from auth so container health checks work,
- * but not from Host/Origin validation.
+ * The bearer check applies to paths under `protectedPrefixes` (default
+ * `/api/`). Everything else — `/healthz` (liveness, needed by container health
+ * checks) and the static web UI assets — is public, but still subject to
+ * Host/Origin validation. The UI assets are only HTML/JS/CSS; every call they
+ * make goes to `/api/` and carries the token.
  *
  * Every rejection is reported to `onReject` (metrics/audit) with the kind, the
  * route and a short reason — never with the presented credential.
@@ -53,8 +56,8 @@ export interface SecurityOptions {
   allowedHosts?: string[];
   /** Explicit browser origins (lower-case `scheme://host[:port]`). Empty = loopback origins only. */
   allowedOrigins?: string[];
-  /** Paths that skip the bearer check (Host/Origin still apply). Default: ["/healthz"]. */
-  publicPaths?: string[];
+  /** Path prefixes that require the bearer token (Host/Origin apply everywhere). Default: ["/api/"]. */
+  protectedPrefixes?: string[];
   onReject?: (rejection: SecurityRejection) => void;
 }
 
@@ -64,6 +67,8 @@ export interface SecurityPolicy {
   isOriginAllowed(origin: string | undefined): boolean;
   /** True when the presented Authorization header is valid (or auth is off). */
   isAuthorized(authorization: string | undefined): boolean;
+  /** Path prefixes the bearer check applies to (default ["/api/"]). */
+  readonly protectedPrefixes: readonly string[];
   /** Secret-free description for banners and /api/health. */
   describe(): { mode: "token" | "off"; allowedHosts: string[]; allowedOrigins: string[] | "loopback" };
 }
@@ -125,7 +130,7 @@ export function createSecurityPolicy(options: SecurityOptions): SecurityPolicy {
   const bindHost = options.bindHost && !isAnyAddress(options.bindHost) ? hostWithoutPort(options.bindHost) : undefined;
   const allowedHosts = new Set((options.allowedHosts ?? []).map((h) => hostWithoutPort(h)));
   const allowedOrigins = new Set((options.allowedOrigins ?? []).map((o) => o.trim().toLowerCase()));
-  const publicPaths = new Set(options.publicPaths ?? ["/healthz"]);
+  const protectedPrefixes = options.protectedPrefixes ?? ["/api/"];
   const onReject = options.onReject ?? (() => {});
 
   const isHostAllowed = (hostHeader: string | undefined): boolean => {
@@ -210,7 +215,7 @@ export function createSecurityPolicy(options: SecurityOptions): SecurityPolicy {
     }
 
     // 3. Bearer token
-    if (options.mode === "token" && !publicPaths.has(path)) {
+    if (options.mode === "token" && protectedPrefixes.some((prefix) => path.startsWith(prefix))) {
       const authorization = req.headers?.authorization as string | undefined;
       if (!authorization) {
         reject(
@@ -237,6 +242,7 @@ export function createSecurityPolicy(options: SecurityOptions): SecurityPolicy {
 
   return {
     middleware,
+    protectedPrefixes,
     isHostAllowed,
     isOriginAllowed,
     isAuthorized,

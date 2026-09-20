@@ -114,7 +114,15 @@ to finish, then exits 0. A second signal exits immediately.
 Be precise about what starts, because the README's product narrative describes
 more than this repository contains (that reconciliation is P2-01):
 
-- **HTTP API only.** There is no web UI and no `packages/web` bundle; the
+- **HTTP API plus a minimal web UI.** `packages/web` builds to
+  `packages/web/dist/app` and the server serves it at `/` when present (static
+  files never answer under `/api/`; `/api` keeps requiring the bearer token).
+  Open the `ui:` URL from the banner; in memory mode it includes
+  `#token=<generated token>`, which the page stores in `sessionStorage` and
+  strips from the address bar. In file mode paste the contents of
+  `<dataDir>/auth-token` into the token field. The UI covers: session
+  create/delete, sending a turn, streamed text, Stop, approval cards, the
+  project-trust prompt and error display — nothing more yet. The API
   endpoints are the ones `createApp()` defines: `POST /api/sessions/:id`,
   `POST /api/sessions/:id/turns`, `GET /api/sessions/:id/turns/:turnId/events`
   (SSE), `POST …/cancel`, `POST /api/sessions/:id/approve`, `GET /api/health`,

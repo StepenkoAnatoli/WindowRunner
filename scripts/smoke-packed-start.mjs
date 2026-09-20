@@ -150,6 +150,17 @@ async function main() {
     assert(healthRes.status === 200, `/api/health returned ${healthRes.status}`);
     step("/api/health responds ok with the bearer token (401 without)");
 
+    // The web UI ships in the tarball (packages/web/dist/app) and is served
+    // at / without a token; the token is only required under /api.
+    const ui = await fetch(`${baseUrl}/`);
+    assert(ui.status === 200, `/ returned ${ui.status}, expected 200 (web UI missing from tarball?)`);
+    assert(/text\/html/.test(ui.headers.get("content-type") ?? ""), `/ content-type ${ui.headers.get("content-type")}`);
+    assert(ui.headers.get("cache-control") === "no-store", `/ cache-control ${ui.headers.get("cache-control")}`);
+    assert(/app\.js/.test(await ui.text()), "/ did not reference app.js");
+    const js = await fetch(`${baseUrl}/app.js`);
+    assert(js.status === 200, `/app.js returned ${js.status}`);
+    step("web UI served at / (index.html + app.js) from the packed tarball");
+
     // Shutdown gracefully. On Windows shell:true wraps npm in cmd.exe, so plain
     // child.kill() only terminates cmd and leaves node running as an orphan —
     // which keeps serving and locks the temp dir (EBUSY on cleanup). taskkill

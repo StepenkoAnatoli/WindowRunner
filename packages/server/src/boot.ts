@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { ConfigError, isLoopbackHost, ENV, MIN_AUTH_TOKEN_LENGTH, type ServerConfig } from "./config.js";
 import { generateAuthToken } from "./security.js";
@@ -42,6 +44,29 @@ export interface RuntimeOverrides {
   now?: () => number;
   /** Boot-time logger. Default: silent (index.ts passes console.log). */
   log?: (line: string) => void;
+  /** Built web UI directory. Default: packages/web/dist/app next to this package, if it exists; `null` disables. */
+  webDir?: string | null;
+}
+
+/**
+ * Locate the built web UI relative to this file. Works from src/ (tsx) and
+ * from the bundled dist/index.cjs: both are two levels below `packages/`, so
+ * `../../web/dist/app` is the same directory either way.
+ */
+export function resolveWebDir(): string | undefined {
+  let here: string | undefined;
+  try {
+    if (typeof __dirname === "string") here = __dirname;
+  } catch {}
+  if (!here) {
+    try {
+      const url = typeof import.meta !== "undefined" ? import.meta.url : undefined;
+      if (url) here = path.dirname(fileURLToPath(url));
+    } catch {}
+  }
+  if (!here) return undefined;
+  const candidate = path.resolve(here, "..", "..", "web", "dist", "app");
+  return existsSync(path.join(candidate, "index.html")) ? candidate : undefined;
 }
 
 export interface TurnBootDiagnostics {
@@ -78,6 +103,8 @@ export interface Runtime {
   tools: Map<string, ToolDefinition>;
   trust: ProjectTrustRegistry;
   boot: BootDiagnostics;
+  /** Directory the web UI is served from, if any. */
+  webDir?: string;
   /**
    * The bearer token clients must present (undefined when auth is off). Held
    * on the runtime so the entry point can print it once and tests can use it;
@@ -239,7 +266,10 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     sessionStore,
   });
 
+  const webDir = overrides.webDir === null ? undefined : overrides.webDir ?? resolveWebDir();
+
   const app = createApp({
+    webDir,
     manager,
     provider,
     tools,
@@ -258,7 +288,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     },
   });
 
-  return { config, app, manager, approvals, sessionManager, provider, tools, trust, boot, authToken };
+  return { config, app, manager, approvals, sessionManager, provider, tools, trust, boot, authToken, webDir };
 }
 
 export async function startServer(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<StartedServer> {
