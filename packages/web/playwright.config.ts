@@ -3,6 +3,14 @@ import { DASH_PORT } from "./e2e/fixture.js";
 
 const port = Number(process.env.E2E_PORT ?? 7699);
 
+/**
+ * Local-debug override: point Playwright at an existing Chromium binary
+ * (e.g. one extracted outside the usual CDN path) instead of the
+ * ms-playwright-managed build. Unused in CI, which installs the managed
+ * build via `npm run e2e:install`.
+ */
+const debugExecutable = process.env.E2E_CHROMIUM_EXECUTABLE;
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /.*\.spec\.ts/,
@@ -14,6 +22,15 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    ...(debugExecutable
+      ? {
+          launchOptions: {
+            executablePath: debugExecutable,
+            chromiumSandbox: false,
+            env: { ...process.env, LD_LIBRARY_PATH: process.env.E2E_CHROMIUM_LD_LIBRARY_PATH || "" },
+          },
+        }
+      : {}),
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   // Two fixture servers: the scripted-provider UI server (with its proxy on

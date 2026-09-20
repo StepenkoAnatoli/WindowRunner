@@ -212,7 +212,8 @@ describe("provider profile routes", () => {
     assert.ok(!text.includes("sk-omni-9999888877776666"), "response must not contain the raw key");
     const file = await fs.readFile(profilesFilePath(dataDir), "utf8");
     assert.ok(file.includes("sk-omni-9999888877776666"), "key must be persisted at rest");
-    assert.equal((await fs.stat(profilesFilePath(dataDir))).mode & 0o777, 0o600);
+    // POSIX only: Windows ignores mode bits (ACLs instead).
+    if (process.platform !== "win32") assert.equal((await fs.stat(profilesFilePath(dataDir))).mode & 0o777, 0o600);
   });
 
   it("POST /api/providers rejects invalid profiles with 400 and a per-field error list", async () => {
@@ -431,7 +432,8 @@ describe("provider boot integration", () => {
     let h = await startServer(configFor(dataDir));
     servers.push(h);
     const stored: any = JSON.parse(await fs.readFile(file, "utf8"));
-    assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+    // POSIX only: Windows ignores mode bits (ACLs instead).
+    if (process.platform !== "win32") assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
     assert.deepEqual(stored.profiles.map((p: any) => p.id), ["default"]);
     assert.equal(stored.profiles[0].kind, "mock");
     assert.equal(stored.activeProfileId, "default");

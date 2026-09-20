@@ -223,7 +223,7 @@ function banner(active: ProviderProfileView | null): HTMLElement {
 }
 
 function providersPanel(active: ProviderProfileView | null): HTMLElement {
-  const cards = (state.profiles ?? []).map((p) => providerCard(p, Boolean(active)));
+  const cards = (state.profiles ?? []).map((p) => providerCard(p, p.id === active?.id));
   return el(
     "section",
     { class: "panel", "data-testid": "dash-providers" },

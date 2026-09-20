@@ -32,11 +32,12 @@ describe("UsageLog", () => {
     const log = new UsageLog({ dataDir: dir });
     log.append(rec("t1"));
     await log.flush();
-    assert.equal((await fs.stat(file)).mode & 0o777, 0o600, "first write creates the file 0600");
+    // POSIX only: Windows ignores mode bits (ACLs instead of modes).
+    if (process.platform !== "win32") assert.equal((await fs.stat(file)).mode & 0o777, 0o600, "first write creates the file 0600");
 
     log.append(rec("t2"));
     await log.flush();
-    assert.equal((await fs.stat(file)).mode & 0o777, 0o600, "subsequent appends leave the mode untouched");
+    if (process.platform !== "win32") assert.equal((await fs.stat(file)).mode & 0o777, 0o600, "subsequent appends leave the mode untouched");
     const lines = (await fs.readFile(file, "utf8")).trim().split("\n");
     assert.equal(lines.length, 2);
     assert.equal(JSON.parse(lines[1]).turnId, "t2");
@@ -71,7 +72,7 @@ describe("UsageLog", () => {
     log.append(rec("t1"));
     await log.flush();
     assert.equal(log.length, 1);
-    assert.equal((await fs.stat(path.join(nested, "usage.jsonl"))).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await fs.stat(path.join(nested, "usage.jsonl"))).mode & 0o777, 0o600);
 
     const roDir = await tmpDir();
     await fs.chmod(roDir, 0o555);

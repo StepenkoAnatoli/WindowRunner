@@ -110,8 +110,12 @@ describe("ProviderStore", () => {
 
     const raw = await fs.readFile(profilesFilePath(dir), "utf8");
     assert.ok(raw.includes("sk-omni-0123456789abcdef"), "the key is stored at rest (0600 file only)");
-    const mode = (await fs.stat(profilesFilePath(dir))).mode & 0o777;
-    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    // Windows ignores POSIX permission bits (ACLs instead of modes), so the
+    // mode assertion is only meaningful on POSIX; the store still requests 0600.
+    if (process.platform !== "win32") {
+      const mode = (await fs.stat(profilesFilePath(dir))).mode & 0o777;
+      assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    }
 
     const fresh = new ProviderStore({ dataDir: dir });
     assert.equal((await fresh.load()).fileExisted, true);
