@@ -121,7 +121,11 @@ async function runTask(id: string, provider: string): Promise<TaskResult> {
     },
     tools: { enabled: true, terminalTimeoutMs: 60_000, terminalOutputLimit: 64 * 1024 },
     auth: { mode: "token", token: TOKEN, allowedHosts: [], allowedOrigins: [] },
-    persistence: { mode: "memory", dataDir: path.join(os.tmpdir(), "unused"), durableBeforeNotify: false, fsync: false },
+    // A per-task data dir: the provider-profiles.json store is live even in
+    // memory mode, so a shared dir would leak the previous task's bootstrapped
+    // "default" profile (its base URL points at a fake that is closed after
+    // the task) into this task's boot.
+    persistence: { mode: "memory", dataDir: await fs.mkdtemp(path.join(os.tmpdir(), `wr-eval-data-${id}-`)), durableBeforeNotify: false, fsync: false },
     allowedRoots: [work],
     shutdownGraceMs: 2000,
   };

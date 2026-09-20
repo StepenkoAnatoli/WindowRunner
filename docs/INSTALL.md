@@ -258,6 +258,53 @@ by kind `host` / `origin` / `auth`) and surface as a `securityRejection`
 alert on `/api/health`. Neither the token nor the presented credential is ever
 written to logs, metrics or health output.
 
+### Provider dashboard
+
+When the web package is built (`npm run build`), the same origin serves the
+provider dashboard at `/dashboard` (main UI at `/`). It uses the **same bearer
+token** as `/api` — the browser shares it with the main UI through
+`sessionStorage` — and is behind the same auth middleware; there is no
+unauthenticated path.
+
+What it does:
+
+- **Active-provider banner** — the profile the next turn will run on.
+- **Provider cards** — every saved profile with a status dot (green = last
+  Test passed, red = failed, gray = never tested) and **Use this** (hot-swap:
+  the *next* turn runs on the new profile, no restart), **Test** (one minimal
+  request with a 5 s timeout), **Edit**, **Delete** (the active profile cannot
+  be deleted — switch first).
+- **Add-profile form** with presets: OmniRoute (OpenAI-compatible — the base
+  URL is per-account, so it is a placeholder you type, never pre-filled),
+  OpenAI, Anthropic (official base URL, fixed), Spark (local Ollama,
+  `http://127.0.0.1:11434/v1`, no key), and the offline mock.
+- **Recent turns** — the last 50 usage records (time, provider, model, tokens,
+  status). Cost shows `—` unless a price-table entry exists for the exact
+  model id; the bundled table is empty, so no cost is ever fabricated.
+- **Quick chat** — one streamed turn to the active provider, reusing the main
+  UI's `POST /turns` + SSE event stream.
+
+Storage:
+
+- Profiles live in `<data dir>/provider-profiles.json` (same `<data dir>` as
+  sessions — `~/.windows-runner` by default, or `WINDOWS_RUNNER_DATA_DIR`),
+  written atomically with **mode 0600**, the same pattern as `auth-token`.
+  The file is created on the first boot even in memory mode (sessions stay in
+  memory; profiles do not).
+- Usage history lives in `<data dir>/usage.jsonl` (mode 0600, one line per
+  terminal turn). It contains turn metadata (provider, model, tokens,
+  status) — no keys, no message content.
+- **The API key is stored in that file in plaintext at rest.** It is never
+  logged, echoed in an API response, or included in error/diagnostic output
+  (responses show only `****last4`), and the 0600 mode keeps other local users
+  out — but there is no OS keychain integration in this checkout. That is the
+  documented trade-off; see `RELEASE_CHECKLIST.md` (P2, provider dashboard).
+- On first boot (file absent) the environment provider
+  (`WINDOWS_RUNNER_PROVIDER`/`WINDOWS_RUNNER_MODEL*`) is registered as the
+  `default` profile and made active. On later boots the **persisted** active
+  profile wins over the environment, so a dashboard "Use this" survives
+  restarts.
+
 ### Remote access
 
 The default is loopback only. Setting `HOST` to a non-loopback address requires

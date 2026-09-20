@@ -101,6 +101,7 @@ a pull request.
 | P1-07 | **Partial as of 2026-09-20.** Browser E2E (Phase 2) as before. Phase 3 added the fake-provider failure suite: `test/openai-compatible.test.ts` against an OpenAI-shaped fake covers auth, 429 (+ Retry-After), 5xx, retry/backoff (`test/retry.test.ts`), context exhaustion, dropped/garbage streams, malformed tool arguments, cancellation mid-stream; `test/anthropic.test.ts` repeats the matrix against an Anthropic-shaped fake. Real-endpoint validation: `npm run validate:provider` (manual, ordered, stops at first failure, secret-free report) — **not yet run against a paid account**. Not covered: settings, edit/diff review, reload-resume; no job gates merges. |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | **Partial as of 2026-09-20 (Phase 3).** `eval/` harness with five task categories and hidden checks; scripted mode runs in CI, real-model runs are manual and reported as JSON under `eval/results/`. Metrics recorded: completion, steps, tool calls/failures, approvals (interventions), tokens, elapsed. Not recorded: cost, regressions across releases (no real-model baseline committed yet). |
+| P2-04 | **Landed 2026-09-20.** Multi-provider config + dashboard: profiles in `<dataDir>/provider-profiles.json` (0600, atomic), CRUD + activate + test routes behind the existing bearer auth, hot-swap of the active provider for the next turn, usage log (`usage.jsonl`, `GET /api/usage`), and the `/dashboard` page (vanilla DOM, same build pipeline). Known limitation, documented: **API keys are plaintext at rest** in the 0600 profile file — no keychain integration, no per-key spend limits. |
 
 ## P0 — Must fix before recommending installation
 
@@ -421,6 +422,30 @@ Acceptance:
       and self-contained bundle `packages/server/dist/index.cjs`, runnable as a server
       from checkout (`npm start`), from tarball (`npm run smoke:packed:start`),
       and in Docker (gaps G-01, G-02, G-03, G-04 closed).
+
+### [x] P2-04: Multi-provider config with a self-service dashboard
+Title: Pick between OmniRoute, OpenAI, Anthropic, local Spark (Ollama) and the offline mock from a dashboard without editing env vars; show active provider, reachability, recent turns, and (honest) estimated spend
+
+Files:
+- `packages/server/src/provider-profiles.ts` — profile types, validation, masking (`****last4`), redaction, 0600 atomic store
+- `packages/server/src/provider-service.ts` — CRUD, activate (hot-swap), reachability test, last-test persistence
+- `packages/server/src/usage-log.ts` — per-turn usage records, `usage.jsonl`, `GET /api/usage?limit`
+- `packages/server/src/app.ts`, `packages/server/src/boot.ts` — routes, dashboard static serving, first-boot `default` profile bootstrap
+- `packages/web/src/dashboard.ts`, `packages/web/public/dashboard.html`, `packages/web/public/dashboard.css`, `packages/web/scripts/bundle.mjs` — the dashboard (vanilla DOM, esbuild-bundled to `dist/dashboard/`)
+- `packages/server/test/provider-profiles.test.ts`, `packages/server/test/providers-routes.test.ts`, `packages/web/e2e/dashboard.spec.ts`, `packages/web/e2e/dashboard-server.ts`
+
+Acceptance:
+- [x] Profiles: `<dataDir>/provider-profiles.json`, mode 0600, atomic tmp+rename write, same pattern as `auth-token`; corrupt file is a hard error (never silently discards keys)
+- [x] No API key in any response, log line, or error: every profile is redacted to `apiKeyMasked` (`****last4`); the `/test` reply is scrubbed of the profile's own key
+- [x] Routes `GET/POST /api/providers`, `PATCH/DELETE /api/providers/:id` (delete active → `409 PROVIDER_ACTIVE`), `POST …/activate` (unknown → `404`), `POST …/test` (minimal request, 5 s timeout, `{ok, latencyMs}` / `{ok:false, code, message}`) — all behind the existing bearer auth, no exceptions
+- [x] Hot-swap: activation and editing of the active profile rebuild the provider in a mutable box that `POST /turns` reads at turn start — the *next* turn runs on the new profile, no restart (tested: post-activation turn usage record carries the new profile id; edited active profile's next turn hits the new base URL)
+- [x] First boot registers the env provider as `default`; later boots honour the persisted active profile over the environment; a stored id that no longer exists falls back to `default` and repersists
+- [x] Usage: one record per completed/failed turn (provider, model, tokens, status) to `usage.jsonl`; `GET /api/usage` newest-first with `limit` 1..500; `estCostUsd` is `null` unless a price-table entry matches the exact model id — the bundled table is empty, so the dashboard never fabricates a cost
+- [x] Dashboard at `/dashboard` (same bearer token, same CSP/no-store headers): active-provider banner, provider cards with status dot + Use this/Test/Edit/Delete, add/edit form with presets — OmniRoute base URL is a user-typed placeholder, never pre-filled or hardcoded; Anthropic base URL fixed; Spark = `http://127.0.0.1:11434/v1`; quick chat reuses `POST /turns` + SSE
+- [x] Tests: `provider-profiles.test.ts` (round trip, 0600, validation, redaction, serialised mutate), `providers-routes.test.ts` (auth 401s, 400 error lists, 409s, key never in responses, hot-swap via usage records, edit hot-reload via two fake OpenAI servers, boot integration), `e2e/dashboard.spec.ts` (add → test → activate → streamed chat → usage row; runs on a separate real-bootstrap fixture server)
+- [x] **Documented limitation: keys are plaintext at rest.** The profile file is mode 0600 and the key is never returned by any API, log, or error, but it is not OS-keychain-protected and a user who can read the file can read the key. No keychain integration and no per-key spend limits in this checkout (display only); both are deliberate non-goals for now (docs/INSTALL.md "Provider dashboard", README "Providers").
+
+---
 
 ## Release gate
 

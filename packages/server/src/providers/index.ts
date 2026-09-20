@@ -1,9 +1,10 @@
 import type { LLMProvider } from "./types.js";
 import { MockProvider } from "./mock.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
-import { AnthropicProvider } from "./anthropic.js";
-import { withRetry } from "./retry.js";
-import type { ModelConfig } from "../config.js";
+import { AnthropicProvider, DEFAULT_ANTHROPIC_BASE_URL } from "./anthropic.js";
+import { withRetry, DEFAULT_MODEL_MAX_RETRIES } from "./retry.js";
+import { ConfigError, ENV, type ModelConfig } from "../config.js";
+import type { ProviderProfile } from "../provider-profiles.js";
 
 /**
  * Provider registry for the server boot path.
@@ -59,6 +60,57 @@ export function createProvider(name: string, model?: ModelConfig, log?: (line: s
       });
     }
   }
+}
+
+/**
+ * Options shared by every provider built from a profile (dashboard path).
+ * The env boot path and the profile path must behave identically: same retry
+ * policy (WINDOWS_RUNNER_MODEL_MAX_RETRIES) and same system prompt.
+ */
+export interface ProfileProviderOptions {
+  /** Extra attempts for retryable errors. Default: DEFAULT_MODEL_MAX_RETRIES (2). */
+  maxRetries?: number;
+  /** System prompt prepended when the transcript has none. */
+  systemPrompt?: string;
+  /** Called before each retry; used for the server log. */
+  onRetry?: (info: { attempt: number; delayMs: number; error: import("./types.js").ProviderError }) => void;
+  /** Injectable for tests. */
+  fetch?: typeof fetch;
+}
+
+/**
+ * Build an LLMProvider from a dashboard-managed profile (provider-profiles.ts).
+ * Reuses the same adapters as the env boot path — no per-profile adapter
+ * classes. `anthropic` profiles omit baseUrl by default (official API);
+ * `openai-compatible` requires it (validated at save time, enforced here too).
+ */
+export function createProviderFromProfile(profile: ProviderProfile, options: ProfileProviderOptions = {}): LLMProvider {
+  const { maxRetries = DEFAULT_MODEL_MAX_RETRIES, systemPrompt, onRetry, fetch } = options;
+  let inner: LLMProvider;
+  switch (profile.kind) {
+    case "mock":
+      inner = new MockProvider();
+      break;
+    case "openai-compatible": {
+      if (!profile.baseUrl) {
+        throw new ConfigError(`provider profile "${profile.id}": baseUrl is required for openai-compatible profiles`, ENV.modelBaseUrl);
+      }
+      inner = new OpenAICompatibleProvider({ baseUrl: profile.baseUrl, model: profile.model, apiKey: profile.apiKey, systemPrompt, fetch });
+      break;
+    }
+    case "anthropic":
+      inner = new AnthropicProvider({
+        baseUrl: profile.baseUrl ?? DEFAULT_ANTHROPIC_BASE_URL,
+        model: profile.model,
+        apiKey: profile.apiKey,
+        systemPrompt,
+        fetch,
+      });
+      break;
+    default:
+      throw new ConfigError(`provider profile "${profile.id}": unknown kind ${(profile as { kind: string }).kind}`, ENV.provider);
+  }
+  return withRetry(inner, { maxRetries, onRetry });
 }
 
 export const DEFAULT_SYSTEM_PROMPT =

@@ -4,6 +4,13 @@ import * as path from "node:path";
 import { computeConfigHash } from "../../server/src/agent/project-trust.js";
 
 export const E2E_PORT = Number(process.env.E2E_PORT ?? 7699);
+/**
+ * The provider-dashboard fixture server (e2e/dashboard-server.ts) listens on
+ * its own port: it runs the REAL provider bootstrap (no ScriptedProvider
+ * override), which the scripted server above cannot do because its scripted
+ * provider is frozen at boot while the dashboard hot-swaps profiles.
+ */
+export const DASH_PORT = Number(process.env.DASH_PORT ?? 7701);
 export const E2E_TOKEN = "e2e-fixed-token-0123456789abcdef";
 export const MCP_CONFIG = { command: "npx", args: ["-y", "example-mcp"], env: { EXAMPLE: "1" } };
 export const MCP_CONFIG_HASH = computeConfigHash(MCP_CONFIG);
