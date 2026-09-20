@@ -31,7 +31,7 @@ which platform checks exist and which do not.
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** | Bin launchers exist; publication to npm registry is open (gap G-05) |
 | `install.sh` | **Experimental** | Reaches `npm run setup`, then offers `npm start` on an interactive terminal (prints the command when piped) |
 | `install.ps1` | **Untested** | No Windows runner is available to this repository (gap G-06) |
-| `docker compose up --build` | **Unblocked** | Self-contained bundle built at `dist/index.cjs` (gaps G-03, G-04 closed) |
+| `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Not available** | `packages/desktop` does not exist; Electron is not a dependency (gap G-04) |
 
 "Verified" means the command succeeded on the environment above. It is not a

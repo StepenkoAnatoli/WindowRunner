@@ -97,7 +97,8 @@ docker compose up --build
 Builds the multi-stage container image using the self-contained server bundle
 (`packages/server/dist/index.cjs`, closing gaps G-03 and G-04). The image runs
 the standalone bundle directly without requiring `node_modules` or workspace
-symlinks in the runtime container. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
+symlinks in the runtime container. CI verifies this on every push and pull
+request (the `Docker` job). See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
 ### Option 6 — Desktop app (Electron, not available)
 
