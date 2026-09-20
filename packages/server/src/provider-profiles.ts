@@ -78,6 +78,23 @@ export function redactProfile(p: ProviderProfile): RedactedProfile {
 }
 
 /**
+ * Both `apiKey` and `baseUrl` end up verbatim in an outbound request's headers
+ * or URL, so a non-ASCII or control character makes the upstream call throw an
+ * opaque `InvalidCharacterError` from `fetch` instead of failing cleanly. This
+ * names the exact offending character so the copy/paste that introduced it is
+ * obvious. Printable ASCII only (0x20-0x7E).
+ */
+export function invalidHeaderValue(value: string): string | undefined {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.codePointAt(i)!;
+    if (code < 0x20 || code > 0x7e) {
+      return `contains ${JSON.stringify(value[i])} (U+${code.toString(16).toUpperCase().padStart(4, "0")}) at index ${i}, which cannot be sent in an HTTP header; retype the value by hand`;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Validate a full profile (create: the input IS the profile; update: the
  * merged result). Returns a list of human-readable errors; empty = valid.
  */
@@ -101,9 +118,17 @@ export function validateProfile(input: Partial<ProviderProfile>): string[] {
   if (input.baseUrl !== undefined && !/^https?:\/\//i.test(input.baseUrl)) {
     errors.push("baseUrl must start with http:// or https://");
   }
+  if (input.baseUrl !== undefined && /^https?:\/\//i.test(input.baseUrl)) {
+    const bad = invalidHeaderValue(input.baseUrl);
+    if (bad) errors.push(`baseUrl ${bad}`);
+  }
   if (input.apiKey !== undefined && input.apiKey !== null && typeof input.apiKey === "string") {
     if (input.apiKey.length > 512) errors.push("apiKey too long (max 512 chars)");
     else if (/\s/.test(input.apiKey)) errors.push("apiKey must not contain whitespace");
+    else {
+      const bad = invalidHeaderValue(input.apiKey);
+      if (bad) errors.push(`apiKey ${bad}`);
+    }
   }
   return errors;
 }

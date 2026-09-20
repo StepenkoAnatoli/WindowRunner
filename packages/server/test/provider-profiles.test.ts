@@ -12,6 +12,7 @@ import {
   ProviderStore,
   ProviderStoreError,
   defaultProfileFromConfig,
+  invalidHeaderValue,
   maskKey,
   profilesFilePath,
   redactProfile,
@@ -96,6 +97,26 @@ describe("validateProfile", () => {
   it("rejects overlong or whitespace-containing keys", () => {
     assert.ok(validateProfile(profile({ apiKey: "x".repeat(513) })).some((e) => e.startsWith("apiKey too long")));
     assert.ok(validateProfile(profile({ apiKey: "sk a b" })).some((e) => e.startsWith("apiKey must not contain whitespace")));
+  });
+
+  it("rejects non-ASCII header characters and names the offending code point", () => {
+    // `sk-\u2022\u2022\u2022\u2022` — the masked-display bullet arriving via copy/paste. The bullet
+    // sits at index 3; `Bearer ` + that mask would put it at index 11.
+    assert.equal(invalidHeaderValue("sk-\u2022\u2022\u2022\u2022"), 'contains "\u2022" (U+2022) at index 3, which cannot be sent in an HTTP header; retype the value by hand');
+    assert.equal(invalidHeaderValue("sk-abc123"), undefined);
+    assert.equal(invalidHeaderValue(""), undefined);
+    assert.equal(invalidHeaderValue("sk-\u200babc"), 'contains "\u200b" (U+200B) at index 3, which cannot be sent in an HTTP header; retype the value by hand');
+
+    assert.ok(validateProfile(profile({ apiKey: "sk-\u2022\u2022\u2022\u2022" })).some((e) => e.startsWith("apiKey contains") && e.includes("U+2022")));
+    assert.ok(validateProfile(profile({ baseUrl: "https://api.example.com/v1\u00a0" })).some((e) => e.startsWith("baseUrl contains") && e.includes("U+00A0")));
+  });
+
+  it("reports exactly one error per bad value and stays quiet for printable ASCII", () => {
+    // Whitespace and non-ASCII must not double-report on the same key.
+    assert.deepEqual(validateProfile(profile({ apiKey: "sk a\u2022" })).filter((e) => e.startsWith("apiKey")), ["apiKey must not contain whitespace"]);
+    // A bad scheme already yields "baseUrl must start with"; it must not also yield a charset error.
+    assert.deepEqual(validateProfile(profile({ baseUrl: "ftp://x\u2022" })).filter((e) => e.startsWith("baseUrl")), ["baseUrl must start with http:// or https://"]);
+    assert.deepEqual(validateProfile(profile({ apiKey: "sk-abc123" })).filter((e) => e.startsWith("apiKey")), []);
   });
 });
 

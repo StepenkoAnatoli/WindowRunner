@@ -77,6 +77,30 @@ approving review. All four are required so no merge can skip a platform leg or
 the Docker job. This is the only item in this section that cannot be done from
 a pull request.
 
+### Latent risk — not a defect today
+
+`extraHeaders` (OpenAI-compatible) and `anthropic-version` (Anthropic) bypass
+`validateProfile`'s header-safety checks. If either becomes user-configurable,
+it must go through the same printable-ASCII validation as `apiKey`/`baseUrl`
+before merging.
+
+Both are set today only from hardcoded defaults, never from user input:
+`extraHeaders` is spread into the request headers at
+`packages/server/src/providers/openai-compatible.ts` but no caller passes it,
+so `options.extraHeaders ?? {}` always yields an empty object, and
+`anthropic-version` is always `DEFAULT_ANTHROPIC_VERSION` (`2023-06-01`) in
+`packages/server/src/providers/anthropic.ts`. Neither constructor is reached
+with those options from `createProvider` or `createProviderFromProfile` in
+`packages/server/src/providers/index.ts`. The risk is the day either is exposed
+through the dashboard — a "custom headers" field for OpenRouter's
+`HTTP-Referer`/`X-Title`, or a configurable Anthropic API version — at which
+point a non-header-safe value reaches `fetch` header construction with nothing
+validating it. This is the bug fixed by "reject non-header-safe provider and
+auth values", reintroduced through a different door.
+
+Validation is deliberately **not** added for these fields now: nothing sets
+them, so a check would be speculative and untestable against real input.
+
 ---
 
 ## Status snapshot (as of 2026-09-17, HEAD `b9ae7ac`)

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ApiClient, ApiRequestError, readSse } from "../src/api.js";
+import { ApiClient, ApiConfigError, ApiRequestError, invalidHeaderCharacter, readSse } from "../src/api.js";
 
 function sseBody(frames: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -60,6 +60,52 @@ describe("ApiClient", () => {
     for (const c of calls) assert.equal((c.init.headers as any).authorization, "Bearer tok-123");
     assert.equal(calls[1].url, "http://x/api/sessions/s%201/turns", "ids are URL-encoded");
     assert.equal(JSON.parse(calls[1].init.body as string).message, "m");
+  });
+
+  it("refuses a token holding characters a header cannot carry, without calling fetch", async () => {
+    // `Bearer ` is 7 chars, so the 5th character of a value lands at header
+    // index 11 — the offset in the original report.
+    const token = `abcd\u2022`;
+    assert.equal(invalidHeaderCharacter(`Bearer ${token}`), "U+2022");
+    assert.equal(`Bearer ${token}`.indexOf("\u2022"), 11);
+    let called = 0;
+    const fetchImpl: typeof fetch = async () => {
+      called++;
+      return new Response("{}", { status: 200 });
+    };
+    const client = new ApiClient({ token, fetch: fetchImpl });
+    await assert.rejects(client.health(), (err: unknown) => err instanceof ApiConfigError && err.message.includes("U+2022") && err.message.includes("retype"));
+    // The SSE path builds its own headers object and would otherwise retry the
+    // bad header six times before quietly reporting `gave_up`.
+    const reported: unknown[] = [];
+    await assert.rejects(
+      client.streamTurn("s", "t", { onEvent: () => {}, onError: (e) => reported.push(e) }),
+      (err: unknown) => err instanceof ApiConfigError && err.message.includes("U+2022")
+    );
+    assert.equal(reported.length, 1, "must fail on the first attempt, not after the retry budget");
+    assert.equal(called, 0);
+  });
+
+  it("carries a top-level `errors` validation list through to details, where the dashboard reads it", async () => {
+    const client = new ApiClient({
+      token: "tok",
+      fetch: (async () => new Response(JSON.stringify({ error: "profile is invalid", code: "PROFILE_INVALID", errors: ["apiKey contains \u2022 (U+2022) at index 3"] }), { status: 400 })) as any,
+    });
+    await assert.rejects(client.createProfile({}), (err: unknown) => {
+      const e = err as ApiRequestError;
+      return e instanceof ApiRequestError && Array.isArray((e.details as any).errors) && (e.details as any).errors[0].includes("U+2022");
+    });
+  });
+
+  it("accepts any printable-ASCII token, including one with interior spaces", async () => {
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = async (_u: any, init: any) => {
+      seen.push((init.headers as any).authorization);
+      return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+    };
+    const client = new ApiClient({ token: "tok 123!~", fetch: fetchImpl });
+    await client.health();
+    assert.deepEqual(seen, ["Bearer tok 123!~"]);
   });
 
   it("streamTurn reconnects with Last-Event-ID after a transport drop and never delivers a seq twice", async () => {

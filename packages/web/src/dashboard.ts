@@ -676,9 +676,9 @@ function reportError(err: unknown): void {
 function describeError(err: unknown): string {
   if (err instanceof ApiRequestError) {
     if (err.status === 401) return "the server rejected the token";
-    if (Array.isArray((err as any).details?.errors) && (err as any).details.errors.length > 0) {
-      return `${err.message}: ${(err as any).details.errors.join("; ")}`;
-    }
+    const details = (err.details ?? {}) as { errors?: unknown; details?: { errors?: unknown } };
+    const list = Array.isArray(details.errors) ? details.errors : Array.isArray(details.details?.errors) ? details.details!.errors : [];
+    if (list.length > 0) return `${err.message}: ${list.join("; ")}`;
     return `${err.message} (${err.status} ${err.code})`;
   }
   if (err instanceof TypeError) return `cannot reach the server: ${err.message}`;
