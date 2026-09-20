@@ -17,8 +17,9 @@ Full details, prerequisites, known gaps and troubleshooting:
 **[docs/INSTALL.md](./docs/INSTALL.md)**.
 
 Status below is what was actually executed on Linux (Node 22, npm 10) — not what
-the packaging intends. CI enforces the Linux row only; there is no Windows,
-macOS or Docker job in this repository.
+the packaging intends. CI covers Linux (`CI` job), Docker (`Docker` job) and
+Windows/macOS (`Platform` matrix); the installers run in checkout mode only
+(fresh-clone and interactive modes untested).
 
 | Path | Status |
 | --- | --- |
@@ -29,9 +30,9 @@ macOS or Docker job in this repository.
 | `npm run smoke:start` (boots the built server, runs a turn, restarts, clean SIGTERM) | **Verified** (Linux) |
 | Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** — bin launcher exists; package unpublished (gap G-05) |
 | `npm run dev` | **Server only** — `tsx watch` on the server entry; no web dev server or bundler |
-| Docker / `docker compose up` | **Unblocked** — runs self-contained bundle `dist/index.cjs` |
-| `install.sh` | Experimental — sets up a checkout on Linux and offers `npm start` |
-| `install.ps1` | **Untested** — no Windows runner available |
+| Docker / `docker compose up` | **Verified** (Linux CI) — `Docker` job builds the image and runs a mock turn against the self-contained bundle `dist/index.cjs` |
+| `install.sh` | Experimental — executed on macOS CI in checkout mode (`--no-start`); fresh-clone and interactive modes untested |
+| `install.ps1` | Experimental — executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive modes untested |
 | Electron desktop shell | **Not available** — `packages/desktop` does not exist |
 
 ### Option 1 — Clone and set up (the path that works)
@@ -78,15 +79,18 @@ Clones a checkout and runs `npm run setup`. On an interactive terminal it then
 offers to run `npm start`; when piped as above it prints the command instead
 and never blocks. `--no-start` skips the offer.
 
-### Option 4 — PowerShell (Windows, untested)
+### Option 4 — PowerShell (Windows, experimental)
 
 ```powershell
 irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex
 # or: .\install.ps1 -NoStart
 ```
 
-No Windows runner is available to this repository and CI is Linux-only, so this
-script has no recorded smoke-test result (gap G-06).
+CI executes this script on `windows-latest` in checkout mode with `-NoStart`
+(gap G-06 lifecycle coverage); the fresh-clone and interactive-prompt modes
+have no recorded result. If Windows refuses to run the script, see
+[docs/INSTALL.md → "Troubleshooting"](./docs/INSTALL.md#troubleshooting)
+(execution policy).
 
 ### Option 5 — Docker
 

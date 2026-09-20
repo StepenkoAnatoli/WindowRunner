@@ -197,3 +197,96 @@ jobs:
       - name: Tear down the stack
         if: always()
         run: docker compose down -v
+
+  # Windows/macOS validation (gap G-06): the lifecycle, the packed-tarball and
+  # startup smokes, and the native installer scripts, where shells, installers
+  # and path behavior differ from Linux. Runs after `ci` so a broken build
+  # fails fast; fail-fast is off so one OS result never hides the other.
+  platform:
+    name: Platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: [ci]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Same pin as the Linux job: one exact version everywhere until the
+          # supported-range decision (RELEASE_CHECKLIST.md, step 3) lands.
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Packed-artifact smoke test
+        run: npm run smoke:packed
+
+      - name: Packed-tarball start smoke test
+        run: npm run smoke:packed:start
+
+      - name: Startup smoke test
+        run: npm run smoke:start
+
+      # Exercises the Unix installer end to end in checkout mode (prerequisite
+      # checks, checkout detection, `npm run setup` orchestration). --no-start
+      # skips the interactive offer; there is no TTY under CI.
+      - name: Run install.sh in checkout mode
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash install.sh --no-start
+
+      # Same for the Windows installer. -ExecutionPolicy Bypass is CI-only
+      # plumbing so the script is guaranteed to execute; it validates the
+      # script logic, not the policy UX (see docs/INSTALL.md troubleshooting).
+      - name: Run install.ps1 in checkout mode
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart
+
+      - name: Collect diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "== os =="
+            uname -a 2>/dev/null || systeminfo 2>/dev/null | head -n 5
+            echo "== node =="
+            node --version
+            echo "== npm =="
+            npm --version
+            echo "== git =="
+            git --version
+            echo "== git status =="
+            git status --short
+          } > "diagnostics-${{ matrix.os }}.txt"
+          mkdir -p npm-logs
+          cp -r "$HOME/.npm/_logs/." npm-logs/ 2>/dev/null || cp -r "$APPDATA/npm-cache/_logs/." npm-logs/ 2>/dev/null || true
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-diagnostics-${{ matrix.os }}
+          path: |
+            diagnostics-${{ matrix.os }}.txt
+            npm-logs/
+          if-no-files-found: ignore
+          retention-days: 7

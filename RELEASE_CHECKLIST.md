@@ -22,11 +22,12 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-Two jobs, both `ubuntu-latest`. Triggers: `push` to `main` and every
-`pull_request`. Concurrency cancels superseded runs on the same ref; each job
-has a 20-minute timeout; a diagnostics artifact is uploaded on failure. The
-`CI` job pins Node exactly to `22.23.2`; the `Docker` job runs after `CI`,
-builds `node:22-alpine` images, and needs no runner Node at all.
+Three jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
+cancels superseded runs on the same ref; each job has a 20-minute timeout; a
+diagnostics artifact is uploaded on failure. `CI` (`ubuntu-latest`) and
+`Platform` (`windows-latest` + `macos-latest` matrix, after `CI`) pin Node
+exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
+`node:22-alpine` images and needs no runner Node at all.
 
 | Check | Command |
 | --- | --- |
@@ -37,6 +38,8 @@ builds `node:22-alpine` images, and needs no runner Node at all.
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
+| Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
+| Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
 
 `npm ci` runs without `--ignore-scripts` because `scripts/postinstall.mjs` now
 exists and verifies the workspace tree. Skipping lifecycle scripts was a
@@ -47,9 +50,8 @@ this checklist tracks.
 
 | Previously claimed | Reality |
 | --- | --- |
-| Windows job ("Windows CI green") | No Windows runner in any workflow. `install.ps1` has never been executed (gap G-06). |
-| macOS coverage | No job. |
-| Docker build / `npm run smoke:docker` | No Docker job in CI, and no `smoke:docker` script exists. The image contract itself is now unblocked (gaps G-02, G-03, G-04 closed; `dist/index.cjs` is self-contained). |
+| Installer fresh-clone + interactive modes | Both installers run in CI only in checkout mode with `--no-start`/`-NoStart`. Cloning from a URL and the interactive start prompt are untested on every OS. |
+| `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
 | Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
@@ -87,8 +89,8 @@ a pull request.
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
-| P1-05 | Claimed complete in Batch 6. **"Windows CI green" is not reproducible: there has never been a Windows job in this repository** (see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
-| P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test and a startup smoke test that boots the built server, and is enforced on `push`/`pull_request`. **Windows, packed-CLI and Docker jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
+| P1-05 | Claimed complete in Batch 6. **"Windows CI green" was not reproducible when claimed: there was no Windows job in this repository then** (a `Platform` matrix with a Windows leg exists now; see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
+| P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
 | P1-07 | Open (Phase 5 unchecked tasks). |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | Open (Phase 5). |
@@ -294,9 +296,9 @@ Files to inspect:
 Acceptance criteria:
 - [x] CI runs clean install, typecheck, test, build, and artifact smoke tests — on **one** pinned Node version (22.23.2), not a matrix of supported versions.
 - [x] Linux job included for core validation.
-- [ ] Windows job included for core validation — **not implemented**, no Windows runner.
+- [x] Windows job included for core validation — the `Platform` matrix runs the lifecycle, packed + startup smokes and `install.ps1 -NoStart` on `windows-latest` (and the same for macOS).
 - [x] Packed artifact validation runs from a clean directory without repository-only dependencies — `smoke:packed:start` unpacks tarball outside repo and runs `npm start`, and packaging tests verify standalone bundle execution without node_modules (gaps G-01, G-03, G-04 closed).
-- [ ] Docker build smoke tests run when Docker is available — **not implemented**, although the image build itself is unblocked with self-contained bundle at `dist/index.cjs`. No `smoke:docker` script exists.
+- [x] Docker build smoke tests run when Docker is available — the `Docker` job builds the image via compose, runs a mock turn over SSE and asserts a clean exit. There is deliberately no `smoke:docker` repo script; the coverage lives inline in `ci.yml`.
 - [ ] Security regressions remain in the normal suite — the referenced security modules (`auth.ts`, `access.ts`, `routes.ts`) are not present in this checkout. The boot path's loopback-only default and `WINDOWS_RUNNER_ALLOW_REMOTE` refusal are covered by `packages/server/test/boot.test.ts` and `scripts/smoke-start.mjs`.
 - [x] The built server is tested as a running process, not inferred from source-only tests — `npm run smoke:start` boots `packages/server/dist/index.cjs` from a checkout and `npm run smoke:packed:start` boots it from the packed tarball.
 - [ ] Failed CI gates block release — **false today**: branch protection is unconfigured, so a red `CI` run does not block a merge. Requires admin action.

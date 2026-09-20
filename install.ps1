@@ -7,9 +7,9 @@
 # Override the clone source for forks/local testing:
 #   $env:WINDOWS_RUNNER_REPO_URL = "https://github.com/you/WindowRunner.git"
 #
-# Status: EXPERIMENTAL and untested (see docs/INSTALL.md). No Windows machine was
-# available when this script was last changed, so it has no recorded smoke-test
-# result, and CI runs Linux only (gap G-06). The packed
+# Status: EXPERIMENTAL (see docs/INSTALL.md). CI executes this script on Windows
+# in checkout mode with -NoStart (gap G-06 lifecycle coverage); fresh-clone and
+# interactive-prompt modes are untested. The packed
 # `npm install -g windows-runner` / `npx windows-runner` alternative is NOT
 # available either: the package declares no bin and is not published (gaps G-01
 # and G-05). The clone + `npm run setup` flow below is the verified path (Linux).

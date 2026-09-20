@@ -1,13 +1,13 @@
 # Installation
 
 Status of every install path this repository advertises, verified against the
-current `main` on Linux.
+current `main`.
 
 **Verification environment:** Node `v22.22.3`, npm `10.9.8`, git `2.39.5`,
 Linux x86_64, 2026-09-20. Every row below was produced by running the command
-listed, not inferred from source.
-
-CI enforces the Linux row only. See
+listed, not inferred from source. The `CI` job re-enforces the lifecycle rows
+on Linux; the `Platform` matrix re-enforces install/typecheck/build/test/smokes
+on `windows-latest` and `macos-latest`. See
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md) → "CI enforcement status" for
 which platform checks exist and which do not.
 
@@ -29,8 +29,8 @@ which platform checks exist and which do not.
 | Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
 | `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** | Bin launchers exist; publication to npm registry is open (gap G-05) |
-| `install.sh` | **Experimental** | Reaches `npm run setup`, then offers `npm start` on an interactive terminal (prints the command when piped) |
-| `install.ps1` | **Untested** | No Windows runner is available to this repository (gap G-06) |
+| `install.sh` | **Experimental** | Executed on macOS CI in checkout mode (`--no-start`); fresh-clone and interactive-prompt modes untested |
+| `install.ps1` | **Experimental** | Executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive-prompt modes untested |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Not available** | `packages/desktop` does not exist; Electron is not a dependency (gap G-04) |
 
@@ -212,10 +212,13 @@ and by `npm run smoke:packed:start`.
 sentence presenting the npm/npx path as verified describes a state that does not
 exist today.
 
-**G-06 — no Windows or macOS verification.** CI runs `ubuntu-latest` only. There
-is no Windows runner, no macOS runner, no Docker daemon and no Electron build in
-this repository's CI, so `install.ps1`, the Windows support matrix and the
-desktop path are untested rather than passing.
+**G-06 — no Windows or macOS verification. Closed 2026-09-20.** The `Platform`
+CI matrix runs the full lifecycle (install, typecheck, build, test, packed and
+startup smokes) on `windows-latest` and `macos-latest`, and executes both
+installers in checkout mode with `--no-start`/`-NoStart`. There is still no
+Electron build in this repository's CI, so the desktop path is untested rather
+than passing. Residuals: installer fresh-clone mode and the interactive start
+prompt are untested on every OS.
 
 ---
 
@@ -231,6 +234,12 @@ container.
 `HOST=0.0.0.0` with `WINDOWS_RUNNER_ALLOW_REMOTE=1` inside the container's own
 network namespace, and `WINDOWS_RUNNER_ALLOWED_ROOTS=/work` for the mounted
 workspace.
+
+CI enforces this on every push and pull request: the `Docker` job (which runs
+after `CI`) executes `docker compose up --build -d`, waits for `/healthz`,
+asserts `/api/health` reports file persistence, runs one mock turn over SSE
+against a session rooted in the mounted `/work`, then stops the stack and
+asserts the container exited 0. Container logs are uploaded on failure.
 
 ---
 
@@ -280,3 +289,10 @@ the built entry. Check for a file with a clock-skewed mtime (`touch` it, or run
 A build config inherited the `paths` mapping that points at shared *source*.
 Build configs must map `@windows-runner/shared` to `../shared/dist/index.d.ts`
 and build `packages/shared` first.
+
+**`install.ps1` fails with "cannot be loaded because running scripts is disabled"**
+Windows blocks local scripts under the default `Restricted` execution policy.
+Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (current user
+only), reopen the terminal and re-run. CI bypasses the policy with
+`-ExecutionPolicy Bypass` so the script logic itself is validated; the policy
+UX above is intentionally left to the operator.
