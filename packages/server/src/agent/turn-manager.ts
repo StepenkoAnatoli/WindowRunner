@@ -117,6 +117,8 @@ export class TurnManager {
   }
 
   // Async version — when durableBeforeNotify=true, awaits store.append before notifying (durable before SSE)
+  // Invariant: durableBeforeNotify=true never emits SSE before persistence succeeds
+  // If persistence fails in durable mode, do NOT emit, throw error
   async appendAsync(
     sessionId: SessionId,
     turnId: TurnId,
@@ -143,13 +145,15 @@ export class TurnManager {
       ...eventWithoutSeq,
     } as StreamEvent;
 
-    // Durable before notify: persist first
+    // Durable before notify: persist first, only notify if persist succeeds
     if (this.durableBeforeNotify) {
       try {
         await this.store.append(turnId, sequenced);
       } catch (err) {
-        console.error(`Failed to persist event ${turnId} seq ${sequenced.seq} before notify`, err);
-        // Still fold and notify? For durability we should still notify after failure? But we log and continue
+        // Rollback seqCounter on failure to keep monotonic but allow retry
+        log.seqCounter -= 1;
+        console.error(`Failed to persist event ${turnId} seq ${sequenced.seq} before notify (durable mode, not emitting SSE)`, err);
+        throw err;
       }
     }
 
@@ -167,7 +171,8 @@ export class TurnManager {
 
     if (!this.durableBeforeNotify) {
       this.store.append(turnId, sequenced).catch((err) => {
-        console.error(`Failed to persist event ${turnId} seq ${sequenced.seq}`, err);
+        console.error(`Failed to persist event ${turnId} seq ${sequenced.seq} (async mode, reporting failure)`, err);
+        // Failure is recorded in FileTurnLogStore persistenceFailures for observability
       });
     }
 
@@ -286,13 +291,14 @@ export class TurnManager {
     return { turnsLoaded, turnsWithRestart, diagnostics };
   }
 
-  // Eviction with file deletion if store supports it
+  // Eviction with file deletion if store supports it — never delete active (non-terminal) turns
   async evictOldestAsync(maxTurns = 100) {
     if (this.logs.size <= maxTurns) return;
-    const toDelete = this.logs.size - maxTurns;
-    const keys = [...this.logs.keys()];
+    // Only evict terminal turns, preserve active
+    const terminalTurns = [...this.logs.entries()].filter(([, log]) => log.state.isTerminal).sort((a, b) => a[1].state.updatedAt - b[1].state.updatedAt);
+    const toDelete = Math.min(this.logs.size - maxTurns, terminalTurns.length);
     for (let i = 0; i < toDelete; i++) {
-      const turnId = keys[i];
+      const turnId = terminalTurns[i][0];
       this.logs.delete(turnId);
       if ((this.store as any).deleteTurnFile) {
         try {
@@ -302,13 +308,13 @@ export class TurnManager {
     }
   }
 
-  // Keep sync version for backward compat
+  // Keep sync version for backward compat — never delete active turns
   evictOldest(maxTurns = 100) {
     if (this.logs.size <= maxTurns) return;
-    const toDelete = this.logs.size - maxTurns;
-    const keys = [...this.logs.keys()];
+    const terminalTurns = [...this.logs.entries()].filter(([, log]) => log.state.isTerminal).sort((a, b) => a[1].state.updatedAt - b[1].state.updatedAt);
+    const toDelete = Math.min(this.logs.size - maxTurns, terminalTurns.length);
     for (let i = 0; i < toDelete; i++) {
-      const turnId = keys[i];
+      const turnId = terminalTurns[i][0];
       this.logs.delete(turnId);
       if ((this.store as any).deleteTurnFile) {
         (this.store as any).deleteTurnFile(turnId).catch(() => {});

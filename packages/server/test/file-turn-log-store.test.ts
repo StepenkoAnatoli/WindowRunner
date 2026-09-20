@@ -196,7 +196,7 @@ describe("FileTurnLogStore", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it("quarantine behavior >50% invalid", async () => {
+  it("quarantine behavior >50% invalid — file moved to quarantine, cannot be loaded as active", async () => {
     const dir = await mkTmpDir();
     const store = new FileTurnLogStore({ dataDir: dir });
 
@@ -206,21 +206,29 @@ describe("FileTurnLogStore", () => {
     const filePath = path.join(dir, "sessions", sessionId, "turns", `${turnId}.jsonl`);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
 
-    // Write 1 valid, 3 invalid
+    // Write 1 valid, 3 invalid (>50% invalid)
     const valid = makeEvent(1, turnId, sessionId);
     await fs.writeFile(filePath, `${JSON.stringify(valid)}\nnot json\nnot json2\nnot json3\n`, "utf8");
 
     const events = await store.readAll(turnId);
-    assert.equal(events.length, 1);
+    // After quarantine, file is moved, so read returns empty (cannot be loaded as active)
+    assert.equal(events.length, 0);
 
     const diag = store.getDiagnostics();
     assert.ok(diag.quarantinedFiles.length >= 1);
     assert.ok(diag.quarantinedFiles[0].includes(turnId));
 
-    // Quarantine file should exist
+    // Quarantine file should exist, original should be gone
     const quarantinePath = path.join(dir, "quarantine", `${turnId}.jsonl.quarantined`);
     const stat = await fs.stat(quarantinePath);
     assert.ok(stat.isFile());
+
+    const originalExists = await fs.stat(filePath).then(() => true).catch(() => false);
+    assert.equal(originalExists, false, "original file should be moved, not present");
+
+    // list() should not include quarantined turn
+    const list = await store.list();
+    assert.ok(!list.includes(turnId));
 
     await fs.rm(dir, { recursive: true, force: true });
   });

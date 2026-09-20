@@ -54,8 +54,9 @@ function isValidSessionId(id: string): boolean {
  * - O_APPEND atomic <4KB (Node appendFile)
  * - Optional fsync
  * - Recovery: truncated final line ignored, malformed middle skip+warn, duplicate seq keep first, out-of-order sort by seq (diagnostic), gaps warn, identity mismatches reject
- * - Sorting only on read normalization, never rewrites original file automatically
- * - Concurrency: serialized writes within one process. Multi-process unsupported — documented, no file lock, O_APPEND alone does not provide session-level correctness
+ * - Sorting only on read normalization, never rewrites original file automatically except RESTART and truncated tail cleanup
+ * - Concurrency: SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process writers UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Documented explicitly.
+ * - Quarantined files (>50% invalid) are MOVED to quarantine/ dir and cannot be loaded as active turns
  */
 export class FileTurnLogStore implements TurnLogStore {
   private dataDir: string;
@@ -75,6 +76,9 @@ export class FileTurnLogStore implements TurnLogStore {
     quarantinedFiles: [],
     warnings: [],
   };
+
+  // For persistence failure reporting in async mode
+  private persistenceFailures: { turnId: TurnId; seq: number; error: string; at: number }[] = [];
 
   constructor(opts: FileTurnLogStoreOptions) {
     this.dataDir = path.resolve(opts.dataDir);
@@ -204,14 +208,22 @@ export class FileTurnLogStore implements TurnLogStore {
     });
 
     // Store queue, with error handling to not break chain
-    const queueWithCleanup = next.catch((err) => {
-      // Log but don't break queue chain for next appends
+    const self = this;
+    const queueWithCleanup = next.catch((err: any) => {
+      // Record failure for observability
+      self.persistenceFailures.push({
+        turnId,
+        seq: event.seq,
+        error: err instanceof Error ? err.message : String(err),
+        at: Date.now(),
+      });
+      self.diagnostics.warnings.push(`Persistence failed for ${turnId} seq ${event.seq}: ${err}`);
       console.warn(`FileTurnLogStore append failed for ${turnId}:`, err);
       throw err;
     }).finally(() => {
       // Only delete if this is still the current queue
-      if (this.queues.get(turnId) === queueWithCleanup) {
-        this.queues.delete(turnId);
+      if (self.queues.get(turnId) === queueWithCleanup) {
+        self.queues.delete(turnId);
       }
     });
 
@@ -374,7 +386,7 @@ export class FileTurnLogStore implements TurnLogStore {
 
     const result = this.parseFileContent(content, expectedTurnId, expectedSessionId);
 
-    // Quarantine check: if >50% lines invalid, quarantine file
+    // Quarantine check: if >50% lines invalid, MOVE file to quarantine so it cannot be loaded as active turn
     const totalLines = content.split("\n").filter((l) => l.trim() !== "").length;
     const invalidLines = result.malformedSkipped + result.identityMismatches;
     if (totalLines > 0 && invalidLines / totalLines > 0.5) {
@@ -382,9 +394,21 @@ export class FileTurnLogStore implements TurnLogStore {
       await fs.mkdir(quarantineDir, { recursive: true });
       const quarantinePath = path.join(quarantineDir, `${expectedTurnId}.jsonl.quarantined`);
       try {
-        await fs.copyFile(filePath, quarantinePath);
-        result.warnings.push(`Quarantined file ${filePath} to ${quarantinePath} due to >50% invalid lines (${invalidLines}/${totalLines})`);
+        // Move file to quarantine, not copy — ensures quarantined files cannot be loaded as active turns
+        await fs.rename(filePath, quarantinePath);
+        result.warnings.push(`Quarantined file ${filePath} to ${quarantinePath} due to >50% invalid lines (${invalidLines}/${totalLines}) — file moved, cannot be loaded as active`);
         this.diagnostics.quarantinedFiles.push(filePath);
+        // Return empty result after quarantine move — file no longer active
+        return {
+          events: [],
+          truncatedIgnored: result.truncatedIgnored,
+          malformedSkipped: result.malformedSkipped,
+          duplicatesSkipped: result.duplicatesSkipped,
+          outOfOrder: result.outOfOrder,
+          gaps: result.gaps,
+          identityMismatches: result.identityMismatches,
+          warnings: result.warnings,
+        };
       } catch (err) {
         result.warnings.push(`Failed to quarantine ${filePath}: ${err}`);
       }
@@ -460,8 +484,17 @@ export class FileTurnLogStore implements TurnLogStore {
   }
 
   // For boot diagnostics and observability
-  getDiagnostics(): BootDiagnostics {
-    return { ...this.diagnostics, warnings: [...this.diagnostics.warnings], quarantinedFiles: [...this.diagnostics.quarantinedFiles] };
+  getDiagnostics(): BootDiagnostics & { persistenceFailures: { turnId: TurnId; seq: number; error: string; at: number }[] } {
+    return {
+      ...this.diagnostics,
+      warnings: [...this.diagnostics.warnings],
+      quarantinedFiles: [...this.diagnostics.quarantinedFiles],
+      persistenceFailures: [...this.persistenceFailures],
+    } as any;
+  }
+
+  getPersistenceFailures(): { turnId: TurnId; seq: number; error: string; at: number }[] {
+    return [...this.persistenceFailures];
   }
 
   resetDiagnostics(): void {
@@ -476,6 +509,7 @@ export class FileTurnLogStore implements TurnLogStore {
       quarantinedFiles: [],
       warnings: [],
     };
+    this.persistenceFailures = [];
   }
 
   // For retention/eviction
