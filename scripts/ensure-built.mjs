@@ -66,12 +66,14 @@ function reason() {
 }
 
 function canBuild() {
-  try {
-    require.resolve("typescript");
-    return true;
-  } catch {
-    return false;
+  for (const tool of ["typescript", "esbuild"]) {
+    try {
+      require.resolve(tool);
+    } catch {
+      return false;
+    }
   }
+  return true;
 }
 
 function main() {
