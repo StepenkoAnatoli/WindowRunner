@@ -5,14 +5,9 @@
  * Packs the root package exactly as `npm publish` would (same `files` allowlist,
  * same prepack contract) and asserts the tarball is what the manifest claims.
  *
- * Scope note, because this script is easy to over-read: it validates tarball
- * *contents*. It does NOT prove an installable CLI works — this package declares
- * no `bin`, and the packed `dist/` is not self-contained (the emitted server and
- * web modules still import the bare specifier `@windows-runner/shared`, which
- * resolves through a workspace symlink that a published tarball does not have).
- * Those blockers are listed in docs/INSTALL.md, "Known packaging gaps".
- * Whether the built server actually *boots* is a separate check:
- * `npm run smoke:start` (scripts/smoke-start.mjs) runs it from a checkout.
+ * Scope note: validates tarball *contents* against the package manifest.
+ * Runtime behavior of the packed tarball is verified by `npm run smoke:packed:start`
+ * (scripts/smoke-packed-start.mjs), and startup from checkout by `npm run smoke:start`.
  */
 
 import { spawnSync } from "node:child_process";
@@ -31,11 +26,13 @@ const REQUIRED = [
   "LICENSE",
   "NOTICE",
   "docs/INSTALL.md",
+  "bin/windows-runner.js",
   "scripts/postinstall.mjs",
   "scripts/ensure-built.mjs",
   "packages/shared/dist/index.js",
   "packages/server/dist/app.js",
   "packages/server/dist/index.js",
+  "packages/server/dist/index.cjs",
   "packages/web/dist/turn-state.js",
 ];
 
@@ -62,6 +59,7 @@ function ensureBuilt() {
     "packages/shared/dist/index.js",
     "packages/server/dist/app.js",
     "packages/server/dist/index.js",
+    "packages/server/dist/index.cjs",
     "packages/web/dist/turn-state.js",
   ];
   const missing = outputs.filter((o) => !existsSync(path.join(repoRoot, o)));
@@ -154,8 +152,6 @@ function main() {
   }
 
   console.log("\nSmoke test passed: tarball matches the manifest contract.");
-  console.log("Note: this validates contents only. Publishing remains blocked — see");
-  console.log("docs/INSTALL.md, \"Known packaging gaps\".");
   return 0;
 }
 

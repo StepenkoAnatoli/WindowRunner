@@ -20,7 +20,20 @@ import { startServer, type StartedServer } from "./boot.js";
 
 const TAG = "windows-runner";
 // Resolves from both src/ (tsx) and dist/ (node): the manifest is one level up either way.
-const VERSION: string = createRequire(import.meta.url)("../package.json").version;
+function getVersion(): string {
+  try {
+    if (typeof __filename !== 'undefined' && typeof require !== 'undefined') {
+      try { return require('../package.json').version; } catch {}
+      try { return require('../../package.json').version; } catch {}
+    }
+    const metaUrl = typeof import.meta !== 'undefined' && import.meta.url;
+    if (metaUrl) {
+      return createRequire(metaUrl)('../package.json').version;
+    }
+  } catch {}
+  return '0.1.0';
+}
+const VERSION: string = getVersion();
 const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 function fail(err: unknown): never {

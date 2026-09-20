@@ -28,6 +28,7 @@ const require = createRequire(path.join(repoRoot, "package.json"));
 const OUTPUTS = [
   "packages/shared/dist/index.js",
   "packages/server/dist/index.js",
+  "packages/server/dist/index.cjs",
 ];
 
 /** Source trees whose changes must invalidate the outputs above. */
@@ -65,12 +66,14 @@ function reason() {
 }
 
 function canBuild() {
-  try {
-    require.resolve("typescript");
-    return true;
-  } catch {
-    return false;
+  for (const tool of ["typescript", "esbuild"]) {
+    try {
+      require.resolve(tool);
+    } catch {
+      return false;
+    }
   }
+  return true;
 }
 
 function main() {

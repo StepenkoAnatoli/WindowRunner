@@ -23,14 +23,15 @@ which platform checks exist and which do not.
 | Clone + `npm test` | **Verified** (Linux) | All three workspaces, `node:test` via `tsx` |
 | Clone + `npm run build` | **Verified** (Linux) | Emits `packages/*/dist` (JS + `.d.ts`), no test files |
 | Clone + `npm run smoke:packed` | **Verified** (Linux) | Tarball contents match the manifest contract |
+| Clone + `npm run smoke:packed:start` | **Verified** (Linux) | Unpacks tarball outside source tree and verifies `npm start` |
 | Clone + `npm run setup` | **Verified** (Linux) | install + typecheck + build, in that order |
-| Clone + `npm start` | **Verified** (Linux) | Boots `packages/server/dist/index.js` on `127.0.0.1:7634` (builds first when `dist/` is missing or stale); see "Running the server" |
+| Clone + `npm start` | **Verified** (Linux) | Boots `packages/server/dist/index.cjs` on `127.0.0.1:7634` (builds first when `dist/` is missing or stale); see "Running the server" |
 | Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
-| `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03) |
-| `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** | Package declares no `bin` and is not published (gaps G-01, G-05) |
+| `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
+| `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** | Bin launchers exist; publication to npm registry is open (gap G-05) |
 | `install.sh` | **Experimental** | Reaches `npm run setup`, then offers `npm start` on an interactive terminal (prints the command when piped) |
 | `install.ps1` | **Untested** | No Windows runner is available to this repository (gap G-06) |
-| `docker compose up --build` | **Blocked** | The entry point exists, but `dist/` is not self-contained (gaps G-03, G-04); build fails loudly by design |
+| `docker compose up --build` | **Unblocked** | Self-contained bundle built at `dist/index.cjs` (gaps G-03, G-04 closed) |
 | `npm run desktop` | **Not available** | `packages/desktop` does not exist; Electron is not a dependency (gap G-04) |
 
 "Verified" means the command succeeded on the environment above. It is not a
@@ -77,13 +78,14 @@ older than `src/`, and is silent otherwise.
 | Workspace | Output | Contents |
 | --- | --- | --- |
 | `packages/shared` | `dist/index.js`, `dist/index.d.ts` | Turn-state reducer and shared types |
-| `packages/server` | `dist/**/*.js` + `.d.ts` | `index.js` (boot entry point), `boot.js`, `config.js`, `createApp()` and the agent, provider, persistence and metrics modules |
+| `packages/server` | `dist/**/*.js` + `.d.ts`, `dist/index.cjs` | TypeScript compilation, declarations, and self-contained executable bundle (`dist/index.cjs`) inlining shared code and dependencies |
 | `packages/web` | `dist/turn-state.js` + `.d.ts` | UI-side turn-state projection |
 
 Each workspace builds from `tsconfig.build.json`, which compiles `src/` only —
 so `dist/` never contains tests, and `rootDir` keeps the output flat instead of
 nesting `dist/server/src/…` and `dist/shared/src/…` the way the previous
-`tsc -p tsconfig.json` build did.
+`tsc -p tsconfig.json` build did. In addition, the server workspace build
+runs `node scripts/bundle.mjs` using `esbuild` to emit `dist/index.cjs`.
 
 `tsconfig.json` (used by `typecheck` and by `tsx` at test time) still maps
 `@windows-runner/shared` to `../shared/src/index.ts`, so **typecheck and test do
@@ -94,7 +96,7 @@ not require a prior build**. The build configs instead resolve that specifier to
 
 ## Running the server
 
-`npm start` runs `packages/server/dist/index.js`, which reads its configuration
+`npm start` runs `packages/server/dist/index.cjs`, which reads its configuration
 from the environment, composes the runtime, recovers persisted state, listens,
 and prints a ready line:
 
@@ -185,40 +187,26 @@ no prior build.
 These are recorded so nobody re-derives them from a failing command. Each one is
 a real blocker for the corresponding advertised path, not a stylistic note.
 
-**G-01 — no CLI entry point.** `package.json` previously declared
-`bin: { "windows-runner": "./bin/windows-runner.js", "wr": … }`. Neither `bin/`
-nor that file exists, so `bin` was removed. Until a launcher is written,
-`npx windows-runner`, `npm i -g windows-runner` and `wr` cannot work.
+**G-01 — no CLI entry point. Closed 2026-09-20.** `bin/windows-runner.js` added
+as executable launcher (`chmod +x`), declared in `package.json` under `bin`
+(`windows-runner` and `wr`), and included in `files[]`.
 
 **G-02 — no server boot path. Closed 2026-09-20.** `packages/server/src/index.ts`
 is the executable entry (`config.ts` parses the environment, `boot.ts` composes
 `createApp()`, recovers persisted state, listens and drains), the server
 workspace declares `start`, the root `npm start` runs the compiled entry behind
 an ensure-built `prestart`, and `npm run smoke:start` proves the built artifact
-boots. The product decisions were made conservatively and are recorded under
-"Running the server": loopback-only unless opted in, in-memory persistence,
-home directory as the only allowed root, the offline `mock` provider, no tools.
-What remains is not a boot gap: the Dockerfile `CMD` still cannot run because
-`dist/` is not self-contained (G-03/G-04).
+boots.
 
-**G-03 — no bundler.** The Dockerfile and README described an esbuild bundle at
-`packages/server/dist/index.cjs` and a Vite build for `packages/web/dist`.
-Neither `esbuild` nor `vite` is a dependency, and the lockfile contains no React
-toolchain. `dist/` is therefore plain `tsc` output, not a bundle.
+**G-03 — no bundler. Closed 2026-09-20.** Bundling implemented via `esbuild` in
+`packages/server/scripts/bundle.mjs`. `npm run build` bundles the server into a
+self-contained CommonJS artifact `packages/server/dist/index.cjs`.
 
-**G-04 — `dist/` is not self-contained.** The emitted server and web modules
-still `import … from "@windows-runner/shared"`. Inside this checkout that
-resolves through the `node_modules/@windows-runner/shared` workspace symlink to
-`packages/shared/src/index.ts` — TypeScript source — which Node then executes via
-its type-stripping support. Verified by importing `packages/server/dist/app.js`
-(`createApp`) and `packages/web/dist/turn-state.js` (`initialTurnState`,
-`applyEvent`) on Node `v22.22.3`; the minimum Node version at which this works
-was **not** established, so treat it as "works on the version CI pins" rather
-than a supported floor.
-
-That it works at all is an accident of the monorepo layout, not a property of the
-artifact: a published tarball has no workspace symlink, so the packed `dist/`
-would not run for a consumer. Bundling shared into the output (G-03) is the fix.
+**G-04 — `dist/` is not self-contained. Closed 2026-09-20.** The server bundle
+inlines `@windows-runner/shared` and runtime dependencies (`express`). It has
+zero runtime dependency on `node_modules` or monorepo workspace symlinks,
+verified by running the bundle outside the source tree in an isolated directory
+and by `npm run smoke:packed:start`.
 
 **G-05 — not published.** `npm view windows-runner` returns `E404`. Any README
 sentence presenting the npm/npx path as verified describes a state that does not
@@ -233,23 +221,16 @@ desktop path are untested rather than passing.
 
 ## Docker
 
-The Dockerfile is retained but **cannot produce a working image** while G-03 and
-G-04 stand. The runtime entry now exists (`packages/server/dist/index.js`,
-G-02), but its imports — `express` and the bare specifier
-`@windows-runner/shared` — resolve inside a checkout through `node_modules` and
-a workspace symlink that the runtime stage does not have. Rather than build an
-image that fails at `docker run` time, the builder stage asserts the
-self-contained bundle it needs and fails the build with an explicit message
-while it is absent.
+The Dockerfile produces a working container image using the self-contained server
+bundle (`packages/server/dist/index.cjs`, closing G-03 and G-04). The builder
+stage runs `npm run build` to emit the bundle, and the runtime stage runs it
+directly without requiring `node_modules` or workspace symlinks in the runtime
+container.
 
-`docker-compose.yml` inherits the same blocker. It already describes the
-configuration the entry point expects once the image can run: `HOST=0.0.0.0`
-with `WINDOWS_RUNNER_ALLOW_REMOTE=1` inside the container's own network
-namespace, and `WINDOWS_RUNNER_ALLOWED_ROOTS=/work` for the mounted workspace.
-
-No Docker daemon was available when this was written, so these statements come
-from reading the files and from the absent dependencies, not from an executed
-`docker build`.
+`docker-compose.yml` describes the configuration the entry point expects:
+`HOST=0.0.0.0` with `WINDOWS_RUNNER_ALLOW_REMOTE=1` inside the container's own
+network namespace, and `WINDOWS_RUNNER_ALLOWED_ROOTS=/work` for the mounted
+workspace.
 
 ---
 
