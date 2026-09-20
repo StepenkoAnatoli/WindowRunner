@@ -6,6 +6,7 @@
  * every UI path can be driven deterministically without an API key:
  *
  *   "approve: <cmd>"  -> calls `run_terminal` (requires approval), then replies
+ *   "edit: <path>"    -> calls `edit_file` (requires approval; UI shows a diff), then replies
  *   "trust: <x>"      -> calls `mcp_call` (declares project trust), then replies
  *   "hang"            -> never yields (exercises Stop / cancellation)
  *   "fail"            -> provider throws (turn_failed MODEL_FAILED)
@@ -50,6 +51,10 @@ class ScriptedProvider implements LLMProvider {
       yield { type: "tool_call", call: { id: `call_${Date.now()}`, name: "run_terminal", input: { command: lastUser.slice(9) } } };
       return;
     }
+    if (lastUser.startsWith("edit: ")) {
+      yield { type: "tool_call", call: { id: `call_${Date.now()}`, name: "edit_file", input: { path: lastUser.slice(6), oldText: "const x = 1;\nconst y = 2;", newText: "const x = 10;" } } };
+      return;
+    }
     if (lastUser.startsWith("trust: ")) {
       yield { type: "tool_call", call: { id: `call_${Date.now()}`, name: "mcp_call", input: { query: lastUser.slice(7) } } };
       return;
@@ -74,6 +79,16 @@ const tools = new Map<string, ToolDefinition>([
       requiresApproval: () => true,
       reason: (input: any) => `run "${input?.command}" in the project folder`,
       execute: async (input: any) => `pretended to run: ${input?.command}`,
+    },
+  ],
+  [
+    "edit_file",
+    {
+      name: "edit_file",
+      description: "edit a file (fixture: never touches disk)",
+      requiresApproval: () => true,
+      reason: (input: any) => `edit ${input?.path}`,
+      execute: async (input: any) => `pretended to edit: ${input?.path}`,
     },
   ],
   [

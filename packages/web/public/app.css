@@ -31,3 +31,9 @@ pre.input { background: var(--bg); padding: 8px; border-radius: 6px; overflow: a
 @keyframes blink { to { visibility: hidden; } }
 .tools { margin: 4px 0; padding-left: 18px; font-size: 13px; }
 .banner { position: sticky; bottom: 8px; background: var(--card); border: 1px solid var(--danger); border-radius: 8px; padding: 10px 12px; }
+
+pre.diff { background: var(--bg); padding: 8px; border-radius: 6px; overflow: auto; font-size: 12px; max-height: 320px; margin: 6px 0; }
+pre.diff .del { color: #b42318; background: rgba(180, 35, 24, 0.08); display: block; }
+pre.diff .add { color: #067647; background: rgba(6, 118, 71, 0.08); display: block; }
+pre.diff .ctx { color: var(--muted); display: block; }
+.preview { margin: 6px 0; }

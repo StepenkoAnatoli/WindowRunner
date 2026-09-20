@@ -344,7 +344,7 @@ Files to inspect:
 
 Acceptance criteria:
 - [x] Browser E2E suite runs against the mock provider, no API keys required. *(`packages/web/e2e/ui.spec.ts`; scripted provider in `e2e/server.ts` reacts to the message text.)*
-- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display. *(Covered: auth, session creation + root refusal, streaming, reconnect, approval/denial, cancellation, provider failure, trust prompt, error banner. Not covered: settings, edit/diff review — no such UI yet; reload-resume of an in-flight turn.)*
+- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display. *(Covered: auth, session creation + root refusal, streaming, reconnect, approval/denial with diff preview for write/edit and command preview for run_terminal, cancellation, provider failure, trust prompt, error banner. Not covered: settings — no such UI; reload-resume of an in-flight turn.)*
 - [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream. *(All covered in `test/openai-compatible.test.ts` except backoff: 429 is surfaced as retryable `MODEL_RATE_LIMITED`; there is no automatic backoff/retry.)*
 - [ ] Both suites run in the normal Linux CI job and gate merges. *(E2E runs in its own `Browser E2E` job; merge gating is not configured.)*
 - [x] No real-provider keys are required by ordinary CI.

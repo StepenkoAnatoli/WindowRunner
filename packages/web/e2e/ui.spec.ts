@@ -162,6 +162,29 @@ test.describe("approvals", () => {
     await expect(turn).toHaveAttribute("data-status", "completed");
   });
 
+  test("edit_file approval shows a readable diff instead of raw JSON; run_terminal shows the command", async ({ page }) => {
+    await signIn(page);
+    await createSession(page);
+    const turn = await send(page, "edit: src/app.ts");
+    const preview = turn.locator(tid("approval-preview"));
+    await expect(preview).toHaveAttribute("data-kind", "diff");
+    await expect(preview).toContainText("src/app.ts");
+    await expect(preview.locator(".del")).toHaveCount(2);
+    await expect(preview.locator(".add")).toHaveCount(1);
+    await expect(preview.locator(".del").first()).toHaveText(/- const x = 1;/);
+    await expect(preview.locator(".add").first()).toHaveText(/\+ const x = 10;/);
+    await expect(preview).not.toContainText('"oldText"');
+    await page.click(tid("approve"));
+    await expect(turn).toHaveAttribute("data-status", "completed");
+
+    const cmdTurn = await send(page, "approve: npm test");
+    const cmdPreview = cmdTurn.locator(tid("approval-preview"));
+    await expect(cmdPreview).toHaveAttribute("data-kind", "command");
+    await expect(cmdPreview).toContainText("$ npm test");
+    await page.click(tid("deny"));
+    await expect(cmdTurn).toHaveAttribute("data-status", "completed");
+  });
+
   test("deny reports APPROVAL_DENIED and the turn still completes", async ({ page }) => {
     await signIn(page);
     await createSession(page);

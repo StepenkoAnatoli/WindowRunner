@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, type AppState } from "../src/app-state.js";
+import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, previewApproval, type AppState } from "../src/app-state.js";
 
 function ev(seq: number, type: string, extra: Record<string, unknown> = {}): any {
   return { seq, at: seq * 10, sessionId: "s", turnId: "t1", type, ...extra };
@@ -83,5 +83,33 @@ describe("app reducer", () => {
     const broken = reduceApp(s, { type: "turn_stream_error", turnId: "t1", message: "gave up" });
     assert.equal(describeTurn(broken.turns[0]), "stream error: gave up");
     assert.equal(broken.turns[0].connection, "closed");
+  });
+});
+
+describe("previewApproval", () => {
+  it("renders edit_file as a removed/added diff with the uniqueness note", () => {
+    const p = previewApproval("edit_file", { path: "src/a.ts", oldText: "a\nb", newText: "c" });
+    assert.equal(p.kind, "diff");
+    if (p.kind !== "diff") return;
+    assert.equal(p.path, "src/a.ts");
+    assert.deepEqual(p.lines, [{ type: "-", text: "a" }, { type: "-", text: "b" }, { type: "+", text: "c" }]);
+    assert.match(p.note!, /exactly one/);
+    assert.match((previewApproval("edit_file", { path: "x", oldText: "a", newText: "b", replaceAll: true }) as any).note, /every occurrence/);
+  });
+
+  it("renders write_file as all-added lines with the byte count, clipped for long files", () => {
+    const p = previewApproval("write_file", { path: "big.txt", content: Array.from({ length: 100 }, (_, i) => `l${i}`).join("\n") });
+    if (p.kind !== "diff") throw new Error("expected diff");
+    assert.equal(p.lines.length, 61);
+    assert.match(p.lines[60].text, /40 more line/);
+    assert.match(p.note!, /bytes/);
+  });
+
+  it("renders run_terminal as a command and everything else as JSON", () => {
+    assert.deepEqual(previewApproval("run_terminal", { command: "npm test" }).kind, "command");
+    const j = previewApproval("mystery", { a: 1 });
+    assert.equal(j.kind, "json");
+    assert.match((j as any).text, /"a": 1/);
+    assert.equal(previewApproval("edit_file", "not an object").kind, "json");
   });
 });

@@ -190,3 +190,48 @@ export function describeTurn(view: TurnView): string {
       return String(s.status);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Approval previews: show what a tool will do, not its JSON.
+
+export type ApprovalPreview =
+  | { kind: "diff"; path: string; lines: Array<{ type: "-" | "+" | " "; text: string }>; note?: string }
+  | { kind: "command"; command: string; note?: string }
+  | { kind: "json"; text: string };
+
+const MAX_PREVIEW_LINES = 60;
+
+export function previewApproval(toolName: string, input: unknown): ApprovalPreview {
+  const obj = input !== null && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined;
+  if (obj) {
+    if (toolName === "edit_file" && typeof obj.path === "string" && typeof obj.oldText === "string" && typeof obj.newText === "string") {
+      const lines = [
+        ...obj.oldText.split(/\r?\n/).map((text) => ({ type: "-" as const, text })),
+        ...obj.newText.split(/\r?\n/).map((text) => ({ type: "+" as const, text })),
+      ];
+      return clip({ kind: "diff", path: obj.path, lines, note: obj.replaceAll === true ? "replaces every occurrence" : "replaces exactly one occurrence" });
+    }
+    if (toolName === "write_file" && typeof obj.path === "string" && typeof obj.content === "string") {
+      const lines = obj.content.split(/\r?\n/).map((text) => ({ type: "+" as const, text }));
+      return clip({ kind: "diff", path: obj.path, lines, note: `writes the whole file (${new TextEncoder().encode(obj.content).length} bytes)` });
+    }
+    if (toolName === "run_terminal" && typeof obj.command === "string") {
+      return { kind: "command", command: obj.command, note: "runs in the project root via the system shell; no network or path restrictions apply inside the command" };
+    }
+  }
+  return { kind: "json", text: safeStringify(input) };
+}
+
+function clip(p: Extract<ApprovalPreview, { kind: "diff" }>): ApprovalPreview {
+  if (p.lines.length <= MAX_PREVIEW_LINES) return p;
+  const hidden = p.lines.length - MAX_PREVIEW_LINES;
+  return { ...p, lines: [...p.lines.slice(0, MAX_PREVIEW_LINES), { type: " ", text: `… ${hidden} more line(s)` }] };
+}
+
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2) ?? String(v);
+  } catch {
+    return String(v);
+  }
+}

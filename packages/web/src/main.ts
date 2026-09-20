@@ -1,5 +1,5 @@
 import { ApiClient, ApiRequestError, clearToken, loadToken, saveToken } from "./api.js";
-import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, type AppAction, type AppState, type TurnView } from "./app-state.js";
+import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, type AppAction, type AppState, type TurnView, previewApproval, type ApprovalPreview } from "./app-state.js";
 
 /**
  * Windows Runner web UI — the smallest client that drives the whole lifecycle:
@@ -355,12 +355,33 @@ function turnCard(view: TurnView): HTMLElement {
         { class: "card approval", role: "alertdialog", "data-testid": "approval", "data-request-id": req.requestId },
         el("strong", {}, "Approval required: ", el("code", {}, req.toolName)),
         el("p", {}, req.reason),
-        el("pre", { class: "input" }, safeJson(req.input)),
+        renderPreview(previewApproval(req.toolName, req.input)),
         el("div", { class: "row" }, button("approve", "Approve", () => void decide(req.requestId, "approve"), "primary"), button("deny", "Deny", () => void decide(req.requestId, "deny"), "danger"))
       )
     ),
     el("footer", { class: `status ${view.streamError || view.state.status === "failed" ? "error" : ""}`, "data-testid": "turn-status" }, status, " ", el("span", { class: "muted" }, `seq ${view.state.seq}`))
   );
+}
+
+function renderPreview(p: ApprovalPreview): HTMLElement {
+  switch (p.kind) {
+    case "diff":
+      return el(
+        "div",
+        { class: "preview", "data-testid": "approval-preview", "data-kind": "diff" },
+        el("div", { class: "muted" }, el("code", {}, p.path), p.note ? ` — ${p.note}` : ""),
+        el("pre", { class: "diff" }, ...p.lines.map((l) => el("span", { class: l.type === "-" ? "del" : l.type === "+" ? "add" : "ctx" }, `${l.type} ${l.text}\n`)))
+      );
+    case "command":
+      return el(
+        "div",
+        { class: "preview", "data-testid": "approval-preview", "data-kind": "command" },
+        el("pre", { class: "input" }, "$ " + p.command),
+        p.note ? el("div", { class: "muted" }, p.note) : null
+      );
+    default:
+      return el("pre", { class: "input", "data-testid": "approval-preview", "data-kind": "json" }, p.text);
+  }
 }
 
 function errorBanner(): HTMLElement {
@@ -391,13 +412,6 @@ function button(testId: string, label: string, onClick: (() => void) | undefined
   return b;
 }
 
-function safeJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
 
 // ---------------------------------------------------------------------------
 
