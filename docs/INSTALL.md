@@ -191,6 +191,8 @@ back silently.
 | `WINDOWS_RUNNER_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL; `{base}/chat/completions` is called. `http://127.0.0.1:11434/v1` for Ollama |
 | `WINDOWS_RUNNER_MODEL_API_KEY` | `OPENAI_API_KEY`, else none | Bearer key for the model endpoint. Never printed; redacted from errors |
 | `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Extra attempts on 429/5xx/connection/broken-stream errors, only before any output was streamed. Honours `Retry-After`; otherwise exponential backoff with jitter (≤8 s). `0` disables |
+| `WINDOWS_RUNNER_MAX_STEPS` | `10` | Model calls per turn before `MAX_STEPS_EXCEEDED`; lower it to cap spend |
+| `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` | `30000` | Wall-clock limit for one model call |
 | `WINDOWS_RUNNER_TOOLS` | `1` | Register the built-in tools (`0` = text-only agent) |
 | `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` | `60000` | Wall-clock limit for one `run_terminal` command (the 30 s tool timeout in `createApp()` still applies on top) |
 | `WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT` | `65536` | Bytes of command output kept (first and last half) |

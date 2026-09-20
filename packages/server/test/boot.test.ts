@@ -51,7 +51,7 @@ function baseConfig(overrides: ConfigOverrides = {}): ServerConfig {
     port: 0,
     allowRemote: false,
     provider: "mock",
-    model: { baseUrl: "https://api.openai.com/v1", maxRetries: 0 },
+    model: { baseUrl: "https://api.openai.com/v1", maxRetries: 0, maxSteps: 10, callTimeoutMs: 30_000 },
     tools: { enabled: false, terminalTimeoutMs: 60_000, terminalOutputLimit: 65_536 },
     allowedRoots: [os.tmpdir()],
     shutdownGraceMs: 2_000,
@@ -210,8 +210,11 @@ describe("startServer — memory mode", () => {
     const { status, body } = await postTurn(handle.url, "s1", project, "ping");
     assert.equal(status, 202);
     const events = await readSseToEnd(`${handle.url}/api/sessions/s1/turns/${body.turnId}/events`);
-    assert.deepEqual(events.map((e) => e.type), ["turn_started", "model_call", "text_delta", "turn_completed"]);
-    assert.match(events[2].delta, /^\[mock\] .*You said: "ping"/);
+    const types = events.map((e) => e.type);
+    assert.deepEqual([types[0], types[1], types[types.length - 1]], ["turn_started", "model_call", "turn_completed"]);
+    const deltas = events.filter((e) => e.type === "text_delta");
+    assert.ok(deltas.length > 1, "text is streamed as it arrives, not coalesced into one delta");
+    assert.match(deltas.map((e) => e.delta).join(""), /^\[mock\] .*You said: "ping"/);
     assert.equal(events[0].root, project);
   });
 

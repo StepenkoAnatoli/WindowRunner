@@ -111,7 +111,7 @@ async function runTask(id: string, provider: string): Promise<TaskResult> {
       baseUrl: baseUrl ?? (provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
       model: model!,
       apiKey: process.env.WINDOWS_RUNNER_MODEL_API_KEY ?? (provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY),
-      maxRetries: 2,
+      maxRetries: 2, maxSteps: 10, callTimeoutMs: 30_000,
     },
     tools: { enabled: true, terminalTimeoutMs: 60_000, terminalOutputLimit: 64 * 1024 },
     auth: { mode: "token", token: TOKEN, allowedHosts: [], allowedOrigins: [] },

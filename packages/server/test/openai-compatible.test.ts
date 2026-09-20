@@ -135,7 +135,7 @@ describe("openai-compatible adapter", () => {
       { kind: "text", text: "hello" },
     ]);
     const lines: string[] = [];
-    const p = createProvider("openai-compatible", { baseUrl: s.url, model: "m", apiKey: KEY, maxRetries: 2 }, (l) => lines.push(l));
+    const p = createProvider("openai-compatible", { baseUrl: s.url, model: "m", apiKey: KEY, maxRetries: 2, maxSteps: 10, callTimeoutMs: 30_000 }, (l) => lines.push(l));
     const chunks = await collect(p);
     assert.equal(chunks.filter((c) => c.type === "text_delta").map((c: any) => c.text).join(""), "hello");
     assert.equal(s.requests.length, 2);
@@ -222,7 +222,8 @@ describe("openai-compatible provider through config + boot", () => {
     assert.equal(created.status, 202);
     const { turnId } = await created.json();
     const events = await (await fetch(`${h.url}/api/sessions/oa/turns/${turnId}/events`, { headers: auth })).text();
-    assert.match(events, /from the real boot path/);
+    const streamedText = [...events.matchAll(/"type":"text_delta","delta":"([^"]*)"/g)].map((m) => m[1]).join("");
+    assert.match(streamedText, /from the real boot path/);
     assert.match(events, /turn_completed/);
     assert.doesNotMatch(events, new RegExp(KEY));
     // The real boot path advertises the built-in tools to the model.

@@ -378,7 +378,7 @@ class BoundedBuffer {
   }
 }
 
-const SECRET_ENV = /(^|_)(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$|^WINDOWS_RUNNER_(AUTH_TOKEN|MODEL_API_KEY)$|^OPENAI_API_KEY$/i;
+const SECRET_ENV = /(^|_)(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$|^WINDOWS_RUNNER_(AUTH_TOKEN|MODEL_API_KEY)$|^OPENAI_API_KEY$|^ANTHROPIC_API_KEY$/i;
 
 /** The agent's shell must not inherit the server's own secrets. */
 export function sanitizedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

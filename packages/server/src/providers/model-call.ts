@@ -16,7 +16,9 @@ export async function runModelCall(
   signal: AbortSignal,
   timeoutMs: number,
   clock?: any,
-  shutdownGraceMs = 1000
+  shutdownGraceMs = 1000,
+  /** Called for each text delta as it arrives so callers can stream it onward. Awaited; errors propagate. */
+  onTextDelta?: (delta: string) => Promise<void> | void
 ): Promise<ModelCallResult> {
   let partialText = "";
   let partialToolCalls: LLMToolCall[] = [];
@@ -39,6 +41,7 @@ export async function runModelCall(
           if (chunk.type === "text_delta") {
             text += chunk.text;
             partialText = text;
+            if (onTextDelta && chunk.text.length > 0) await onTextDelta(chunk.text);
           } else if (chunk.type === "tool_call") {
             toolCalls.push(chunk.call);
             partialToolCalls = [...toolCalls];

@@ -281,6 +281,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     approvals,
     sessionManager,
     allowedRoots: config.allowedRoots,
+    limits: { maxSteps: config.model.maxSteps, modelCallTimeoutMs: config.model.callTimeoutMs },
     now,
     getBootDiagnostics: () => boot,
     trust,

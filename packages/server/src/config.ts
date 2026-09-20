@@ -37,6 +37,10 @@ export interface ModelConfig {
   apiKey?: string;
   /** Extra attempts for retryable model errors (429/5xx/connection/broken stream) before any output. Default 2; 0 disables. */
   maxRetries: number;
+  /** Model calls per turn before the loop stops with MAX_STEPS_EXCEEDED. Default 10. Lower it to cap spend. */
+  maxSteps: number;
+  /** Wall-clock limit for one model call (first byte to stream end). Default 30_000. */
+  callTimeoutMs: number;
 }
 
 /** Tool sandbox settings (Phase 3 minimal tool set). */
@@ -101,6 +105,8 @@ export const DEFAULT_PROVIDER = "mock";
 export const DEFAULT_MODEL_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 export const DEFAULT_MODEL_MAX_RETRIES = 2;
+export const DEFAULT_MAX_STEPS = 10;
+export const DEFAULT_MODEL_CALL_TIMEOUT_MS = 30_000;
 export const DEFAULT_TERMINAL_TIMEOUT_MS = 60_000;
 export const DEFAULT_TERMINAL_OUTPUT_LIMIT = 64 * 1024;
 export const DEFAULT_SHUTDOWN_GRACE_MS = 5_000;
@@ -119,6 +125,8 @@ export const ENV = {
   modelApiKeyFallback: "OPENAI_API_KEY",
   anthropicApiKeyFallback: "ANTHROPIC_API_KEY",
   modelMaxRetries: "WINDOWS_RUNNER_MODEL_MAX_RETRIES",
+  maxSteps: "WINDOWS_RUNNER_MAX_STEPS",
+  modelCallTimeoutMs: "WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS",
   toolsEnabled: "WINDOWS_RUNNER_TOOLS",
   terminalTimeoutMs: "WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS",
   terminalOutputLimit: "WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT",
@@ -163,6 +171,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
     model: isBlank(env[ENV.modelName]) ? undefined : env[ENV.modelName]!.trim(),
     apiKey: parseSecret(ENV.modelApiKey, env[ENV.modelApiKey]) ?? parseSecret(keyFallback, env[keyFallback]),
     maxRetries: parseNonNegativeInteger(ENV.modelMaxRetries, env[ENV.modelMaxRetries], DEFAULT_MODEL_MAX_RETRIES),
+    maxSteps: parsePositiveInteger(ENV.maxSteps, env[ENV.maxSteps], DEFAULT_MAX_STEPS),
+    callTimeoutMs: parsePositiveInteger(ENV.modelCallTimeoutMs, env[ENV.modelCallTimeoutMs], DEFAULT_MODEL_CALL_TIMEOUT_MS),
   };
   if ((provider === "openai-compatible" || provider === "anthropic") && model.model === undefined) {
     const example = provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4o-mini, llama3.1";
@@ -232,7 +242,7 @@ export function describeConfig(config: ServerConfig): string[] {
   // The auth line is printed by boot.ts once the token source is known.
   const lines = [
     `bind:        ${config.host}:${config.port}${bindNote}`,
-    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"} retries=${config.model.maxRetries}`}`,
+    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"} retries=${config.model.maxRetries} maxSteps=${config.model.maxSteps} callTimeout=${config.model.callTimeoutMs}ms`}`,
     `persistence: ${config.persistence.mode}${config.persistence.mode === "memory" ? " (sessions and turns are lost on restart)" : ""}`,
   ];
   if (config.persistence.mode === "file") {

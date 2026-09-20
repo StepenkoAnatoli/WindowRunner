@@ -132,9 +132,25 @@ export class TurnRunner {
         }
         await append({ type: "model_call", step: step + 1, maxSteps: limits.maxSteps });
 
+        // Text is streamed to the log as it arrives; `streamed` tracks how much
+        // of the model's text has already been appended so the post-call paths
+        // below only emit what is still missing (nothing, in the normal case).
+        let streamed = "";
+        const emitRemaining = async (full: string) => {
+          if (full.length > streamed.length && full.startsWith(streamed)) {
+            await append({ type: "text_delta", delta: full.slice(streamed.length) });
+          } else if (!full.startsWith(streamed) && full) {
+            await append({ type: "text_delta", delta: full });
+          }
+          streamed = full;
+        };
         let modelResult;
         try {
-          modelResult = await runModelCall(this.provider, request, signal, limits.modelCallTimeoutMs, this.clock, 1000);
+          modelResult = await runModelCall(this.provider, request, signal, limits.modelCallTimeoutMs, this.clock, 1000, async (delta) => {
+            if (signal.aborted) return;
+            await append({ type: "text_delta", delta });
+            streamed += delta;
+          });
         } catch (err: any) {
           const deadlineInfo = mapDeadlineError(err);
           // shutdown_timeout must be checked before cancelled/signal.aborted — it indicates abort-ignoring operation
@@ -164,10 +180,7 @@ export class TurnRunner {
             return { status: "cancelled", message: err.message };
           }
 
-          const partialText = err.partialText ?? "";
-          if (partialText) {
-            await append({ type: "text_delta", delta: partialText });
-          }
+          await emitRemaining(err.partialText ?? "");
 
           if (deadlineInfo?.kind === "deadline_expired") {
             await append({
@@ -194,9 +207,7 @@ export class TurnRunner {
         usage = modelResult.usage ?? usage;
 
         if (modelResult.toolCalls.length === 0) {
-          if (modelResult.text) {
-            await append({ type: "text_delta", delta: modelResult.text });
-          }
+          await emitRemaining(modelResult.text);
           await append({ type: "turn_completed", usage });
           if (this.metrics) {
             try {
@@ -207,9 +218,7 @@ export class TurnRunner {
         }
 
         const nextMessages = [...request.messages];
-        if (modelResult.text) {
-          await append({ type: "text_delta", delta: modelResult.text });
-        }
+        await emitRemaining(modelResult.text);
         // The assistant turn carries its tool calls so wire formats that require
         // the calls to be echoed back (OpenAI) can rebuild the transcript.
         nextMessages.push({ role: "assistant", content: modelResult.text, toolCalls: modelResult.toolCalls });

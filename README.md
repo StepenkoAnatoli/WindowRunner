@@ -409,6 +409,8 @@ boot with a message naming the variable; the full table with semantics is in
 | `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline), `openai-compatible` or `anthropic` |
 | `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for network providers), endpoint base URL (default per provider), key (never printed; falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) |
 | `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Retries for transient model errors (429/5xx/network) before any output streamed; `0` disables |
+| `WINDOWS_RUNNER_MAX_STEPS` | `10` | Model calls per turn before `MAX_STEPS_EXCEEDED`; lower it to cap spend |
+| `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` | `30000` | Wall-clock limit for one model call |
 | `WINDOWS_RUNNER_TOOLS` | `1` | `0` disables the built-in tools |
 | `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` / `_TERMINAL_OUTPUT_LIMIT` | `60000` / `65536` | `run_terminal` wall-clock limit and output cap |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |

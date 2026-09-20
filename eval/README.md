@@ -58,3 +58,33 @@ Five small Node.js tasks with no external dependencies. They are a smoke-level
 benchmark for "can this agent actually edit a project safely", not a coding
 leaderboard. Larger, dependency-heavy tasks belong in a separate suite with
 its own time budget.
+
+## Validating a real endpoint before spending on the eval
+
+`npm run validate:provider` (`eval/validate-provider.mts`) is the narrow,
+ordered check to run once against a new endpoint/account — e.g. an
+OpenAI-compatible router — **before** the task suite. It reads the same
+`WINDOWS_RUNNER_PROVIDER/MODEL/MODEL_BASE_URL/MODEL_API_KEY` variables as
+`npm start`, boots the real server per stage with a throwaway project as the
+only root, and stops at the first failure:
+
+1. `text` — one short streamed request → `text_delta`s + usage.
+2. `cancel` — a long answer is stopped after the first delta → `turn_cancelled`;
+   the time from Stop to the terminal event is reported.
+3. `failures` — invalid key → `MODEL_AUTH`; unknown model → `MODEL_BAD_REQUEST`
+   or `MODEL_UNAVAILABLE`; verifies the key never appears in messages.
+4. `tools` — read-only tool calls arrive assembled; traversal is refused with
+   `PATH_ESCAPES_ROOT`; `write_file` asks approval (denied → not written);
+   `run_terminal` asks approval and sees no `*_API_KEY`/`*_TOKEN` env vars.
+
+Every turn runs with `maxSteps=3`, a 60 s call timeout and the built-in
+retries; stage 4 sends four turns. `--stage N` stops after stage N. The report
+`eval/results/validate-<provider>-<model>-<date>.json` records provider, model,
+base URL, timestamps, per-stage results, observed events and token usage; the
+script refuses to write it if the key appears anywhere in it. Only after this
+passes run one task (`npm run eval -- --provider … --task bug-fix`) and then the
+full suite.
+
+Spend controls for real runs: `WINDOWS_RUNNER_MAX_STEPS` (default 10) caps model
+calls per turn, `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` (default 30000) caps one
+call, `WINDOWS_RUNNER_MODEL_MAX_RETRIES` (default 2) caps retries.

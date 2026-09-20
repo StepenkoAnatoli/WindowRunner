@@ -24,6 +24,8 @@ export interface AppDeps {
   tools: Map<string, ToolDefinition>;
   approvals: ApprovalRegistry;
   allowedRoots?: string[];
+  /** Per-turn loop limits; defaults are used for anything omitted. */
+  limits?: Partial<{ maxSteps: number; modelCallTimeoutMs: number; toolTimeoutMs: number; approvalTimeoutMs: number }>;
   sessionManager?: SessionManager;
   // For operational observability — optional, exposed via /api/health
   getBootDiagnostics?: () => any;
@@ -418,6 +420,7 @@ export function createApp(deps: AppDeps) {
       modelCallTimeoutMs: 30_000,
       toolTimeoutMs: 30_000,
       approvalTimeoutMs: 300_000,
+      ...deps.limits,
     };
 
     runner
