@@ -7,6 +7,7 @@
  *   WINDOWS_RUNNER_MODEL_BASE_URL=<base>/v1 \
  *   WINDOWS_RUNNER_MODEL_API_KEY=<key> \
  *   npm run validate:provider            # add -- --stage 3 to stop after stage 3
+ *                                        # add -- --price-in 0.15 --price-out 0.60 (USD/1M tokens) for an estimated cost
  *
  * Walks the checks in the order they should be trusted, stopping at the first
  * failure so a wrong base URL never leads to a tool-calling test that burns
@@ -41,6 +42,9 @@ import { loadServerConfig, type ServerConfig } from "../packages/server/src/conf
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = "validate-token-0123456789abcdef";
+const argNum = (flag: string) => { const i = process.argv.indexOf(flag); return i === -1 ? undefined : Number(process.argv[i + 1]); };
+const priceIn = argNum("--price-in");
+const priceOut = argNum("--price-out");
 const stageArg = process.argv.indexOf("--stage");
 const untilStage = stageArg === -1 ? 4 : Math.max(1, Math.min(4, Number(process.argv[stageArg + 1]) || 4));
 
@@ -110,6 +114,8 @@ async function main() {
     passed: results.length === untilStage && results.every((r) => r.passed),
     stages: results,
     totalUsage,
+    pricingUsdPer1M: priceIn !== undefined || priceOut !== undefined ? { input: priceIn ?? 0, output: priceOut ?? 0 } : undefined,
+    estimatedCostUsd: priceIn !== undefined || priceOut !== undefined ? +((totalUsage.inputTokens * (priceIn ?? 0) + totalUsage.outputTokens * (priceOut ?? 0)) / 1_000_000).toFixed(6) : undefined,
     node: process.version,
     platform: `${os.platform()} ${os.release()}`,
   };
@@ -119,7 +125,7 @@ async function main() {
   if (config.model.apiKey && json.includes(config.model.apiKey)) throw new Error("refusing to write report: it contains the API key");
   await fs.writeFile(file, json + "\n");
   await fs.rm(work, { recursive: true, force: true });
-  console.log(`\nvalidate: ${report.passed ? "ALL PASSED" : "NOT PASSED"}; tokens in=${totalUsage.inputTokens} out=${totalUsage.outputTokens}; report ${path.relative(process.cwd(), file)}`);
+  console.log(`\nvalidate: ${report.passed ? "ALL PASSED" : "NOT PASSED"}; tokens in=${totalUsage.inputTokens} out=${totalUsage.outputTokens}${report.estimatedCostUsd !== undefined ? `; est. $${report.estimatedCostUsd.toFixed(4)}` : ""}; report ${path.relative(process.cwd(), file)}`);
   process.exit(report.passed ? 0 : 1);
 }
 

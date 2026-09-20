@@ -190,7 +190,7 @@ export class TurnRunner {
               retryable: true,
             });
             if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
-            return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
+            return { status: "failed", message: err.message, usage: addUsage(usage, err.partialUsage) };
           }
 
           const providerError = err instanceof ProviderError ? err : err?.cause instanceof ProviderError ? err.cause : undefined;
@@ -201,10 +201,12 @@ export class TurnRunner {
             retryable: providerError?.retryable ?? false,
           });
           if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
-          return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
+          return { status: "failed", message: err.message, usage: addUsage(usage, err.partialUsage) };
         }
 
-        usage = modelResult.usage ?? usage;
+        // Usage is summed across the steps of a turn so multi-step turns report
+        // total spend, not the last call's.
+        usage = addUsage(usage, modelResult.usage);
 
         if (modelResult.toolCalls.length === 0) {
           await emitRemaining(modelResult.text);
@@ -462,4 +464,11 @@ export class TurnRunner {
       this.approvals.cancelTurn(turnId);
     }
   }
+}
+
+function addUsage(a: TurnUsage | undefined, b: TurnUsage | undefined): TurnUsage | undefined {
+  if (!b) return a;
+  if (!a) return b;
+  const sum = (x?: number, y?: number) => (x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0));
+  return { inputTokens: sum(a.inputTokens, b.inputTokens), outputTokens: sum(a.outputTokens, b.outputTokens), totalTokens: sum(a.totalTokens, b.totalTokens) };
 }

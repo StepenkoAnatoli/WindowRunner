@@ -85,6 +85,11 @@ script refuses to write it if the key appears anywhere in it. Only after this
 passes run one task (`npm run eval -- --provider … --task bug-fix`) and then the
 full suite.
 
+Cost: pass `--price-in <usd per 1M input tokens> --price-out <usd per 1M output
+tokens>` (the model's list price; not known to the tool) to both commands and
+the reports gain `estimatedCostUsd` per task and in total. Token counts come
+from the provider's usage fields and are summed across the steps of a turn.
+
 Spend controls for real runs: `WINDOWS_RUNNER_MAX_STEPS` (default 10) caps model
 calls per turn, `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` (default 30000) caps one
 call, `WINDOWS_RUNNER_MODEL_MAX_RETRIES` (default 2) caps retries.

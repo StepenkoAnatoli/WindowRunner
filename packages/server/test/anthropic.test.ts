@@ -11,6 +11,7 @@ import { AnthropicProvider } from "../src/providers/anthropic.js";
 import { ProviderError, type LLMChunk, type LLMProvider, type LLMRequest } from "../src/providers/types.js";
 import { createProvider } from "../src/providers/index.js";
 import { loadServerConfig } from "../src/config.js";
+import { startServer } from "../src/boot.js";
 import { startFakeAnthropic, type FakeAnthropicScript, type FakeAnthropicServer } from "./fakes/fake-anthropic-server.js";
 
 const KEY = "sk-ant-secret-0123456789abcdef";
@@ -198,6 +199,29 @@ describe("anthropic adapter", () => {
     assert.equal(textOf(await collect(retrying)), "after retry");
     assert.equal(s.requests.length, 2);
     assert.match(lines[0], /MODEL_UNAVAILABLE \(529\); retry 1\/2/);
+  });
+
+  it("boot path: a two-step tool turn reports usage summed across both model calls", async () => {
+    const s = await fake([{ kind: "tool_use", calls: [{ name: "list_dir", json: '{"path":"."}' }] }, { kind: "text", text: "done" }]);
+    const config = loadServerConfig(
+      { WINDOWS_RUNNER_PROVIDER: "anthropic", WINDOWS_RUNNER_MODEL: "m", WINDOWS_RUNNER_MODEL_BASE_URL: s.url, ANTHROPIC_API_KEY: KEY, WINDOWS_RUNNER_AUTH_TOKEN: "boot-token-0123456789abcdef", WINDOWS_RUNNER_ALLOWED_ROOTS: os.tmpdir() },
+      { homedir: os.tmpdir() }
+    );
+    const h = await startServer(config);
+    try {
+      const auth = { authorization: "Bearer boot-token-0123456789abcdef", "content-type": "application/json" };
+      const created = await fetch(`${h.url}/api/sessions/an/turns`, { method: "POST", headers: auth, body: JSON.stringify({ cwd: os.tmpdir(), message: "list" }) });
+      assert.equal(created.status, 202);
+      const { turnId } = await created.json();
+      const events = await (await fetch(`${h.url}/api/sessions/an/turns/${turnId}/events`, { headers: auth })).text();
+      const completed = JSON.parse(events.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).find((l) => l.includes('"turn_completed"'))!);
+      // Each fake call reports input 11 / output 7; two calls → 22 / 14 / 36.
+      assert.deepEqual(completed.usage, { inputTokens: 22, outputTokens: 14, totalTokens: 36 });
+      assert.equal(s.requests.length, 2);
+      assert.equal(s.requests[1].body.messages.at(-1).content[0].type, "tool_result");
+    } finally {
+      await h.close();
+    }
   });
 
   it("config: OPENAI_API_KEY is not used as the anthropic fallback and WINDOWS_RUNNER_MODEL is required", () => {

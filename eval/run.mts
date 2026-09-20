@@ -7,6 +7,7 @@
  *   npx tsx eval/run.mts --provider openai-compatible --model gpt-4o-mini \
  *       --base-url https://api.openai.com/v1   # real model; needs WINDOWS_RUNNER_MODEL_API_KEY
  *   npx tsx eval/run.mts --task bug-fix --approve deny
+ *   … --price-in 0.15 --price-out 0.60   # USD per 1M tokens → estimatedCostUsd in the report
  *
  * Each task in eval/tasks/<id>/ has a `project/` fixture, a `task.json` prompt
  * and a `check.js` the model never sees. The harness copies the fixture to a
@@ -41,7 +42,7 @@ interface TaskSpec { id: string; category: string; prompt: string; check: string
 interface TaskResult {
   id: string; category: string; passed: boolean; turnStatus: string; failure?: string;
   steps: number; toolCalls: number; toolFailures: number; approvalsAsked: number; approvalsDenied: number;
-  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }; elapsedMs: number;
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }; estimatedCostUsd?: number; elapsedMs: number;
   checkOutput: string;
 }
 
@@ -54,8 +55,9 @@ async function main() {
 
   for (const id of ids) {
     const r = await runTask(id, provider);
+    r.estimatedCostUsd = costOf(r.usage);
     results.push(r);
-    console.log(`  ${r.passed ? "PASS" : "FAIL"}  ${id.padEnd(14)} turn=${r.turnStatus.padEnd(10)} steps=${r.steps} tools=${r.toolCalls} toolFail=${r.toolFailures} approvals=${r.approvalsAsked}/${r.approvalsDenied}denied tokens=${r.usage.totalTokens ?? "?"} ${r.elapsedMs}ms${r.failure ? `  (${r.failure})` : ""}`);
+    console.log(`  ${r.passed ? "PASS" : "FAIL"}  ${id.padEnd(14)} turn=${r.turnStatus.padEnd(10)} steps=${r.steps} tools=${r.toolCalls} toolFail=${r.toolFailures} approvals=${r.approvalsAsked}/${r.approvalsDenied}denied tokens=${r.usage.inputTokens ?? "?"}+${r.usage.outputTokens ?? "?"}${r.estimatedCostUsd !== undefined ? ` $${r.estimatedCostUsd.toFixed(4)}` : ""} ${r.elapsedMs}ms${r.failure ? `  (${r.failure})` : ""}`);
   }
 
   const report = {
@@ -64,6 +66,7 @@ async function main() {
     model: args.model ?? (provider === "scripted" ? "scripted-solutions" : undefined),
     baseUrl: args.baseUrl,
     approvePolicy: args.approve,
+    pricingUsdPer1M: args.priceIn !== undefined || args.priceOut !== undefined ? { input: args.priceIn ?? 0, output: args.priceOut ?? 0 } : undefined,
     limits: { maxSteps: 10, modelCallTimeoutMs: 30_000, toolTimeoutMs: 30_000, approvalTimeoutMs: 300_000 },
     node: process.version,
     platform: process.platform,
@@ -72,7 +75,10 @@ async function main() {
       passed: results.filter((r) => r.passed).length,
       completionRate: results.length ? results.filter((r) => r.passed).length / results.length : 0,
       userInterventions: results.reduce((n, r) => n + r.approvalsAsked, 0),
+      inputTokens: results.reduce((n, r) => n + (r.usage.inputTokens ?? 0), 0),
+      outputTokens: results.reduce((n, r) => n + (r.usage.outputTokens ?? 0), 0),
       totalTokens: results.reduce((n, r) => n + (r.usage.totalTokens ?? 0), 0),
+      estimatedCostUsd: args.priceIn !== undefined || args.priceOut !== undefined ? +results.reduce((n, r) => n + (r.estimatedCostUsd ?? 0), 0).toFixed(6) : undefined,
       elapsedMs: Date.now() - runStarted,
     },
     results,
@@ -81,7 +87,7 @@ async function main() {
   await fs.mkdir(outDir, { recursive: true });
   const outFile = args.out ?? path.join(outDir, `${provider === "scripted" ? "scripted" : `${provider}-${(args.model ?? "model").replace(/[^a-z0-9.-]/gi, "_")}`}-${new Date().toISOString().slice(0, 10)}.json`);
   await fs.writeFile(outFile, JSON.stringify(report, null, 2) + "\n");
-  console.log(`eval: ${report.summary.passed}/${report.summary.tasks} passed; report ${path.relative(process.cwd(), outFile)}`);
+  console.log(`eval: ${report.summary.passed}/${report.summary.tasks} passed; tokens ${report.summary.inputTokens}+${report.summary.outputTokens}${report.summary.estimatedCostUsd !== undefined ? `; est. $${report.summary.estimatedCostUsd.toFixed(4)}` : ""}; report ${path.relative(process.cwd(), outFile)}`);
   if (args.expectPass && report.summary.passed !== report.summary.tasks) process.exit(1);
 }
 
@@ -224,8 +230,13 @@ async function startScriptedOpenAI(steps: ScriptedStep[]) {
   return { url: `http://127.0.0.1:${port}/v1`, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
+function costOf(u: { inputTokens?: number; outputTokens?: number }): number | undefined {
+  if (args.priceIn === undefined && args.priceOut === undefined) return undefined;
+  return +(((u.inputTokens ?? 0) * (args.priceIn ?? 0) + (u.outputTokens ?? 0) * (args.priceOut ?? 0)) / 1_000_000).toFixed(6);
+}
+
 function parseArgs(argv: string[]) {
-  const out: { provider?: string; model?: string; baseUrl?: string; task?: string; approve: "approve" | "deny"; out?: string; keep: boolean; expectPass: boolean } = { approve: "approve", keep: false, expectPass: false };
+  const out: { provider?: string; model?: string; baseUrl?: string; task?: string; approve: "approve" | "deny"; out?: string; keep: boolean; expectPass: boolean; priceIn?: number; priceOut?: number } = { approve: "approve", keep: false, expectPass: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -237,11 +248,14 @@ function parseArgs(argv: string[]) {
     else if (a === "--out") out.out = next();
     else if (a === "--keep") out.keep = true;
     else if (a === "--expect-pass") out.expectPass = true;
+    else if (a === "--price-in") out.priceIn = Number(next());
+    else if (a === "--price-out") out.priceOut = Number(next());
     else if (a === "--help" || a === "-h") { console.log("see header comment in eval/run.mts"); process.exit(0); }
     else throw new Error(`unknown argument ${a}`);
   }
   if (out.provider && !["scripted", "openai-compatible", "anthropic"].includes(out.provider)) throw new Error(`unknown --provider ${out.provider} (scripted | openai-compatible | anthropic)`);
   if (out.provider && out.provider !== "scripted" && !out.model) throw new Error(`--model is required with --provider ${out.provider}`);
+  for (const [k, v] of [["--price-in", out.priceIn], ["--price-out", out.priceOut]] as const) if (v !== undefined && !(Number.isFinite(v) && v >= 0)) throw new Error(`${k} must be a non-negative number (USD per 1M tokens)`);
   return out;
 }
 
