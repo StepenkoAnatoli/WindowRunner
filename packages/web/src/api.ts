@@ -73,6 +73,58 @@ export interface StreamHandlers {
   onError?: (err: unknown) => void;
 }
 
+// ---- Provider dashboard (GET /dashboard) ----
+
+export interface ProviderLastTest {
+  at: number;
+  ok: boolean;
+  latencyMs?: number;
+  code?: string;
+  message?: string;
+}
+
+/** One profile as returned by the API — the key is masked, never raw. */
+export interface ProviderProfileView {
+  id: string;
+  label: string;
+  kind: string;
+  baseUrl?: string;
+  model: string;
+  apiKeyMasked?: string;
+  createdAt: number;
+  updatedAt: number;
+  lastTest?: ProviderLastTest;
+  active?: boolean;
+}
+
+export interface ProviderListResult {
+  activeProfileId: string | null;
+  profiles: ProviderProfileView[];
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  latencyMs: number;
+  /** The model's reply (truncated), on success only. */
+  reply?: string;
+  code?: string;
+  message?: string;
+}
+
+export interface TurnUsageView {
+  at: number;
+  providerId: string;
+  model: string;
+  turnId: string;
+  sessionId?: string;
+  status: "completed" | "failed" | "cancelled" | (string & {});
+  code?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Present only when a price table entry exists for the exact model id. */
+  estCostUsd?: number;
+}
+
 export interface StreamOptions {
   /** Resume after this seq (0 = from the start). */
   afterSeq?: number;
@@ -173,6 +225,36 @@ export class ApiClient {
 
   async revokeTrust(sessionId: string): Promise<void> {
     await this.request("DELETE", `/api/sessions/${encodeURIComponent(sessionId)}/trust`);
+  }
+
+  // ---- Provider dashboard endpoints (all require the same bearer token) ----
+
+  async listProviders(): Promise<ProviderListResult> {
+    return (await this.request<ProviderListResult>("GET", "/api/providers")).body;
+  }
+
+  async createProfile(input: Record<string, unknown>): Promise<ProviderProfileView> {
+    return (await this.request<ProviderProfileView>("POST", "/api/providers", input)).body;
+  }
+
+  async updateProfile(id: string, patch: Record<string, unknown>): Promise<ProviderProfileView> {
+    return (await this.request<ProviderProfileView>("PATCH", `/api/providers/${encodeURIComponent(id)}`, patch)).body;
+  }
+
+  async deleteProfile(id: string): Promise<void> {
+    await this.request("DELETE", `/api/providers/${encodeURIComponent(id)}`);
+  }
+
+  async activateProfile(id: string): Promise<{ activeProfileId: string; profile: ProviderProfileView }> {
+    return (await this.request<{ activeProfileId: string; profile: ProviderProfileView }>("POST", `/api/providers/${encodeURIComponent(id)}/activate`)).body;
+  }
+
+  async testProfile(id: string): Promise<ProviderTestResult> {
+    return (await this.request<ProviderTestResult>("POST", `/api/providers/${encodeURIComponent(id)}/test`)).body;
+  }
+
+  async usage(limit = 50): Promise<{ records: TurnUsageView[] }> {
+    return (await this.request<{ records: TurnUsageView[] }>("GET", `/api/usage?limit=${limit}`)).body;
   }
 
   /**

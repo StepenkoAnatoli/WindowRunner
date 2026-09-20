@@ -1,13 +1,17 @@
 import express from "express";
+import * as path from "node:path";
 import type { TurnManager } from "./agent/turn-manager.js";
 import type { ApprovalRegistry } from "./agent/approval-registry.js";
 import type { LLMProvider } from "./providers/types.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
-import { TurnRunner } from "./agent/loop.js";
+import { TurnRunner, type TurnResult } from "./agent/loop.js";
 import { SessionManager } from "./agent/session-manager.js";
 import { MetricsRegistry } from "./agent/metrics.js";
 import { createSecurityPolicy, type SecurityPolicy, type SecurityOptions } from "./security.js";
 import { ProjectTrustRegistry, isValidConfigHash } from "./agent/project-trust.js";
+import { ProfileError, type ActiveProviderBox } from "./provider-service.js";
+import type { ProviderService } from "./provider-service.js";
+import type { TurnUsageRecord } from "./usage-log.js";
 
 export interface LongRunningThresholds {
   /** active turn duration before considered stuck; default 2h */
@@ -52,6 +56,28 @@ export interface AppDeps {
    * when the UI has not been built; the API works without it.
    */
   webDir?: string;
+  /**
+   * Directory of the built provider dashboard (packages/web/dist/dashboard).
+   * Served at `/dashboard` (+ /dashboard/* assets), same public-but-validated
+   * treatment as the main UI. Unset when not built.
+   */
+  dashboardDir?: string;
+  /**
+   * Mutable active-provider box (provider-service.ts). When set, every new
+   * turn reads the CURRENT provider from the box at turn start, so activating
+   * or editing the active profile takes effect for the next turn without a
+   * restart. When unset, `provider` is used for every turn (test apps).
+   */
+  activeProvider?: ActiveProviderBox;
+  /**
+   * Provider profile management (the /api/providers* routes). When unset
+   * (test apps without a profile store) the routes are not registered.
+   */
+  providerAdmin?: ProviderService;
+  /** Appended once per turn at its terminal state (dashboard usage table). */
+  recordTurnUsage?: (turnId: string, sessionId: string, result: TurnResult) => void;
+  /** Usage history behind GET /api/usage. When unset the route is not registered. */
+  usageLog?: { recent(limit: number): TurnUsageRecord[] };
 }
 
 export interface ValidationResult {
@@ -239,6 +265,41 @@ export function createApp(deps: AppDeps) {
   app._metrics = metrics;
   app._doValidation = doValidation;
 
+  // Security headers for the static UIs (main app and dashboard): nothing is
+  // cached so a rebuilt bundle is picked up, and the same strict CSP the main
+  // UI gets (same-origin scripts/connections only) applies to the dashboard.
+  const uiHeaders: Record<string, string> = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy":
+      "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'",
+  };
+
+  // Provider dashboard (packages/web/dist/dashboard), served at /dashboard.
+  // Public assets like the main UI — Host/Origin validation still applies and
+  // every API call the page makes carries the bearer token — but it is NOT
+  // under /api/, so no token is needed to load the page itself. Registered
+  // before the main static handler so /dashboard* can never be answered by
+  // the app bundle.
+  if (deps.dashboardDir) {
+    const dashDir = deps.dashboardDir;
+    app.get("/dashboard", (_req: any, res: any, next: any) => {
+      res.sendFile(path.join(dashDir, "dashboard.html"), { headers: uiHeaders }, (err: any) => {
+        if (err) next();
+      });
+    });
+    app.use(
+      "/dashboard",
+      express.static(dashDir, {
+        fallthrough: true,
+        setHeaders: (res: any) => {
+          for (const [k, v] of Object.entries(uiHeaders)) res.setHeader(k, v);
+        },
+      })
+    );
+  }
+
   // Static web UI. index.html is never cached so a rebuilt bundle is picked up
   // and a stale page cannot keep an old API contract; hashed assets could be
   // cached but the bundle is small, so keep it simple and uniform. The static
@@ -251,10 +312,7 @@ export function createApp(deps: AppDeps) {
       fallthrough: true,
       etag: true,
       setHeaders: (res: any) => {
-        res.setHeader("Cache-Control", "no-store");
-        res.setHeader("X-Content-Type-Options", "nosniff");
-        res.setHeader("Referrer-Policy", "no-referrer");
-        res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'");
+        for (const [k, v] of Object.entries(uiHeaders)) res.setHeader(k, v);
       },
     });
     app.use((req: any, res: any, next: any) => {
@@ -398,8 +456,12 @@ export function createApp(deps: AppDeps) {
     const controller = new AbortController();
     activeControllers.set(turnId, controller);
 
+    // Read the CURRENT provider at turn start (hot-swap box): activating or
+    // editing the active profile changes the next turn, not a restart.
+    const provider = deps.activeProvider ? deps.activeProvider.get() : deps.provider;
+
     const runner = new TurnRunner({
-      provider: deps.provider,
+      provider,
       tools: deps.tools,
       approvals: deps.approvals,
       manager: deps.manager,
@@ -433,6 +495,15 @@ export function createApp(deps: AppDeps) {
         signal: controller.signal,
         allowedRoots: deps.allowedRoots,
         projectRoot: session.projectRoot,
+      })
+      .then((result) => {
+        // Dashboard usage history: one record per terminal turn (best-effort;
+        // a failure here must never affect the turn itself).
+        try {
+          deps.recordTurnUsage?.(turnId, sessionId, result);
+        } catch (err) {
+          console.error(`usage record for turn ${turnId} failed`, err);
+        }
       })
       .finally(() => {
         activeControllers.delete(turnId);
@@ -744,6 +815,119 @@ export function createApp(deps: AppDeps) {
       metrics: metrics.snapshot(now()),
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Provider profiles (dashboard). All under /api/ → bearer token required by
+  // the security middleware like every other API route. Responses are always
+  // redacted: an apiKey never leaves the process unmasked (provider-service).
+  // ---------------------------------------------------------------------------
+  if (deps.providerAdmin) {
+    const sendProfileError = (res: any, err: unknown) => {
+      if (err instanceof ProfileError) {
+        const body: Record<string, unknown> = { error: err.message, code: err.code };
+        if (err.errors) body.errors = err.errors;
+        return res.status(err.status).json(body);
+      }
+      console.error(err);
+      return res.status(500).json({ error: "provider operation failed", code: "PROVIDER_ERROR" });
+    };
+    const requireProfileId = (req: any, res: any): string | undefined => {
+      const id = req.params.id;
+      if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
+        res.status(404).json({ error: `profile "${id ?? ""}" not found`, code: "PROFILE_NOT_FOUND" });
+        return undefined;
+      }
+      return id;
+    };
+
+    // GET /api/providers — list profiles (keys masked) + which is active + last health check
+    app.get("/api/providers", (_req: any, res: any) => {
+      res.json({ activeProfileId: deps.providerAdmin!.activeProfileId, profiles: deps.providerAdmin!.listProfiles() });
+    });
+
+    // POST /api/providers — create a profile. Body: { id, label, kind, baseUrl?, model, apiKey? }
+    app.post("/api/providers", async (req: any, res: any) => {
+      const body = bodyObject(req, res);
+      if (!body) return;
+      try {
+        const profile = await deps.providerAdmin!.create(body);
+        res.status(201).json(profile);
+      } catch (err) {
+        sendProfileError(res, err);
+      }
+    });
+
+    // PATCH /api/providers/:id — update label/model/baseUrl/apiKey (apiKey omitted = keep existing)
+    app.patch("/api/providers/:id", async (req: any, res: any) => {
+      const id = requireProfileId(req, res);
+      if (!id) return;
+      const body = bodyObject(req, res);
+      if (!body) return;
+      try {
+        const profile = await deps.providerAdmin!.update(id, body);
+        res.json(profile);
+      } catch (err) {
+        sendProfileError(res, err);
+      }
+    });
+
+    // DELETE /api/providers/:id — refuse if it is the active profile (409 PROVIDER_ACTIVE)
+    app.delete("/api/providers/:id", async (req: any, res: any) => {
+      const id = requireProfileId(req, res);
+      if (!id) return;
+      try {
+        await deps.providerAdmin!.remove(id);
+        res.status(204).end();
+      } catch (err) {
+        sendProfileError(res, err);
+      }
+    });
+
+    // POST /api/providers/:id/activate — hot-swap; 404 if id unknown
+    app.post("/api/providers/:id/activate", async (req: any, res: any) => {
+      const id = requireProfileId(req, res);
+      if (!id) return;
+      try {
+        const profile = await deps.providerAdmin!.activate(id);
+        res.json({ activeProfileId: id, profile });
+      } catch (err) {
+        sendProfileError(res, err);
+      }
+    });
+
+    // POST /api/providers/:id/test — one minimal request ("say OK") with a short
+    // timeout. { ok, latencyMs, reply } or { ok: false, code, message }. The
+    // reply goes only to the authenticated dashboard, never to a log.
+    app.post("/api/providers/:id/test", async (req: any, res: any) => {
+      const id = requireProfileId(req, res);
+      if (!id) return;
+      try {
+        res.json(await deps.providerAdmin!.test(id));
+      } catch (err) {
+        sendProfileError(res, err);
+      }
+    });
+  }
+
+  // GET /api/usage?limit=50 — recent turns for the dashboard's history table.
+  // Newest first; estCostUsd is only present when a price table entry exists
+  // for the exact model id (never fabricated).
+  if (deps.usageLog) {
+    app.get("/api/usage", (req: any, res: any) => {
+      const raw = req.query.limit;
+      let limit = 50;
+      if (raw !== undefined) {
+        if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+          return res.status(400).json({ error: "limit must be a positive integer", code: "LIMIT_INVALID" });
+        }
+        limit = Number(raw);
+        if (limit < 1 || limit > 500) {
+          return res.status(400).json({ error: "limit must be between 1 and 500", code: "LIMIT_INVALID" });
+        }
+      }
+      res.json({ records: deps.usageLog!.recent(limit) });
+    });
+  }
 
   return app;
 }

@@ -7,7 +7,9 @@
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
+import * as path from "node:path";
 import { OpenAICompatibleProvider } from "../src/providers/openai-compatible.js";
 import { ProviderError, type LLMChunk, type LLMProvider, type LLMRequest } from "../src/providers/types.js";
 import { runModelCall } from "../src/providers/model-call.js";
@@ -208,6 +210,10 @@ describe("openai-compatible provider through config + boot", () => {
         WINDOWS_RUNNER_MODEL_API_KEY: KEY,
         WINDOWS_RUNNER_AUTH_TOKEN: "boot-token-0123456789abcdef",
         WINDOWS_RUNNER_ALLOWED_ROOTS: os.tmpdir(),
+        // Isolated data dir: the env provider is bootstrapped into the profile
+        // store on first boot, and a shared store would leak this test's
+        // (now-closed) fake endpoint into other tests' boots.
+        WINDOWS_RUNNER_DATA_DIR: await fs.mkdtemp(path.join(os.tmpdir(), "wr-oa-")),
       },
       { homedir: os.tmpdir() }
     );

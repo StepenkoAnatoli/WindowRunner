@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { DASH_PORT } from "./e2e/fixture.js";
 
 const port = Number(process.env.E2E_PORT ?? 7699);
 
@@ -15,12 +16,25 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
-    command: "npx tsx e2e/server.ts",
-    url: `http://127.0.0.1:${port}/healthz`,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    stdout: "pipe",
-    stderr: "pipe",
-  },
+  // Two fixture servers: the scripted-provider UI server (with its proxy on
+  // E2E_PORT) and the real-bootstrap dashboard server on DASH_PORT. Playwright
+  // starts both, waits on both health endpoints, and stops both after the run.
+  webServer: [
+    {
+      command: "npx tsx e2e/server.ts",
+      url: `http://127.0.0.1:${port}/healthz`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+    {
+      command: "npx tsx e2e/dashboard-server.ts",
+      url: `http://127.0.0.1:${DASH_PORT}/healthz`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  ],
 });

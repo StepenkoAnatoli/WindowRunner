@@ -15,8 +15,12 @@ import { FileTurnLogStore } from "./agent/file-turn-log-store.js";
 import { FileSessionStore, type SessionBootDiagnostics } from "./agent/file-session-store.js";
 import { ApprovalRegistry } from "./agent/approval-registry.js";
 import { SessionManager } from "./agent/session-manager.js";
-import { createProvider, UnknownProviderError } from "./providers/index.js";
+import { createProvider, createProviderFromProfile, UnknownProviderError, DEFAULT_SYSTEM_PROMPT } from "./providers/index.js";
 import type { LLMProvider } from "./providers/types.js";
+import { ProviderStore, defaultProfileFromConfig, type ProviderProfile } from "./provider-profiles.js";
+import { ActiveProviderBox, ProviderService } from "./provider-service.js";
+import { UsageLog, estimateCostUsd } from "./usage-log.js";
+import type { TurnResult } from "./agent/loop.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
 import { createBuiltinTools } from "./agent/tools/builtin.js";
 
@@ -47,6 +51,8 @@ export interface RuntimeOverrides {
   log?: (line: string) => void;
   /** Built web UI directory. Default: packages/web/dist/app next to this package, if it exists; `null` disables. */
   webDir?: string | null;
+  /** Built provider dashboard directory. Default: packages/web/dist/dashboard if it exists; `null` disables (with webDir). */
+  dashboardDir?: string | null;
 }
 
 /**
@@ -54,7 +60,7 @@ export interface RuntimeOverrides {
  * from the bundled dist/index.cjs: both are two levels below `packages/`, so
  * `../../web/dist/app` is the same directory either way.
  */
-export function resolveWebDir(): string | undefined {
+function resolveSiblingWebDir(subdir: "app" | "dashboard", marker: string): string | undefined {
   let here: string | undefined;
   try {
     if (typeof __dirname === "string") here = __dirname;
@@ -66,8 +72,16 @@ export function resolveWebDir(): string | undefined {
     } catch {}
   }
   if (!here) return undefined;
-  const candidate = path.resolve(here, "..", "..", "web", "dist", "app");
-  return existsSync(path.join(candidate, "index.html")) ? candidate : undefined;
+  const candidate = path.resolve(here, "..", "..", "web", "dist", subdir);
+  return existsSync(path.join(candidate, marker)) ? candidate : undefined;
+}
+
+export function resolveWebDir(): string | undefined {
+  return resolveSiblingWebDir("app", "index.html");
+}
+
+export function resolveDashboardDir(): string | undefined {
+  return resolveSiblingWebDir("dashboard", "dashboard.html");
 }
 
 export interface TurnBootDiagnostics {
@@ -92,6 +106,7 @@ export interface BootDiagnostics {
   sessions?: SessionBootDiagnostics;
   auth: AuthBootDiagnostics;
   trust?: { loaded: number; warnings: string[] };
+  providers?: { active: string | null; count: number; file: string; firstBoot: boolean };
 }
 
 export interface Runtime {
@@ -101,11 +116,23 @@ export interface Runtime {
   approvals: ApprovalRegistry;
   sessionManager: SessionManager;
   provider: LLMProvider;
+  /**
+   * Mutable active-provider box. Turns read the CURRENT provider from this at
+   * turn start; dashboard activation/edits call set() and the next turn
+   * follows without a restart.
+   */
+  activeProvider: ActiveProviderBox;
+  /** Dashboard backend: profile CRUD, activate, test. */
+  providers: ProviderService;
+  /** Per-turn usage history (dashboard's recent-turns table). */
+  usageLog: UsageLog;
   tools: Map<string, ToolDefinition>;
   trust: ProjectTrustRegistry;
   boot: BootDiagnostics;
   /** Directory the web UI is served from, if any. */
   webDir?: string;
+  /** Directory the provider dashboard is served from, if any. */
+  dashboardDir?: string;
   /**
    * The bearer token clients must present (undefined when auth is off). Held
    * on the runtime so the entry point can print it once and tests can use it;
@@ -262,6 +289,66 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   }
   if (boot.trust && boot.trust.loaded > 0) log(`trust:       ${boot.trust.loaded} trusted project(s) loaded`);
 
+  // Provider profiles (dashboard). The env-configured provider becomes the
+  // "default" profile on first boot, so nothing changes for users who never
+  // touch the dashboard; an activeProfileId persisted by a later dashboard
+  // choice wins over the environment on subsequent boots (that is the point).
+  const providerStore = new ProviderStore({ dataDir: config.persistence.dataDir, now });
+  let firstBoot = false;
+  try {
+    const { fileExisted } = await providerStore.load();
+    firstBoot = !fileExisted;
+    const t = now();
+    if (!fileExisted) {
+      const def = defaultProfileFromConfig(config, t);
+      providerStore.data.profiles.push(def);
+      providerStore.data.activeProfileId = def.id;
+      await providerStore.persist();
+      log(`providers:   registered default profile "${def.id}" from environment (${def.kind}, model=${def.model})`);
+    } else {
+      let dirty = false;
+      if (!providerStore.data.profiles.some((p) => p.id === "default")) {
+        providerStore.data.profiles.push(defaultProfileFromConfig(config, t));
+        dirty = true;
+      }
+      if (!providerStore.data.profiles.some((p) => p.id === providerStore.data.activeProfileId)) {
+        providerStore.data.activeProfileId = "default";
+        dirty = true;
+        log(`warning:     stored active provider no longer exists; falling back to "default"`);
+      }
+      if (dirty) await providerStore.persist();
+    }
+  } catch (err: any) {
+    log(`warning:     provider profiles unavailable (${err?.message ?? err}); using the environment provider`);
+  }
+  const activeProfile = providerStore.data.profiles.find((p) => p.id === providerStore.data.activeProfileId) ?? null;
+
+  const buildProfile = (profile: ProviderProfile): LLMProvider =>
+    createProviderFromProfile(profile, {
+      maxRetries: config.model.maxRetries,
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      onRetry: ({ attempt, delayMs, error }) =>
+        log(`model: ${error.code} (${error.status ?? "network"}); retry ${attempt}/${config.model.maxRetries} in ${delayMs}ms`),
+    });
+
+  if (!overrides.provider && activeProfile) {
+    // The persisted choice (or the env default registered above) is what the
+    // next turns run on: same retry policy and system prompt as the env path.
+    provider = buildProfile(activeProfile);
+  }
+
+  const activeBox = new ActiveProviderBox(provider, activeProfile ? activeProfile.id : undefined);
+  const providerService = new ProviderService({ store: providerStore, active: activeBox, build: buildProfile, now, log });
+  const usageLog = new UsageLog({ dataDir: config.persistence.dataDir, now });
+  await usageLog.loadInitial().catch(() => {});
+  boot.providers = {
+    active: activeProfile ? activeProfile.id : null,
+    count: providerStore.data.profiles.length,
+    file: providerStore.file,
+    firstBoot,
+  };
+  log(`providers:   active "${activeProfile ? activeProfile.id : "env"}" (${providerStore.data.profiles.length} profile(s) in ${providerStore.file})`);
+
   const sessionManager = new SessionManager({
     now,
     isTurnTerminal: (turnId) => {
@@ -272,11 +359,35 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   });
 
   const webDir = overrides.webDir === null ? undefined : overrides.webDir ?? resolveWebDir();
+  const dashboardDir =
+    overrides.dashboardDir === null
+      ? undefined
+      : overrides.dashboardDir ?? (overrides.webDir === null ? undefined : resolveDashboardDir());
 
   const app = createApp({
     webDir,
+    dashboardDir,
     manager,
     provider,
+    activeProvider: activeBox,
+    providerAdmin: providerService,
+    recordTurnUsage: (turnId, sessionId, result) => {
+      const desc = providerService.describeActive();
+      const model = desc ? desc.model : "unknown";
+      usageLog.append({
+        at: now(),
+        providerId: desc ? desc.id : "default",
+        model,
+        turnId,
+        sessionId,
+        status: result.status,
+        code: result.status === "failed" ? manager.getLog(turnId)?.state.error?.code : undefined,
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        estCostUsd: estimateCostUsd(model, result.usage),
+      });
+    },
+    usageLog,
     tools,
     approvals,
     sessionManager,
@@ -294,7 +405,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     },
   });
 
-  return { config, app, manager, approvals, sessionManager, provider, tools, trust, boot, authToken, webDir };
+  return { config, app, manager, approvals, sessionManager, provider, activeProvider: activeBox, providers: providerService, usageLog, tools, trust, boot, authToken, webDir, dashboardDir };
 }
 
 export async function startServer(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<StartedServer> {

@@ -6,7 +6,9 @@
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
+import * as path from "node:path";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
 import { ProviderError, type LLMChunk, type LLMProvider, type LLMRequest } from "../src/providers/types.js";
 import { createProvider } from "../src/providers/index.js";
@@ -204,7 +206,10 @@ describe("anthropic adapter", () => {
   it("boot path: a two-step tool turn reports usage summed across both model calls", async () => {
     const s = await fake([{ kind: "tool_use", calls: [{ name: "list_dir", json: '{"path":"."}' }] }, { kind: "text", text: "done" }]);
     const config = loadServerConfig(
-      { WINDOWS_RUNNER_PROVIDER: "anthropic", WINDOWS_RUNNER_MODEL: "m", WINDOWS_RUNNER_MODEL_BASE_URL: s.url, ANTHROPIC_API_KEY: KEY, WINDOWS_RUNNER_AUTH_TOKEN: "boot-token-0123456789abcdef", WINDOWS_RUNNER_ALLOWED_ROOTS: os.tmpdir() },
+      // Isolated data dir: the env provider is bootstrapped into the profile
+      // store on first boot, and a shared store would leak this test's
+      // (now-closed) fake endpoint into other tests' boots.
+      { WINDOWS_RUNNER_PROVIDER: "anthropic", WINDOWS_RUNNER_MODEL: "m", WINDOWS_RUNNER_MODEL_BASE_URL: s.url, ANTHROPIC_API_KEY: KEY, WINDOWS_RUNNER_AUTH_TOKEN: "boot-token-0123456789abcdef", WINDOWS_RUNNER_ALLOWED_ROOTS: os.tmpdir(), WINDOWS_RUNNER_DATA_DIR: await fs.mkdtemp(path.join(os.tmpdir(), "wr-anth-")) },
       { homedir: os.tmpdir() }
     );
     const h = await startServer(config);

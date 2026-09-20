@@ -1,0 +1,63 @@
+/* Provider dashboard — same design tokens as app.css (Phase 2), plus the
+   dashboard-specific layout: banner, card grid, status dots, usage table. */
+:root { color-scheme: light dark; --bg: #f7f7f8; --fg: #1a1a1a; --muted: #6b6b70; --card: #fff; --border: #dcdce0; --primary: #2b5ce6; --danger: #c62828; --warn: #fff6dc; --ok: #1b7f3b; font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --bg: #131316; --fg: #ececf0; --muted: #9a9aa3; --card: #1d1d22; --border: #33333a; --warn: #3a3218; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+#app { max-width: 960px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+header h1 { font-size: 20px; margin: 0; flex: 1; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+label { display: block; margin: 8px 0; }
+input, textarea, select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+textarea { resize: vertical; }
+input[disabled] { opacity: .6; }
+.row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.btn { padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.link { border: none; background: none; color: var(--primary); padding: 0; }
+.btn[disabled] { opacity: .5; cursor: default; }
+.muted { color: var(--muted); }
+.hint { color: var(--muted); font-size: 13px; }
+.error { color: var(--danger); }
+.ok { color: var(--ok); }
+.small { font-size: 13px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+a { color: var(--primary); }
+
+/* Active-provider banner */
+.banner-active { display: flex; align-items: center; gap: 8px; font-size: 16px; border-width: 2px; border-color: var(--primary); }
+.banner-active strong { font-size: 16px; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+/* Provider cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.card.provider { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.card.provider.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.p-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.p-head .dot { flex: none; }
+.p-head span[title] { cursor: help; }
+.p-head > span:nth-child(2) { flex: 1; font-weight: 600; }
+.card.provider .base { word-break: break-all; }
+.card.provider .row { margin-top: 10px; }
+.card.provider .row .btn { padding: 5px 10px; font-size: 13px; }
+
+/* Status dots: green = last test passed, red = failed, gray = untested */
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--muted); }
+.dot.ok { background: var(--ok); }
+.dot.fail { background: var(--danger); }
+
+/* Usage table */
+table.usage { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.usage th, table.usage td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.usage th { color: var(--muted); font-weight: 600; }
+
+/* Quick chat */
+.chat-out { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; min-height: 20px; }
+.chat-out .cursor { animation: blink 1s steps(2) infinite; color: var(--muted); }
+@keyframes blink { to { visibility: hidden; } }
+
+/* Notices */
+.banner { position: sticky; bottom: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
