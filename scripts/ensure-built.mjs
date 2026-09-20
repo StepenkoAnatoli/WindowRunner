@@ -2,7 +2,7 @@
 /**
  * windows-runner — `prestart` hook.
  *
- * `npm start` runs the compiled server entry, packages/server/dist/index.js.
+ * `npm start` runs the self-contained server bundle, packages/server/dist/index.cjs.
  * This hook makes that command work on a fresh checkout without a separate
  * build step, and refuses to start stale code after `src/` changes:
  *

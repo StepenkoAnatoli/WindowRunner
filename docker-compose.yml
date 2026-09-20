@@ -1,20 +1,25 @@
-# BLOCKED: `docker compose up --build` cannot work while the Dockerfile's build
-# guard fails. The server boot entry point exists (docs/INSTALL.md, gap G-02 is
-# closed; `npm start` runs it from a checkout), but there is no bundler, so the
-# compiled dist/ is not self-contained and the image cannot carry it (gaps G-03,
-# G-04). This file describes the intended topology — including auth behavior
-# that is not implemented yet — and is kept so that intent is not lost. Do not
-# advertise it as a supported path.
+# Windows Runner compose topology.
+#
+# Status (2026-09-20): unblocked — the image runs the self-contained server
+# bundle `packages/server/dist/index.cjs` (packaging gaps G-03/G-04 closed),
+# so the runtime container needs no node_modules or monorepo workspace
+# symlinks. See docs/INSTALL.md ("Docker") and RELEASE_CHECKLIST.md.
+#
+# Security note: the API has no authentication yet (RELEASE_CHECKLIST.md,
+# P0-01). The published port below is loopback-only for that reason; the
+# container binds 0.0.0.0 only inside its own network namespace, which the
+# entry point requires WINDOWS_RUNNER_ALLOW_REMOTE=1 to acknowledge.
 services:
   windows-runner:
     build: .
     # Reap child processes (the agent spawns MCP servers and terminal commands).
     init: true
     ports:
-      # Loopback only (F10). Change to "7634:7634" AND set
-      # WINDOWS_RUNNER_ALLOW_REMOTE=1 only if you intentionally want LAN access;
-      # the API requires a bearer token in either mode, and non-loopback Host
-      # headers are rejected unless that variable is set.
+      # Loopback only: the API has no authentication yet (P0-01), so never
+      # publish it beyond 127.0.0.1 on a shared network. Change to "7634:7634"
+      # only if you intentionally want LAN access AND have decided the network
+      # is trusted — WINDOWS_RUNNER_ALLOW_REMOTE=1 below only acknowledges the
+      # non-loopback bind inside the container's network namespace.
       - "127.0.0.1:7634:7634"
     volumes:
       # Config, sessions and crash reports persist across container restarts.

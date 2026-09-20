@@ -1,7 +1,7 @@
 /**
  * Windows Runner — server boot entry point.
  *
- * This is the executable: `npm start` runs the compiled `dist/index.js`,
+ * This is the executable: `npm start` runs the self-contained bundle `dist/index.cjs`,
  * `npm run dev` runs it through `tsx watch`. Importing it starts a server, so
  * import `./boot.js` instead when you need the API.
  *
