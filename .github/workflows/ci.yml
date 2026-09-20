@@ -167,9 +167,13 @@ jobs:
       - name: Stop the stack and assert a clean exit
         shell: bash
         run: |
-          docker compose stop -t 30 windows-runner
-          code="$(docker inspect "$(docker compose ps -q windows-runner)" --format '{{.State.ExitCode}}')"
-          echo "container exit code: ${code}"
+          # Capture the id first: `compose ps` lists running containers only,
+          # so it returns nothing once the container is stopped.
+          cid="$(docker compose ps -q windows-runner)"
+          test -n "${cid}"
+          docker compose stop --timeout 30 windows-runner
+          code="$(docker inspect "${cid}" --format '{{.State.ExitCode}}')"
+          echo "container ${cid} exit code: ${code}"
           test "${code}" = "0"
 
       - name: Collect container diagnostics
