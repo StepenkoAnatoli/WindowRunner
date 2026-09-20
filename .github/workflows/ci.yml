@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Pinned exact version: Node 20 is EOL (security fixes ended 2026-04-30);
+          # Node 22 is Active LTS and satisfies the repo's engines (>=20.10).
+          node-version: "22.23.2"
+          cache: npm
+
+      # --ignore-scripts is NOT an optimization: the root package.json declares
+      # `postinstall: node scripts/postinstall.mjs`, but scripts/ is not yet
+      # present on main, so an unadorned `npm ci` fails with MODULE_NOT_FOUND
+      # before any check runs. Skipping lifecycle scripts installs the full
+      # dependency tree the checks below need, and mirrors the repo's own
+      # WINDOWS_RUNNER_SKIP_POSTINSTALL precedent (Dockerfile, install.sh).
+      # Restoring the packaging/build contract is tracked separately in
+      # RELEASE_CHECKLIST.md and is intentionally out of scope for this PR.
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Collect diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "== node =="
+            node --version
+            echo "== npm =="
+            npm --version
+            echo "== git =="
+            git --version
+            echo "== git status =="
+            git status --short
+            echo "== workspace manifests =="
+            node -e 'const p=require("./package.json");console.log(JSON.stringify({scripts:p.scripts,workspaces:p.workspaces,engines:p.engines},null,2))'
+          } > diagnostics.txt
+          mkdir -p npm-logs
+          cp -r "$HOME/.npm/_logs/." npm-logs/ 2>/dev/null || true
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: |
+            diagnostics.txt
+            npm-logs/
+          if-no-files-found: ignore
+          retention-days: 7
