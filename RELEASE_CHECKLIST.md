@@ -22,10 +22,11 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-One job, `ubuntu-latest`, Node pinned exactly to `22.23.2`. Triggers: `push` to
-`main` and every `pull_request`. Concurrency cancels superseded runs on the same
-ref; the job has a 20-minute timeout; a diagnostics artifact (tool versions,
-manifests, per-workspace scripts, `npm` logs) is uploaded on failure.
+Two jobs, both `ubuntu-latest`. Triggers: `push` to `main` and every
+`pull_request`. Concurrency cancels superseded runs on the same ref; each job
+has a 20-minute timeout; a diagnostics artifact is uploaded on failure. The
+`CI` job pins Node exactly to `22.23.2`; the `Docker` job runs after `CI`,
+builds `node:22-alpine` images, and needs no runner Node at all.
 
 | Check | Command |
 | --- | --- |

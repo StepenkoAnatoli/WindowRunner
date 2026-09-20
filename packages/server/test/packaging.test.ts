@@ -298,7 +298,7 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test and the startup smoke test", () => {
+    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test, the startup smoke test and the Docker compose stack", () => {
       const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
       for (const command of [
         "npm run typecheck",
@@ -307,6 +307,7 @@ describe("Packaging contract", () => {
         "npm run smoke:packed",
         "npm run smoke:packed:start",
         "npm run smoke:start",
+        "docker compose up --build -d",
       ]) {
         assert.match(text, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `CI does not run \`${command}\``);
       }
