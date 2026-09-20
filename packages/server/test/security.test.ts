@@ -646,6 +646,27 @@ describe("boot integration", () => {
     assert.throws(() => cfg({ WINDOWS_RUNNER_AUTH: "off", HOST: "0.0.0.0", WINDOWS_RUNNER_ALLOW_REMOTE: "1" }), /WINDOWS_RUNNER_AUTH=off is only permitted on a loopback HOST/);
   });
 
+  it("auth off is refused for every non-loopback host representation, allowed for every loopback one", () => {
+    const refused = ["0.0.0.0", "::", "[::]", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0", "::ffff:192.168.1.5", "192.168.1.5", "fe80::1", "2001:db8::1", "example.com"];
+    for (const HOST of refused) {
+      assert.throws(() => cfg({ HOST, WINDOWS_RUNNER_AUTH: "off", WINDOWS_RUNNER_ALLOW_REMOTE: "1" }), /only permitted on a loopback HOST/, HOST);
+    }
+    const allowed = ["127.0.0.1", "127.1.2.3", "LOCALHOST", "::1", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"];
+    for (const HOST of allowed) {
+      assert.equal(cfg({ HOST, WINDOWS_RUNNER_AUTH: "off" }).auth.mode, "off", HOST);
+    }
+  });
+
+  it("the generated memory-mode token is never served by any endpoint", async () => {
+    const h = await start(cfg({}));
+    const token = h.authToken!;
+    for (const route of ["/healthz", "/api/health", "/api/metrics", "/api/diagnostics/persistence"]) {
+      const res = await fetch(`${h.url}${route}`, { headers: bearer(token) });
+      const text = await res.text();
+      assert.equal(text.includes(token), false, route);
+    }
+  });
+
   it("config parsing: token length, host/origin list shapes", () => {
     assert.throws(() => cfg({ WINDOWS_RUNNER_AUTH_TOKEN: "tooshort" }), /at least 16 characters/);
     assert.throws(() => cfg({ WINDOWS_RUNNER_AUTH_TOKEN: "has a space in it yes" }), /whitespace/);
