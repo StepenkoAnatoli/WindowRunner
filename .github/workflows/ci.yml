@@ -30,22 +30,28 @@ jobs:
           node-version: "22.23.2"
           cache: npm
 
-      # --ignore-scripts is NOT an optimization: the root package.json declares
-      # `postinstall: node scripts/postinstall.mjs`, but scripts/ is not yet
-      # present on main, so an unadorned `npm ci` fails with MODULE_NOT_FOUND
-      # before any check runs. Skipping lifecycle scripts installs the full
-      # dependency tree the checks below need, and mirrors the repo's own
-      # WINDOWS_RUNNER_SKIP_POSTINSTALL precedent (Dockerfile, install.sh).
-      # Restoring the packaging/build contract is tracked separately in
-      # RELEASE_CHECKLIST.md and is intentionally out of scope for this PR.
+      # A plain `npm ci`, with no --ignore-scripts: the root package.json declares
+      # `postinstall: node scripts/postinstall.mjs`, and that script now exists and
+      # verifies the workspace tree. An earlier revision of this workflow had to
+      # skip lifecycle scripts because scripts/ was absent from main, which meant
+      # CI could not tell a healthy install from a broken one. Running the hook is
+      # the point of this step. See docs/INSTALL.md.
       - name: Install dependencies (clean, lockfile-driven)
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build
+        run: npm run build
+
       - name: Test
         run: npm test
+
+      # Asserts the packed tarball matches the manifest contract: dist/ only, no
+      # sources, no tests, no bin pointing at a file that does not exist.
+      - name: Packed-artifact smoke test
+        run: npm run smoke:packed
 
       - name: Collect diagnostics
         if: failure()
@@ -61,7 +67,14 @@ jobs:
             echo "== git status =="
             git status --short
             echo "== workspace manifests =="
-            node -e 'const p=require("./package.json");console.log(JSON.stringify({scripts:p.scripts,workspaces:p.workspaces,engines:p.engines},null,2))'
+            node -e 'const p=require("./package.json");console.log(JSON.stringify({scripts:p.scripts,workspaces:p.workspaces,files:p.files,bin:p.bin,engines:p.engines},null,2))'
+            echo "== per-workspace scripts =="
+            for ws in $(node -e 'console.log(require("./package.json").workspaces.join(" "))'); do
+              echo "-- $ws"
+              node -e "console.log(JSON.stringify(require('./$ws/package.json').scripts,null,2))"
+            done
+            echo "== build outputs =="
+            find packages -maxdepth 3 -name dist -type d -print 2>/dev/null || echo "(none)"
           } > diagnostics.txt
           mkdir -p npm-logs
           cp -r "$HOME/.npm/_logs/." npm-logs/ 2>/dev/null || true

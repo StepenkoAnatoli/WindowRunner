@@ -9,7 +9,13 @@
 #
 # Status: EXPERIMENTAL and untested (see docs/INSTALL.md). No Windows machine was
 # available when this script was last changed, so it has no recorded smoke-test
-# result. Prefer `npm install -g windows-runner` or `npx windows-runner`.
+# result, and CI runs Linux only (gap G-06). The packed
+# `npm install -g windows-runner` / `npx windows-runner` alternative is NOT
+# available either: the package declares no bin and is not published (gaps G-01
+# and G-05). The clone + `npm run setup` flow below is the verified path.
+#
+# This installer sets up a source checkout. It cannot start a server: the server
+# package has no boot entry point yet (gap G-02), so there is no `npm start`.
 
 param(
   [switch]$NoStart
@@ -101,18 +107,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "  ✓ Installed in $(Get-Location)"
 Write-Host ""
-Write-Host "  Start:"
-Write-Host "    npm start             → http://127.0.0.1:7634"
-Write-Host "    npx windows-runner    → CLI from this checkout"
-Write-Host "    wr                    → after 'npm install -g windows-runner'"
+Write-Host "  Available now:"
+Write-Host "    npm test              run the test suite"
+Write-Host "    npm run build         emit packages/*/dist"
+Write-Host "    npm run smoke:packed  verify the packed artifact"
+Write-Host ""
+Write-Host "  Not available yet (see docs/INSTALL.md):"
+Write-Host "    npm start             no server boot entry point (gap G-02)"
+Write-Host "    npx windows-runner    no bin, package unpublished (gaps G-01, G-05)"
 Write-Host ""
 
 if ($NoStart) { exit 0 }
 
-# Only prompt when a human is attached; `irm | iex` runs unattended.
-if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-  $answer = Read-Host "  Start the server now? [Y/n]"
-  if ($answer -notmatch "^[Nn]") { npm start }
-} else {
-  Write-Host "  Non-interactive shell: not starting the server. Run 'npm start' when ready."
-}
+# -NoStart used to gate an interactive "start the server?" prompt that ran
+# `npm start`. That command does not exist in this checkout, so prompting would
+# have offered a failure. The switch is still accepted for compatibility.
+Write-Host "  Nothing to start: this checkout has no server entry point (gap G-02)."

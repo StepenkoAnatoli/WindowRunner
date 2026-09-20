@@ -13,7 +13,66 @@ Issue mapping: P0-01/P0-02 ↔ hardening plan Phase 1A/1B; P0-03/P0-04 ↔ Phase
 residuals; P1-01/P1-02/P1-03 ↔ Phase 4; P1-04 ↔ Phase 3A; P1-05 ↔ Phase 3B;
 P1-06/P1-07 ↔ Phase 5; P2-01/P2-02 ↔ Phases 6/5.
 
+## CI enforcement status
+
+What CI actually enforces, versus what this checklist used to assume. Written
+2026-09-20, when `.github/workflows/ci.yml` landed and the packaging contract was
+repaired. This section is the authority for any "CI green" claim below; the older
+status rows were written against a repository state that had no CI at all.
+
+### Enforced today
+
+One job, `ubuntu-latest`, Node pinned exactly to `22.23.2`. Triggers: `push` to
+`main` and every `pull_request`. Concurrency cancels superseded runs on the same
+ref; the job has a 20-minute timeout; a diagnostics artifact (tool versions,
+manifests, per-workspace scripts, `npm` logs) is uploaded on failure.
+
+| Check | Command |
+| --- | --- |
+| Clean install **with lifecycle scripts enabled** | `npm ci` |
+| Typecheck — shared, server, web | `npm run typecheck` |
+| Build — emits `packages/*/dist` | `npm run build` |
+| Full test suite | `npm test` |
+| Packed-artifact contents | `npm run smoke:packed` |
+
+`npm ci` runs without `--ignore-scripts` because `scripts/postinstall.mjs` now
+exists and verifies the workspace tree. Skipping lifecycle scripts was a
+bootstrap workaround for a missing hook, and it hid exactly the class of defect
+this checklist tracks.
+
+### Not implemented — nothing gates on these
+
+| Previously claimed | Reality |
+| --- | --- |
+| Windows job ("Windows CI green") | No Windows runner in any workflow. `install.ps1` has never been executed (gap G-06). |
+| macOS coverage | No job. |
+| Docker build / `npm run smoke:docker` | No Docker job, and no `smoke:docker` script exists. The image is **blocked**, not merely unverified (gaps G-02, G-03). |
+| Packed CLI smoke (`npx windows-runner`, `wr`) | Cannot exist: no `bin`, package unpublished (gaps G-01, G-05). `smoke:packed` validates tarball *contents* only. |
+| Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
+| Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
+| Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
+
+### Merge gating is NOT configured
+
+Branch protection on `main` is not set. The automation token used to open and
+merge these PRs is refused read *and* write access to the protection rules
+(HTTP 403), so it could not enable them and could not verify whether they exist.
+Until a repository admin requires the `CI` status check and at least one approval
+on `main`, a green `CI` run is **informational**: it does not block a merge, and
+"failed CI gates block release" (P1-06) is not true.
+
+**Outstanding admin action:** on `main`, require status check `CI` and >= 1
+approving review. This is the only item in this section that cannot be done from
+a pull request.
+
+---
+
 ## Status snapshot (as of 2026-09-17, HEAD `b9ae7ac`)
+
+> `b9ae7ac` is not an object in this repository, so every row below describes a
+> state that cannot be reproduced from this checkout. Treat these rows as
+> historical intent, not as verified status; "CI enforcement status" above is
+> current.
 
 | Issue | Snapshot |
 | --- | --- |
@@ -25,8 +84,8 @@ P1-06/P1-07 ↔ Phase 5; P2-01/P2-02 ↔ Phases 6/5.
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
-| P1-05 | Largely complete in Batch 6, Windows CI green — verify-and-guard. Residual: Electron quit on Windows does not reach the SIGTERM handler. |
-| P1-06 | Largely complete (Batch 4 + CI follow-ups; Linux/Windows/packed/Docker jobs all gating) — verify-and-guard. |
+| P1-05 | Claimed complete in Batch 6. **"Windows CI green" is not reproducible: there has never been a Windows job in this repository** (see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
+| P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test and a packed-contents smoke test, and is enforced on `push`/`pull_request`. **Windows, packed-CLI and Docker jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
 | P1-07 | Open (Phase 5 unchecked tasks). |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | Open (Phase 5). |
@@ -230,13 +289,20 @@ Files to inspect:
 - `docs/INSTALL.md`
 
 Acceptance criteria:
-- [ ] CI runs clean install, typecheck, test, build, and artifact smoke tests on supported Node versions.
-- [ ] Linux and Windows jobs are included for core validation.
-- [ ] Packed artifact validation runs from a clean directory without repository-only dependencies.
-- [ ] Docker build smoke tests run when Docker is available.
-- [ ] Security regressions remain in the normal suite.
-- [ ] Release artifacts are tested, not inferred from source-only tests.
-- [ ] Failed CI gates block release.
+- [x] CI runs clean install, typecheck, test, build, and artifact smoke tests — on **one** pinned Node version (22.23.2), not a matrix of supported versions.
+- [x] Linux job included for core validation.
+- [ ] Windows job included for core validation — **not implemented**, no Windows runner.
+- [ ] Packed artifact validation runs from a clean directory without repository-only dependencies — **blocked**: the packed `dist/` imports `@windows-runner/shared` through a workspace symlink a tarball does not have (gap G-04), and there is no `bin` to execute (gap G-01). `scripts/smoke-packed.mjs` validates tarball contents only.
+- [ ] Docker build smoke tests run when Docker is available — **not implemented**, and the image build is blocked by gaps G-02/G-03. No `smoke:docker` script exists.
+- [ ] Security regressions remain in the normal suite — the referenced security modules (`auth.ts`, `access.ts`, `routes.ts`) are not present in this checkout.
+- [ ] Release artifacts are tested, not inferred from source-only tests — contents are tested; a runnable artifact does not exist yet.
+- [ ] Failed CI gates block release — **false today**: branch protection is unconfigured, so a red `CI` run does not block a merge. Requires admin action.
+
+Files that now exist and are exercised by CI: `.github/workflows/ci.yml`,
+`scripts/smoke-packed.mjs`, `docs/INSTALL.md`,
+`packages/server/test/packaging.test.ts`. Still absent: every path under
+`packages/server/src/` that this issue lists for inspection except the agent,
+provider and persistence modules.
 
 ---
 
@@ -326,7 +392,15 @@ Acceptance:
 - [x] Retention: evictOldest only terminal, preserves active, deleteTurnFile
 - [x] Diagnostics observable via /api/health and /api/diagnostics/persistence (boot diagnostics, persistenceFailures, quarantinedFiles, warnings)
 - [x] Single-process writer limitation documented prominently: SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Run single instance per dataDir.
-- [x] 101 tests passing, clean-install/clean-build verified
+- [x] Tests passing, clean-install and clean-build verified on Linux as of
+      2026-09-20. The suite has grown past the 101 recorded here (it was 125
+      before the packaging contract tests were added); the count is deliberately
+      not pinned, because a hardcoded number goes stale the way this one did.
+      "Clean install" now means a plain `npm ci` with lifecycle scripts enabled —
+      previously it required `--ignore-scripts` and so proved nothing about the
+      install path. "Clean build" means `npm run build` emits `packages/*/dist`;
+      it does **not** mean the output is runnable as a server (gap G-02) or
+      self-contained (gap G-04).
 
 ## Release gate
 
@@ -337,6 +411,9 @@ Acceptance:
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
+### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md)
+### [ ] Branch protection on `main`: required `CI` check + >= 1 approval (admin action)
+### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 
 ---
@@ -369,8 +446,17 @@ Acceptance:
 ---
 
 ## Source of truth
-- `PROJECT_HARDENING_PLAN.md`
-- `README.md`
-- `docs/BASELINE.md`
-- `docs/THREAT_MODEL.md`
-- `docs/INSTALL.md`
+
+Only two of these documents exist in the repository. The others are cited
+throughout this checklist and in the Dockerfile/README history, but were never
+committed here; citing them as authoritative is what let claims like "Windows CI
+green" survive unchecked.
+
+- `PROJECT_HARDENING_PLAN.md` — **absent**
+- `README.md` — present (install/packaging sections corrected 2026-09-20)
+- `docs/BASELINE.md` — **absent** (the Dockerfile used to cite it for the F11 finding)
+- `docs/THREAT_MODEL.md` — **absent**
+- `docs/INSTALL.md` — present; authoritative for install-path status and gaps G-01..G-06
+- `.github/workflows/ci.yml` — present; authoritative for what CI enforces
+- `docs/research/2026-09-19-checkout-integrity-audit.md` — present; the audit that
+  established which documented paths are missing

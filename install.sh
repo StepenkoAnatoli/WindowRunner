@@ -11,8 +11,13 @@ set -e
 #   WINDOWS_RUNNER_REPO_URL=https://github.com/you/WindowsRunner.git ./install.sh
 #
 # Status: this path is *experimental* (see docs/INSTALL.md). It has been run on
-# Linux against a local checkout; macOS is untested. Prefer
-# `npm install -g windows-runner` or the clone + `npm run setup` flow.
+# Linux against a local checkout; macOS is untested. The clone + `npm run setup`
+# flow it drives is verified; the packed `npm install -g windows-runner` /
+# `npx windows-runner` path is NOT available, because the package declares no
+# bin and is not published (docs/INSTALL.md, gaps G-01 and G-05).
+#
+# This installer sets up a source checkout. It cannot start a server: the server
+# package has no boot entry point yet (gap G-02), so there is no `npm start`.
 
 REPO_URL="${WINDOWS_RUNNER_REPO_URL:-https://github.com/StepenkoAnatoli/WindowsRunner.git}"
 
@@ -101,25 +106,21 @@ WINDOWS_RUNNER_SKIP_POSTINSTALL=1 npm run setup
 echo ""
 echo "  ✓ Installed in $(pwd)"
 echo ""
-echo "  Start:"
-echo "    npm start            → http://127.0.0.1:7634"
-echo "    npx windows-runner   → CLI from this checkout"
-echo "    wr                   → after 'npm install -g windows-runner'"
+echo "  Available now:"
+echo "    npm test             run the test suite"
+echo "    npm run build        emit packages/*/dist"
+echo "    npm run smoke:packed verify the packed artifact"
+echo ""
+echo "  Not available yet (see docs/INSTALL.md):"
+echo "    npm start            no server boot entry point (gap G-02)"
+echo "    npx windows-runner   no bin, package unpublished (gaps G-01, G-05)"
 echo ""
 
 if [ "$NO_START" -eq 1 ]; then
   exit 0
 fi
 
-# Only prompt when a human is attached: `curl … | bash` feeds the script itself
-# on stdin, so reading would consume the rest of the script.
-if [ -t 0 ] && [ -t 1 ]; then
-  printf "  Start the server now? [Y/n] "
-  read -r reply || reply=""
-  case "$reply" in
-    [Nn]*) ;;
-    *) npm start ;;
-  esac
-else
-  echo "  Non-interactive shell: not starting the server. Run 'npm start' when ready."
-fi
+# --no-start used to gate an interactive "start the server?" prompt that ran
+# `npm start`. That command does not exist in this checkout, so prompting would
+# have offered a failure. The flag is still accepted for compatibility.
+echo "  Nothing to start: this checkout has no server entry point (gap G-02)."

@@ -1,0 +1,15 @@
+# Line-ending policy, deliberately narrow: only `*.sh` is declared, so adding
+# this file renormalizes one file instead of the whole tree.
+#
+# bash cannot parse a CRLF script — it fails with
+#   syntax error near unexpected token `$'do\r''
+# — so `install.sh` was unrunnable on Linux while it was committed with CRLF
+# endings, which made the documented `curl … install.sh | bash` path dead on
+# arrival. Shell scripts are now always LF, on every platform, including a
+# Windows checkout that is only editing them.
+*.sh text eol=lf
+
+# `install.ps1` is intentionally NOT declared here. It targets Windows and is
+# already committed with CRLF; adding a `text eol=crlf` rule would normalize the
+# stored blob to LF and rewrite every line of the file in the index for no
+# behavioral gain.
