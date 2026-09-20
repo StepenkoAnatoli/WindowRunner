@@ -293,10 +293,20 @@ jobs:
           fi
           echo "===== ${latest} (tail) ====="
           tail -n 40 "${latest}"
-          grep -E "FAILED|Error|error|not ok|failed|FAIL" "${latest}" | head -n 10 | while IFS= read -r line; do
-            clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
-            echo "::error title=${latest}::${clean}"
-          done
+          # TAP suites: the failing test names. Anything else (smokes,
+          # installers): the trailing lines, where the error summary lives.
+          if grep -q "not ok" "${latest}"; then
+            grep -E "not ok" "${latest}" | head -n 10 | while IFS= read -r line; do
+              clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+              echo "::error title=${latest}::${clean}"
+            done
+          else
+            tail -n 12 "${latest}" | while IFS= read -r line; do
+              clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+              [ -n "${clean}" ] || continue
+              echo "::error title=${latest}::${clean}"
+            done
+          fi
 
       - name: Collect diagnostics
         if: failure()
