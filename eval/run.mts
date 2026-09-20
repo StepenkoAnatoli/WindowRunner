@@ -3,6 +3,7 @@
  * windows-runner evaluation harness (RELEASE_CHECKLIST P2-02).
  *
  *   npx tsx eval/run.mts                       # scripted mode: no key, no network
+ *   npx tsx eval/run.mts --provider anthropic --model claude-sonnet-4-5   (ANTHROPIC_API_KEY)
  *   npx tsx eval/run.mts --provider openai-compatible --model gpt-4o-mini \
  *       --base-url https://api.openai.com/v1   # real model; needs WINDOWS_RUNNER_MODEL_API_KEY
  *   npx tsx eval/run.mts --task bug-fix --approve deny
@@ -105,8 +106,13 @@ async function runTask(id: string, provider: string): Promise<TaskResult> {
     host: "127.0.0.1",
     port: 0,
     allowRemote: false,
-    provider: "openai-compatible",
-    model: { baseUrl: baseUrl!, model: model!, apiKey: process.env.WINDOWS_RUNNER_MODEL_API_KEY ?? process.env.OPENAI_API_KEY },
+    provider: provider === "anthropic" ? "anthropic" : "openai-compatible",
+    model: {
+      baseUrl: baseUrl ?? (provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+      model: model!,
+      apiKey: process.env.WINDOWS_RUNNER_MODEL_API_KEY ?? (provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY),
+      maxRetries: 2,
+    },
     tools: { enabled: true, terminalTimeoutMs: 60_000, terminalOutputLimit: 64 * 1024 },
     auth: { mode: "token", token: TOKEN, allowedHosts: [], allowedOrigins: [] },
     persistence: { mode: "memory", dataDir: path.join(os.tmpdir(), "unused"), durableBeforeNotify: false, fsync: false },
@@ -234,7 +240,8 @@ function parseArgs(argv: string[]) {
     else if (a === "--help" || a === "-h") { console.log("see header comment in eval/run.mts"); process.exit(0); }
     else throw new Error(`unknown argument ${a}`);
   }
-  if (out.provider === "openai-compatible" && !out.model) throw new Error("--model is required with --provider openai-compatible");
+  if (out.provider && !["scripted", "openai-compatible", "anthropic"].includes(out.provider)) throw new Error(`unknown --provider ${out.provider} (scripted | openai-compatible | anthropic)`);
+  if (out.provider && out.provider !== "scripted" && !out.model) throw new Error(`--model is required with --provider ${out.provider}`);
   return out;
 }
 

@@ -27,13 +27,13 @@ export interface PersistenceConfig {
 
 export type AuthMode = "token" | "off";
 
-/** Settings for the openai-compatible provider; ignored by `mock`. */
+/** Settings for the network providers (openai-compatible, anthropic); ignored by `mock`. */
 export interface ModelConfig {
-  /** `{baseUrl}/chat/completions` is called. Default: https://api.openai.com/v1 */
+  /** `{baseUrl}/chat/completions` (openai-compatible) or `{baseUrl}/messages` (anthropic). Default per provider. */
   baseUrl: string;
-  /** Required when provider=openai-compatible. */
+  /** Required for every provider except `mock`. */
   model?: string;
-  /** From WINDOWS_RUNNER_MODEL_API_KEY (or OPENAI_API_KEY). Optional for local servers. Never printed. */
+  /** From WINDOWS_RUNNER_MODEL_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY matching the provider). Optional for local servers. Never printed. */
   apiKey?: string;
   /** Extra attempts for retryable model errors (429/5xx/connection/broken stream) before any output. Default 2; 0 disables. */
   maxRetries: number;
@@ -99,6 +99,7 @@ export const DEFAULT_PORT = 7634;
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PROVIDER = "mock";
 export const DEFAULT_MODEL_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1";
 export const DEFAULT_MODEL_MAX_RETRIES = 2;
 export const DEFAULT_TERMINAL_TIMEOUT_MS = 60_000;
 export const DEFAULT_TERMINAL_OUTPUT_LIMIT = 64 * 1024;
@@ -116,6 +117,7 @@ export const ENV = {
   modelName: "WINDOWS_RUNNER_MODEL",
   modelApiKey: "WINDOWS_RUNNER_MODEL_API_KEY",
   modelApiKeyFallback: "OPENAI_API_KEY",
+  anthropicApiKeyFallback: "ANTHROPIC_API_KEY",
   modelMaxRetries: "WINDOWS_RUNNER_MODEL_MAX_RETRIES",
   toolsEnabled: "WINDOWS_RUNNER_TOOLS",
   terminalTimeoutMs: "WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS",
@@ -155,14 +157,16 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
   const port = parsePort(env[ENV.port]);
   const allowRemote = parseBoolean(ENV.allowRemote, env[ENV.allowRemote], false);
   const provider = parseProviderName(env[ENV.provider]);
+  const keyFallback = provider === "anthropic" ? ENV.anthropicApiKeyFallback : ENV.modelApiKeyFallback;
   const model: ModelConfig = {
-    baseUrl: parseBaseUrl(env[ENV.modelBaseUrl]),
+    baseUrl: parseBaseUrl(env[ENV.modelBaseUrl], provider === "anthropic" ? DEFAULT_ANTHROPIC_BASE_URL : DEFAULT_MODEL_BASE_URL),
     model: isBlank(env[ENV.modelName]) ? undefined : env[ENV.modelName]!.trim(),
-    apiKey: parseSecret(ENV.modelApiKey, env[ENV.modelApiKey]) ?? parseSecret(ENV.modelApiKeyFallback, env[ENV.modelApiKeyFallback]),
+    apiKey: parseSecret(ENV.modelApiKey, env[ENV.modelApiKey]) ?? parseSecret(keyFallback, env[keyFallback]),
     maxRetries: parseNonNegativeInteger(ENV.modelMaxRetries, env[ENV.modelMaxRetries], DEFAULT_MODEL_MAX_RETRIES),
   };
-  if (provider === "openai-compatible" && model.model === undefined) {
-    throw new ConfigError(`${ENV.modelName} is required when ${ENV.provider}=openai-compatible (e.g. gpt-4o-mini, llama3.1).`, ENV.modelName);
+  if ((provider === "openai-compatible" || provider === "anthropic") && model.model === undefined) {
+    const example = provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4o-mini, llama3.1";
+    throw new ConfigError(`${ENV.modelName} is required when ${ENV.provider}=${provider} (e.g. ${example}).`, ENV.modelName);
   }
   const tools: ToolsConfig = {
     enabled: parseBoolean(ENV.toolsEnabled, env[ENV.toolsEnabled], true),
@@ -291,8 +295,8 @@ function parseNonNegativeInteger(variable: string, raw: string | undefined, fall
   return Number(value);
 }
 
-function parseBaseUrl(raw: string | undefined): string {
-  if (isBlank(raw)) return DEFAULT_MODEL_BASE_URL;
+function parseBaseUrl(raw: string | undefined, fallback: string): string {
+  if (isBlank(raw)) return fallback;
   const value = raw.trim().replace(/\/+$/, "");
   let url: URL;
   try {

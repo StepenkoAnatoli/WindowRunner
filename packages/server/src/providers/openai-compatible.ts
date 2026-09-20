@@ -26,6 +26,8 @@
  * logged or included in error messages.
  */
 import { parseRetryAfter } from "./retry.js";
+import { readSseData } from "./sse.js";
+
 import { ProviderError, type LLMChunk, type LLMMessage, type LLMProvider, type LLMRequest, type LLMToolCall, type LLMToolSpec } from "./types.js";
 
 export interface OpenAICompatibleOptions {
@@ -272,44 +274,5 @@ async function* guardStream(source: AsyncGenerator<string>, signal: AbortSignal)
     if (signal.aborted) throw signal.reason ?? err;
     if (err instanceof ProviderError) throw err;
     throw new ProviderError("MODEL_STREAM_BROKEN", `openai-compatible: stream failed: ${err?.message ?? err}`, { retryable: true, cause: err });
-  }
-}
-
-/**
- * Minimal SSE reader: yields the joined `data:` payload of each event.
- * Ignores comments and other fields; tolerates CRLF and multi-line data.
- */
-export async function* readSseData(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      if (signal.aborted) throw signal.reason ?? new Error("aborted");
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buffer.search(/\r?\n\r?\n/)) !== -1) {
-        const rawEvent = buffer.slice(0, sep);
-        buffer = buffer.slice(sep).replace(/^\r?\n\r?\n/, "");
-        const data = rawEvent
-          .split(/\r?\n/)
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).replace(/^ /, ""))
-          .join("\n");
-        if (data.length > 0) yield data;
-      }
-    }
-    const tail = buffer
-      .split(/\r?\n/)
-      .filter((l) => l.startsWith("data:"))
-      .map((l) => l.slice(5).replace(/^ /, ""))
-      .join("\n");
-    if (tail.length > 0) yield tail;
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {}
   }
 }

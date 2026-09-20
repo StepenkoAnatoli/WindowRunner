@@ -164,9 +164,9 @@ describe("MockProvider", () => {
   });
 
   it("is the default provider; unknown names are rejected with the available list", () => {
-    assert.deepEqual([...AVAILABLE_PROVIDERS], ["mock", "openai-compatible"]);
+    assert.deepEqual([...AVAILABLE_PROVIDERS], ["mock", "openai-compatible", "anthropic"]);
     assert.ok(createProvider("mock") instanceof MockProvider);
-    assert.throws(() => createProvider("openai"), (err: unknown) => err instanceof UnknownProviderError && /available: mock, openai-compatible/.test(err.message));
+    assert.throws(() => createProvider("openai"), (err: unknown) => err instanceof UnknownProviderError && /available: mock, openai-compatible, anthropic/.test(err.message));
   });
 });
 
@@ -256,7 +256,7 @@ describe("startServer — refusals", () => {
 
   it("rejects an unknown provider as a ConfigError naming WINDOWS_RUNNER_PROVIDER", async () => {
     await assert.rejects(
-      startServer(baseConfig({ provider: "anthropic" })),
+      startServer(baseConfig({ provider: "openai" })),
       (err: unknown) => err instanceof ConfigError && err.variable === "WINDOWS_RUNNER_PROVIDER" && /available: mock/.test(err.message)
     );
   });

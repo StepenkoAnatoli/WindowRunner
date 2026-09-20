@@ -54,7 +54,7 @@ fails with an actionable message if it is broken. Set
 `npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
 when `dist/` is missing or stale). What starts is the HTTP API plus a **minimal
 web UI** served at `/` (`packages/web`): the offline `mock` provider is the
-default (set `WINDOWS_RUNNER_PROVIDER=openai-compatible` for a real model),
+default (set `WINDOWS_RUNNER_PROVIDER=openai-compatible` or `anthropic` for a real model),
 five root-confined tools are registered, every `/api` route
 requires a bearer token (printed once in memory mode — the banner's `ui:` line
 carries it as a `#token=` fragment the page consumes and removes — and stored
@@ -176,7 +176,7 @@ All styles live in `packages/web/src/styles.css` (Tailwind v4 + custom utilities
 | **Mock** | ✅ Default. Offline rehearsal of the whole loop — no key, no network |
 | **OpenAI-compatible** | ✅ `WINDOWS_RUNNER_PROVIDER=openai-compatible`. Covers OpenAI, OpenRouter, Groq, Together, vLLM, llama.cpp, LiteLLM, LM Studio, Google Gemini's OpenAI endpoint |
 | **Ollama** | ✅ via OpenAI-compatible: `WINDOWS_RUNNER_MODEL_BASE_URL=http://127.0.0.1:11434/v1`, no key |
-| **Anthropic (native)** | ❌ not yet |
+| **Anthropic (native)** | ✅ `WINDOWS_RUNNER_PROVIDER=anthropic`, `WINDOWS_RUNNER_MODEL=claude-…`, key from `WINDOWS_RUNNER_MODEL_API_KEY` or `ANTHROPIC_API_KEY` |
 
 Configure with `WINDOWS_RUNNER_MODEL` (required), `WINDOWS_RUNNER_MODEL_BASE_URL`
 (default `https://api.openai.com/v1`) and `WINDOWS_RUNNER_MODEL_API_KEY` (or
@@ -328,7 +328,7 @@ packages/
              src/config.ts  environment parsing, strict, safe defaults
              src/boot.ts    composes createApp(), recovers persisted state, graceful shutdown
              src/app.ts     Express app factory (REST + SSE), agent loop, executor, persistence, metrics
-             src/providers/ LLMProvider contract, the offline mock, the openai-compatible adapter
+             src/providers/ LLMProvider contract, the offline mock, the openai-compatible and anthropic adapters, retry wrapper
   web/       UI-side turn-state projection (no bundler, no React in this checkout)
 scripts/
   setup.mjs         install -> typecheck -> build
@@ -406,8 +406,8 @@ boot with a message naming the variable; the full table with semantics is in
 | `WINDOWS_RUNNER_AUTH_TOKEN` | generated | The bearer token (≥16 chars). Unset: `<data dir>/auth-token` in file mode, else per-process and printed once |
 | `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values accepted besides loopback and the bind address |
 | `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Explicit browser origins allowed to call the API (no wildcard) |
-| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline) or `openai-compatible` |
-| `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for `openai-compatible`), endpoint base URL, key (never printed) |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline), `openai-compatible` or `anthropic` |
+| `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for network providers), endpoint base URL (default per provider), key (never printed; falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) |
 | `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Retries for transient model errors (429/5xx/network) before any output streamed; `0` disables |
 | `WINDOWS_RUNNER_TOOLS` | `1` | `0` disables the built-in tools |
 | `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` / `_TERMINAL_OUTPUT_LIMIT` | `60000` / `65536` | `run_terminal` wall-clock limit and output cap |

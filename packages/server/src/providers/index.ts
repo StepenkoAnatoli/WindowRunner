@@ -1,20 +1,23 @@
 import type { LLMProvider } from "./types.js";
 import { MockProvider } from "./mock.js";
 import { OpenAICompatibleProvider } from "./openai-compatible.js";
+import { AnthropicProvider } from "./anthropic.js";
 import { withRetry } from "./retry.js";
 import type { ModelConfig } from "../config.js";
 
 /**
  * Provider registry for the server boot path.
  *
- * Two providers: the offline `mock` (default; never touches the network) and
+ * Three providers: the offline `mock` (default; never touches the network),
  * `openai-compatible` (providers/openai-compatible.ts), which covers OpenAI,
- * OpenRouter, Ollama, LM Studio, vLLM, Groq and Gemini's OpenAI endpoint via
- * WINDOWS_RUNNER_MODEL_BASE_URL / WINDOWS_RUNNER_MODEL / WINDOWS_RUNNER_MODEL_API_KEY.
+ * OpenRouter, Ollama, LM Studio, vLLM, Groq and Gemini's OpenAI endpoint, and
+ * `anthropic` (providers/anthropic.ts, native Messages API). Both network
+ * adapters read WINDOWS_RUNNER_MODEL_BASE_URL / WINDOWS_RUNNER_MODEL /
+ * WINDOWS_RUNNER_MODEL_API_KEY and are wrapped in providers/retry.ts.
  * Naming anything else is a configuration error reported at boot, never a
  * silent fallback to the mock.
  */
-export const AVAILABLE_PROVIDERS = ["mock", "openai-compatible"] as const;
+export const AVAILABLE_PROVIDERS = ["mock", "openai-compatible", "anthropic"] as const;
 
 export type ProviderName = (typeof AVAILABLE_PROVIDERS)[number];
 
@@ -45,9 +48,11 @@ export function createProvider(name: string, model?: ModelConfig, log?: (line: s
   switch (name) {
     case "mock":
       return new MockProvider();
-    case "openai-compatible": {
-      if (!model?.model) throw new Error("openai-compatible: WINDOWS_RUNNER_MODEL is required");
-      const inner = new OpenAICompatibleProvider({ baseUrl: model.baseUrl, model: model.model, apiKey: model.apiKey, systemPrompt: DEFAULT_SYSTEM_PROMPT });
+    case "openai-compatible":
+    case "anthropic": {
+      if (!model?.model) throw new Error(`${name}: WINDOWS_RUNNER_MODEL is required`);
+      const opts = { baseUrl: model.baseUrl, model: model.model, apiKey: model.apiKey, systemPrompt: DEFAULT_SYSTEM_PROMPT };
+      const inner = name === "anthropic" ? new AnthropicProvider(opts) : new OpenAICompatibleProvider(opts);
       return withRetry(inner, {
         maxRetries: model.maxRetries,
         onRetry: ({ attempt, delayMs, error }) => log?.(`model: ${error.code} (${error.status ?? "network"}); retry ${attempt}/${model.maxRetries} in ${delayMs}ms`),

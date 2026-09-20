@@ -1,7 +1,7 @@
 # Evaluation harness
 
 `npm run eval` runs representative coding tasks through the **real** server:
-auth on, the `openai-compatible` adapter, the built-in tool set, approvals
+auth on, the `openai-compatible` or `anthropic` adapter, the built-in tool set, approvals
 answered by a policy, one allowed root per task. Each task's hidden `check.js`
 then verifies the working copy. A JSON report is written to `eval/results/`.
 
@@ -32,6 +32,8 @@ or edit it) and `solution.mjs` (the scripted solution, see below).
     --provider openai-compatible --model gpt-4o-mini --base-url https://api.openai.com/v1
   # local, no key:
   npm run eval -- --provider openai-compatible --model llama3.1 --base-url http://127.0.0.1:11434/v1
+  # Anthropic (native adapter):
+  ANTHROPIC_API_KEY=… npm run eval -- --provider anthropic --model claude-sonnet-4-5
   ```
   Real runs are deliberately not part of CI. Commit the report under
   `eval/results/<provider>-<model>-<date>.json` so releases can be compared.

@@ -30,9 +30,9 @@ shell. Users bring their own API keys; nothing phones home.
   `{ spec, requiresApproval, preview, execute }`. New tools only need to be
   added to `ALL_TOOLS` in `index.ts`.
 - `packages/server/src/providers/` — `openai-compatible.ts` covers OpenAI,
-  OpenRouter, Gemini, Ollama and friends (no Anthropic adapter yet); `mock.ts`
-  is the offline default. Both implement the same `LLMProvider` interface over
-  normalized `LLMChunk`s. `retry.ts` wraps any provider with retry/backoff for
+  OpenRouter, Gemini, Ollama and friends; `anthropic.ts` is the native Messages
+  API adapter; `mock.ts` is the offline default. All implement the same
+  `LLMProvider` interface over normalized `LLMChunk`s (`sse.ts` is the shared reader). `retry.ts` wraps any provider with retry/backoff for
   retryable errors before the first chunk; `index.ts` is the registry.
 - `packages/server/src/routes.ts` — REST + SSE surface.
 - `packages/server/src/skills.ts` — SKILL.md discovery, parsing, `includes:` resolution.

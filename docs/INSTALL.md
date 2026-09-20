@@ -128,8 +128,11 @@ more than this repository contains (that reconciliation is P2-01):
   (SSE), `POST …/cancel`, `POST /api/sessions/:id/approve`, `GET /api/health`,
   `GET /api/metrics`, `GET /api/diagnostics/persistence`, and `GET /healthz`
   (liveness only).
-- **Two providers.** `mock` (default) is offline, makes no model calls, and
-  prefixes every reply with `[mock]`. `openai-compatible` talks to any
+- **Three providers.** `mock` (default) is offline, makes no model calls, and
+  prefixes every reply with `[mock]`. `anthropic` talks to the Anthropic
+  Messages API (`WINDOWS_RUNNER_PROVIDER=anthropic`, `WINDOWS_RUNNER_MODEL=claude-…`,
+  key from `WINDOWS_RUNNER_MODEL_API_KEY` or `ANTHROPIC_API_KEY`; default base
+  URL `https://api.anthropic.com/v1`). `openai-compatible` talks to any
   `/chat/completions` endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM,
   Groq, Gemini's OpenAI endpoint): set `WINDOWS_RUNNER_PROVIDER=openai-compatible`,
   `WINDOWS_RUNNER_MODEL=<model>`, optionally `WINDOWS_RUNNER_MODEL_BASE_URL`
@@ -183,8 +186,8 @@ back silently.
 | `WINDOWS_RUNNER_AUTH_TOKEN` | generated | Bearer token, ≥16 characters, no whitespace. Unset: `<data dir>/auth-token` in file mode, else per-process |
 | `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values (comma-separated, no port) accepted besides loopback names and the bind address |
 | `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Comma-separated browser origins (`scheme://host[:port]`) allowed to call the API; replaces the loopback default. No `*`, no `null` |
-| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline) or `openai-compatible` |
-| `WINDOWS_RUNNER_MODEL` | none | Model name; required with `openai-compatible` (e.g. `gpt-4o-mini`, `llama3.1`) |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline), `openai-compatible` or `anthropic` |
+| `WINDOWS_RUNNER_MODEL` | none | Model name; required with `openai-compatible` / `anthropic` (e.g. `gpt-4o-mini`, `llama3.1`, `claude-sonnet-4-5`) |
 | `WINDOWS_RUNNER_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL; `{base}/chat/completions` is called. `http://127.0.0.1:11434/v1` for Ollama |
 | `WINDOWS_RUNNER_MODEL_API_KEY` | `OPENAI_API_KEY`, else none | Bearer key for the model endpoint. Never printed; redacted from errors |
 | `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Extra attempts on 429/5xx/connection/broken-stream errors, only before any output was streamed. Honours `Retry-After`; otherwise exponential backoff with jitter (≤8 s). `0` disables |
@@ -421,12 +424,12 @@ not been trusted for that configuration (or it changed). Inspect and grant with
 `GET`/`POST /api/sessions/:id/trust` using the `configHash` from the message.
 
 **`npm start` says `provider "…" is not available in this checkout`**
-Two providers exist: `mock` (offline) and `openai-compatible`. There is no
-`openai`, `anthropic` or `ollama` name — Ollama and friends are
+Three providers exist: `mock` (offline), `openai-compatible` and `anthropic`.
+There is no `openai` or `ollama` name — OpenAI, Ollama and friends are
 `openai-compatible` with `WINDOWS_RUNNER_MODEL_BASE_URL` pointed at them.
 
 **A turn fails with `MODEL_AUTH`, `MODEL_RATE_LIMITED`, `MODEL_UNAVAILABLE`, `MODEL_BAD_REQUEST`, `MODEL_CONTEXT_EXHAUSTED` or `MODEL_STREAM_BROKEN`**
-These are the `openai-compatible` adapter's mappings of the upstream response:
+These are the adapters' mappings of the upstream response (both `openai-compatible` and `anthropic` use the same codes):
 401/403, 429, connection failure or 5xx, other 4xx (404 usually means a wrong
 model name or base URL), a context-length error, or a stream that ended
 before the model finished. Rate-limit, unavailable and broken-stream failures
