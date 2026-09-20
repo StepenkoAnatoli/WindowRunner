@@ -240,26 +240,6 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee "test-${{ matrix.os }}.log"
 
-      # Surfaces the failure from the most recent step log as run annotations (and
-      # keeps every step log in the diagnostics artifact), so a red matrix leg
-      # is diagnosable without downloading and grepping the whole log. The last
-      # log written is the failed step's, because later steps are skipped.
-      - name: Report failure output
-        if: failure()
-        shell: bash
-        run: |
-          latest="$(ls -t *.log 2>/dev/null | head -n 1)"
-          if [ -z "${latest}" ]; then
-            echo "no step logs captured"
-            exit 0
-          fi
-          echo "===== ${latest} (tail) ====="
-          tail -n 40 "${latest}"
-          grep -E "FAILED|Error|error|not ok|failed|FAIL" "${latest}" | head -n 10 | while IFS= read -r line; do
-            clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
-            echo "::error title=${latest}::${clean}"
-          done
-
       - name: Packed-artifact smoke test
         shell: bash
         run: |
@@ -297,6 +277,26 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart 2>&1 | Tee-Object -FilePath installer.log
           exit $LASTEXITCODE
+
+      # Surfaces the failure from the most recent step log as run annotations (and
+      # keeps every step log in the diagnostics artifact), so a red matrix leg
+      # is diagnosable without downloading and grepping the whole log. The last
+      # log written is the failed step's, because later steps are skipped.
+      - name: Report failure output
+        if: failure()
+        shell: bash
+        run: |
+          latest="$(ls -t *.log 2>/dev/null | head -n 1)"
+          if [ -z "${latest}" ]; then
+            echo "no step logs captured"
+            exit 0
+          fi
+          echo "===== ${latest} (tail) ====="
+          tail -n 40 "${latest}"
+          grep -E "FAILED|Error|error|not ok|failed|FAIL" "${latest}" | head -n 10 | while IFS= read -r line; do
+            clean="$(printf '%s' "${line}" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/\r//g' | cut -c1-500)"
+            echo "::error title=${latest}::${clean}"
+          done
 
       - name: Collect diagnostics
         if: failure()
