@@ -117,15 +117,17 @@ describe("Metrics/alerts — required adjustments", () => {
       });
 
       const controller = new AbortController();
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
       const runPromise = runner.run({
         sessionId: "s1",
         turnId: "t1",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [] },
         limits: { maxSteps: 1, modelCallTimeoutMs: 50, toolTimeoutMs: 50, approvalTimeoutMs: 50 },
         signal: controller.signal,
-        allowedRoots: ["/tmp"],
-        projectRoot: await (await import("../src/project-root.js")).ProjectRoot.create("/tmp", ["/tmp"]),
+        allowedRoots: [sysTmp],
+        projectRoot: await (await import("../src/project-root.js")).ProjectRoot.create(sysTmp, [sysTmp]),
       });
 
       // Abort after 60ms (after model timeout 50ms, during grace)
@@ -184,7 +186,8 @@ describe("Metrics/alerts — required adjustments", () => {
       const metrics = new MetricsRegistry({ now: () => clock.now() });
       const { executeTool } = await import("../src/agent/tools/executor.js");
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const root = await ProjectRoot.create(os.tmpdir(), [os.tmpdir()]);
 
       // Tool that hangs ignoring abort
       const hangingTool: any = {
@@ -252,7 +255,9 @@ describe("Metrics/alerts — required adjustments", () => {
       const approvals = new ApprovalRegistry({ now: () => clock.now(), clock });
 
       const { ProjectRoot } = await import("../src/project-root.js");
-      const root = await ProjectRoot.create("/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const sysTmp = os.tmpdir();
+      const root = await ProjectRoot.create(sysTmp, [sysTmp]);
 
       // Use real timers for this integration, but with short timeouts, to avoid fake clock complexity
       const realMetrics = new MetricsRegistry({ now: () => Date.now() });
@@ -278,11 +283,11 @@ describe("Metrics/alerts — required adjustments", () => {
       const p = runner.run({
         sessionId: "s2",
         turnId: "t_shutdown",
-        cwd: "/tmp",
+        cwd: sysTmp,
         request: { messages: [{ role: "user", content: "hi" }], tools: [] },
         limits: { maxSteps: 1, modelCallTimeoutMs: 80, toolTimeoutMs: 80, approvalTimeoutMs: 80 },
         signal: ctrl.signal,
-        allowedRoots: ["/tmp"],
+        allowedRoots: [sysTmp],
         projectRoot: root,
       });
 
@@ -476,7 +481,8 @@ describe("Metrics/alerts — required adjustments", () => {
       // Temporarily set clock back to create session at old time
       const origNow = clock.now.bind(clock);
       (clock as any).nowMs = oldTime;
-      const session = await sessionManager.createSession("sess_old", "/tmp", ["/tmp"]);
+      // A session root that exists on every OS (/tmp does not exist on Windows).
+      const session = await sessionManager.createSession("sess_old", os.tmpdir(), [os.tmpdir()]);
       // Advance to now, session is 25h old, idle
       (clock as any).nowMs = 1_000_000;
       // Mark lastActivity as old

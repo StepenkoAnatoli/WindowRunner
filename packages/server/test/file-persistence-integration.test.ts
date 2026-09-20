@@ -21,12 +21,15 @@ describe("File persistence integration — restart recovery", () => {
     const sessionId = "sess_integ";
     const turnId = "t_integ";
 
+    // A session root that exists on every OS (/tmp does not exist on Windows).
+    const sysTmp = os.tmpdir();
+
     // Create session meta with activeTurnId
     await sessionStore.save({
       version: 1,
       sessionId,
-      canonicalRoot: "/tmp",
-      realRoot: "/tmp",
+      canonicalRoot: sysTmp,
+      realRoot: sysTmp,
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
       activeTurnId: turnId,
@@ -54,7 +57,7 @@ describe("File persistence integration — restart recovery", () => {
     assert.equal((log!.events[2] as any).code, "RESTART");
 
     // Session boot should clear activeTurnId
-    const sessDiag = await sessionStore.boot(["/tmp"], () => Date.now());
+    const sessDiag = await sessionStore.boot([sysTmp], () => Date.now());
     assert.equal(sessDiag.sessionsWithClearedActiveTurn, 1);
 
     const meta = await sessionStore.load(sessionId);
