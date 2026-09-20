@@ -49,15 +49,19 @@ jobs:
         run: npm test
 
       # Asserts the packed tarball matches the manifest contract: dist/ only, no
-      # sources, no tests, no bin pointing at a file that does not exist.
+      # sources, no tests, and bin points to existing files.
       - name: Packed-artifact smoke test
         run: npm run smoke:packed
 
-      # Boots the compiled server (packages/server/dist/index.js) as a child
+      # Unpacks the packed tarball in an isolated directory outside the source
+      # tree and verifies that `npm start` boots and serves health requests.
+      - name: Packed-tarball start smoke test
+        run: npm run smoke:packed:start
+
+      # Boots the compiled server (packages/server/dist/index.cjs) as a child
       # process in file-persistence mode against a temp data dir, runs a turn
       # through the offline mock provider over SSE, restarts it to check
-      # recovery, and asserts a clean exit on SIGTERM. This is the runtime check
-      # `smoke:packed` deliberately is not.
+      # recovery, and asserts a clean exit on SIGTERM.
       - name: Startup smoke test
         run: npm run smoke:start
 

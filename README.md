@@ -25,10 +25,11 @@ macOS or Docker job in this repository.
 | Clone + `npm ci` / `npm run setup` / `npm test` / `npm run build` | **Verified** (Linux) |
 | `npm start` (HTTP API on `127.0.0.1:7634`, offline mock provider, no tools, no UI) | **Verified** (Linux) |
 | `npm run smoke:packed` (tarball contents) | **Verified** (Linux) |
+| `npm run smoke:packed:start` (tarball startup in clean directory) | **Verified** (Linux) |
 | `npm run smoke:start` (boots the built server, runs a turn, restarts, clean SIGTERM) | **Verified** (Linux) |
-| Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** — no `bin`, package unpublished |
+| Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** — bin launcher exists; package unpublished (gap G-05) |
 | `npm run dev` | **Server only** — `tsx watch` on the server entry; no web dev server or bundler |
-| Docker / `docker compose up` | **Blocked** — `dist/` is not self-contained; build fails loudly by design |
+| Docker / `docker compose up` | **Unblocked** — runs self-contained bundle `dist/index.cjs` |
 | `install.sh` | Experimental — sets up a checkout on Linux and offers `npm start` |
 | `install.ps1` | **Untested** — no Windows runner available |
 | Electron desktop shell | **Not available** — `packages/desktop` does not exist |
@@ -49,7 +50,7 @@ npm start         # serve the API on http://127.0.0.1:7634
 fails with an actionable message if it is broken. Set
 `WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
-`npm start` runs `packages/server/dist/index.js` (its `prestart` hook builds
+`npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
 when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
 offline `mock` provider is the only provider in this checkout, no tools are
 registered, there is no web UI, and the server binds loopback only because the
@@ -57,17 +58,14 @@ API has no authentication yet. Configuration, endpoints and limits are in
 [docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
 `npm run smoke:start` boots the built server and runs a turn against it.
 
-### Option 2 — Packed artifact (not available yet)
+### Option 2 — Packed artifact
 
-`npx windows-runner`, `npm install -g windows-runner` and `wr` do not work. The
-package declares no `bin`, is not published (`npm view windows-runner` returns
-`E404`), and the built `dist/` is not self-contained — see gaps G-01, G-03, G-04
-and G-05 in [docs/INSTALL.md](./docs/INSTALL.md).
-
-`npm run smoke:packed` *does* work: it packs the tarball and asserts it contains
-`dist/`, docs and licence, and no sources, tests or build config. It validates
-tarball **contents** only; it does not prove an installable CLI runs (that is
-what `npm run smoke:start` does for a checkout).
+`bin/windows-runner.js` is the CLI launcher (declared as `windows-runner` and
+`wr` in `package.json`). `npm run smoke:packed:start` proves that packing the
+tarball, unpacking it in a clean temporary directory outside the repository,
+and executing `npm start` boots and answers health queries without workspace
+symlinks. Until the package is published to the registry (`npm view windows-runner`
+returns `E404`, gap G-05), local tarball installation works.
 
 ### Option 3 — Curl installer (Unix, experimental)
 
@@ -90,17 +88,16 @@ irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.
 No Windows runner is available to this repository and CI is Linux-only, so this
 script has no recorded smoke-test result (gap G-06).
 
-### Option 5 — Docker (blocked)
+### Option 5 — Docker
 
 ```bash
-docker compose up --build   # fails during the image build, by design
+docker compose up --build
 ```
 
-The boot entry point exists, but the compiled `dist/` is not self-contained —
-it imports `express` and `@windows-runner/shared` through `node_modules` and a
-workspace symlink the image does not carry (gaps G-03 and G-04) — so the
-Dockerfile fails the build with an explicit message instead of producing an
-image that dies at `docker run`. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
+Builds the multi-stage container image using the self-contained server bundle
+(`packages/server/dist/index.cjs`, closing gaps G-03 and G-04). The image runs
+the standalone bundle directly without requiring `node_modules` or workspace
+symlinks in the runtime container. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
 ### Option 6 — Desktop app (Electron, not available)
 
@@ -328,15 +325,18 @@ scripts/
   setup.mjs         install -> typecheck -> build
   postinstall.mjs   verifies the workspace tree on npm ci / npm install
   ensure-built.mjs  `prestart`: builds when dist/ is missing or older than src/
-  smoke-packed.mjs  validates the packed tarball against the manifest
-  smoke-start.mjs   boots the built server, runs a turn over SSE, restarts it, checks SIGTERM
-docs/INSTALL.md     install-path status, how to run the server, the known packaging gaps (G-01..G-06)
+  smoke-packed.mjs        validates the packed tarball against the manifest
+  smoke-packed-start.mjs  unpacks the tarball outside source tree and verifies `npm start`
+  smoke-start.mjs         boots the built server, runs a turn over SSE, restarts it, checks SIGTERM
+bin/
+  windows-runner.js       executable CLI launcher (`windows-runner`, `wr`)
+docs/INSTALL.md     install-path status, how to run the server, packaging gaps (G-01..G-06)
 install.sh / install.ps1   clone-and-setup installers (offer `npm start` at the end)
-Dockerfile / docker-compose.yml   blocked: dist/ is not self-contained (G-03/G-04)
+Dockerfile / docker-compose.yml   container deployment with self-contained bundle
 
-Not present, though earlier revisions of this README listed them: bin/ (no CLI),
+Not present, though earlier revisions of this README listed them:
 packages/desktop/ (no Electron shell) and scripts/desktop.mjs. Each absence is
-recorded as a gap in docs/INSTALL.md.
+recorded in docs/INSTALL.md.
 ```
 
 ## Persistence

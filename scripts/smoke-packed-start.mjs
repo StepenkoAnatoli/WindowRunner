@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+/**
+ * windows-runner — packed-tarball smoke test for `npm start`.
+ *
+ * Packs the root package into a tarball as `npm publish` would, unpacks it into
+ * a clean temporary directory completely outside the repository tree, and runs
+ * `npm start` to prove that the packaged artifact can boot and serve health
+ * requests without repository-only symlinks or dependencies.
+ */
+
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const READY_RE = /^windows-runner listening on (http:\/\/\S+)$/m;
+const READY_TIMEOUT_MS = 20_000;
+const EXIT_TIMEOUT_MS = 10_000;
+const IS_WINDOWS = process.platform === "win32";
+
+class SmokeFailure extends Error {}
+
+function assert(condition, message) {
+  if (!condition) throw new SmokeFailure(message);
+}
+
+function step(message) {
+  console.log(`  ✓ ${message}`);
+}
+
+function ensureBuilt() {
+  const result = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "ensure-built.mjs")], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+  return result.status === 0;
+}
+
+function packTarball(destDir) {
+  const pack = spawnSync("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", destDir], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    shell: IS_WINDOWS,
+  });
+  assert(pack.status === 0, `npm pack failed: ${pack.stderr || pack.stdout}`);
+  const parsed = JSON.parse(pack.stdout);
+  const tarballName = (Array.isArray(parsed) ? parsed[0] : parsed).filename;
+  const tarballPath = path.join(destDir, tarballName);
+  assert(existsSync(tarballPath), `tarball ${tarballName} not found at ${tarballPath}`);
+  return tarballPath;
+}
+
+async function main() {
+  console.log("windows-runner packed-tarball npm start smoke test");
+
+  if (!ensureBuilt()) {
+    console.error("\nBuild failed; cannot smoke-test packed tarball.");
+    return 1;
+  }
+
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "wr-smoke-packed-start-"));
+  let child = null;
+
+  try {
+    const tarballPath = packTarball(tmp);
+    step(`packed tarball: ${path.basename(tarballPath)}`);
+
+    const extractDir = path.join(tmp, "unpacked");
+    const unpack = spawnSync("tar", ["-xzf", tarballPath, "-C", tmp], {
+      shell: IS_WINDOWS,
+      encoding: "utf8",
+    });
+    assert(unpack.status === 0, `tar -xzf failed: ${unpack.stderr}`);
+
+    // npm pack puts everything in 'package/' inside the tarball
+    const pkgDir = path.join(tmp, "package");
+    assert(existsSync(path.join(pkgDir, "package.json")), "package.json missing from unpacked tarball");
+    assert(existsSync(path.join(pkgDir, "packages", "server", "dist", "index.cjs")), "index.cjs missing from unpacked tarball");
+    step("unpacked tarball into isolated temporary directory");
+
+    // Spawn npm start in pkgDir
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (k === "PORT" || k === "HOST" || k.startsWith("WINDOWS_RUNNER_")) continue;
+      env[k] = v;
+    }
+    env.PORT = "0";
+    env.HOST = "127.0.0.1";
+    env.WINDOWS_RUNNER_PERSISTENCE_MODE = "memory";
+
+    child = spawn("npm", ["start"], {
+      cwd: pkgDir,
+      env,
+      detached: !IS_WINDOWS,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: IS_WINDOWS,
+    });
+
+    const output = { stdout: "", stderr: "" };
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => (output.stdout += chunk));
+    child.stderr?.on("data", (chunk) => (output.stderr += chunk));
+
+    const exited = new Promise((resolve) => {
+      child.on("exit", (code, signal) => resolve({ code, signal }));
+    });
+
+    const ready = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new SmokeFailure(`server did not print the ready line within ${READY_TIMEOUT_MS}ms\nStdout:\n${output.stdout}\nStderr:\n${output.stderr}`));
+      }, READY_TIMEOUT_MS);
+
+      const check = () => {
+        const match = READY_RE.exec(output.stdout);
+        if (match) {
+          clearTimeout(timer);
+          child.stdout?.off("data", check);
+          resolve(match[1]);
+        }
+      };
+      child.stdout?.on("data", check);
+      exited.then(({ code, signal }) => {
+        clearTimeout(timer);
+        reject(new SmokeFailure(`server exited before ready (code ${code}, signal ${signal})\nStdout:\n${output.stdout}\nStderr:\n${output.stderr}`));
+      });
+    });
+
+    const baseUrl = await ready;
+    step(`server ready in packed tarball: ${baseUrl}`);
+
+    // Probe /healthz
+    const res = await fetch(`${baseUrl}/healthz`);
+    assert(res.status === 200, `/healthz returned ${res.status}`);
+    const body = await res.json();
+    assert(body.status === "ok", `/healthz returned status ${body.status}`);
+    step("/healthz responds ok");
+
+    // Probe /api/health
+    const healthRes = await fetch(`${baseUrl}/api/health`);
+    assert(healthRes.status === 200, `/api/health returned ${healthRes.status}`);
+    step("/api/health responds ok");
+
+    // Shutdown gracefully
+    if (IS_WINDOWS) {
+      child.kill();
+    } else {
+      process.kill(-child.pid, "SIGTERM");
+    }
+
+    const { code, signal } = await Promise.race([
+      exited,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new SmokeFailure(`server did not exit within ${EXIT_TIMEOUT_MS}ms`)), EXIT_TIMEOUT_MS)
+      ),
+    ]);
+    assert(code === 0 || signal === "SIGTERM" || signal === null, `expected exit on SIGTERM, got code ${code} signal ${signal}`);
+    step("server stopped gracefully");
+
+    child = null;
+    console.log("\nPacked-tarball smoke test passed.");
+    return 0;
+  } catch (err) {
+    console.error(`\nPacked-tarball smoke test FAILED: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  } finally {
+    if (child && child.exitCode === null) {
+      try {
+        if (IS_WINDOWS) child.kill();
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {}
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+process.exitCode = await main();

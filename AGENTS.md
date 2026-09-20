@@ -54,7 +54,9 @@ shell. Users bring their own API keys; nothing phones home.
 npm test                                        # tests, no keys needed
 npx tsc -p packages/server/tsconfig.json --noEmit
 npx tsc -p packages/web/tsconfig.json --noEmit
-npm run build                                   # shared + server + web
+npm run build                                   # shared + server (bundle) + web
+npm run smoke:packed                            # tarball contents against manifest
+npm run smoke:packed:start                      # unpack tarball and boot npm start outside repo
 npm run smoke:start                             # boot the built server, run a turn, restart, SIGTERM
 npm start                                       # http://127.0.0.1:7634 (mock provider, no tools)
 ```

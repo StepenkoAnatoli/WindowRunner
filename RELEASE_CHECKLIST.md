@@ -34,6 +34,7 @@ manifests, per-workspace scripts, `npm` logs) is uploaded on failure.
 | Build — emits `packages/*/dist` | `npm run build` |
 | Full test suite | `npm test` |
 | Packed-artifact contents | `npm run smoke:packed` |
+| Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
 
 `npm ci` runs without `--ignore-scripts` because `scripts/postinstall.mjs` now
@@ -47,8 +48,8 @@ this checklist tracks.
 | --- | --- |
 | Windows job ("Windows CI green") | No Windows runner in any workflow. `install.ps1` has never been executed (gap G-06). |
 | macOS coverage | No job. |
-| Docker build / `npm run smoke:docker` | No Docker job, and no `smoke:docker` script exists. The image is **blocked**, not merely unverified: the boot entry exists (G-02 closed) but `dist/` is not self-contained (gaps G-03, G-04). |
-| Packed CLI smoke (`npx windows-runner`, `wr`) | Cannot exist: no `bin`, package unpublished (gaps G-01, G-05). `smoke:packed` validates tarball *contents* only; `smoke:start` boots the server from a *checkout*, not from the tarball. |
+| Docker build / `npm run smoke:docker` | No Docker job in CI, and no `smoke:docker` script exists. The image contract itself is now unblocked (gaps G-02, G-03, G-04 closed; `dist/index.cjs` is self-contained). |
+| Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
 | Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
 | Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
@@ -293,10 +294,10 @@ Acceptance criteria:
 - [x] CI runs clean install, typecheck, test, build, and artifact smoke tests — on **one** pinned Node version (22.23.2), not a matrix of supported versions.
 - [x] Linux job included for core validation.
 - [ ] Windows job included for core validation — **not implemented**, no Windows runner.
-- [ ] Packed artifact validation runs from a clean directory without repository-only dependencies — **blocked**: the packed `dist/` imports `@windows-runner/shared` through a workspace symlink a tarball does not have (gap G-04), and there is no `bin` to execute (gap G-01). `scripts/smoke-packed.mjs` validates tarball contents only.
-- [ ] Docker build smoke tests run when Docker is available — **not implemented**, and the image build is blocked by gaps G-03/G-04 (the boot entry itself exists, gap G-02 closed). No `smoke:docker` script exists.
+- [x] Packed artifact validation runs from a clean directory without repository-only dependencies — `smoke:packed:start` unpacks tarball outside repo and runs `npm start`, and packaging tests verify standalone bundle execution without node_modules (gaps G-01, G-03, G-04 closed).
+- [ ] Docker build smoke tests run when Docker is available — **not implemented**, although the image build itself is unblocked with self-contained bundle at `dist/index.cjs`. No `smoke:docker` script exists.
 - [ ] Security regressions remain in the normal suite — the referenced security modules (`auth.ts`, `access.ts`, `routes.ts`) are not present in this checkout. The boot path's loopback-only default and `WINDOWS_RUNNER_ALLOW_REMOTE` refusal are covered by `packages/server/test/boot.test.ts` and `scripts/smoke-start.mjs`.
-- [x] The built server is tested as a running process, not inferred from source-only tests — `npm run smoke:start` boots `packages/server/dist/index.js` from a checkout. **The packed/published artifact is still not runnable** (gaps G-03/G-04), so this box covers the checkout artifact only.
+- [x] The built server is tested as a running process, not inferred from source-only tests — `npm run smoke:start` boots `packages/server/dist/index.cjs` from a checkout and `npm run smoke:packed:start` boots it from the packed tarball.
 - [ ] Failed CI gates block release — **false today**: branch protection is unconfigured, so a red `CI` run does not block a merge. Requires admin action.
 
 Files that now exist and are exercised by CI: `.github/workflows/ci.yml`,
@@ -401,10 +402,10 @@ Acceptance:
       not pinned, because a hardcoded number goes stale the way this one did.
       "Clean install" now means a plain `npm ci` with lifecycle scripts enabled —
       previously it required `--ignore-scripts` and so proved nothing about the
-      install path. "Clean build" means `npm run build` emits `packages/*/dist`,
-      and since gap G-02 closed the output **is** runnable as a server from the
-      checkout (`npm start`, verified by `npm run smoke:start`); it is still
-      **not** self-contained (gap G-04).
+      install path. "Clean build" means `npm run build` emits `packages/*/dist`
+      and self-contained bundle `packages/server/dist/index.cjs`, runnable as a server
+      from checkout (`npm start`), from tarball (`npm run smoke:packed:start`),
+      and in Docker (gaps G-01, G-02, G-03, G-04 closed).
 
 ## Release gate
 
@@ -415,7 +416,7 @@ Acceptance:
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
-### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-02 closed 2026-09-20; G-01, G-03, G-04, G-05 open
+### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
 ### [ ] Branch protection on `main`: required `CI` check + >= 1 approval (admin action)
 ### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented

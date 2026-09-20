@@ -14,7 +14,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
@@ -112,12 +112,13 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("does not declare a bin whose target is missing", () => {
-      if (root.bin === undefined) return; // No CLI shipped; documented as gap G-01.
+    it("declares executable CLI entry points that exist on disk and in files[]", () => {
+      assert.ok(root.bin, "root package.json must declare bin");
       const targets = typeof root.bin === "string" ? [root.bin] : Object.values(root.bin);
       for (const target of targets) {
         assert.ok(exists(target.replace(/^\.\//, "")), `bin target ${target} does not exist`);
       }
+      assert.ok(root.files?.includes("bin/"), "files[] must include bin/");
     });
 
     it("every files[] entry exists or is a declared build output", () => {
@@ -140,12 +141,12 @@ describe("Packaging contract", () => {
       // The boot entry point is packages/server/src/index.ts; `start` must run
       // its compiled output, and `prestart` must be the ensure-built hook so a
       // fresh checkout and a stale checkout both start the right code.
-      assert.equal(root.scripts?.start, "node packages/server/dist/index.js");
+      assert.equal(root.scripts?.start, "node packages/server/dist/index.cjs");
       assert.equal(root.scripts?.prestart, "node scripts/ensure-built.mjs");
       assert.ok(exists("packages/server/src/index.ts"), "server boot entry packages/server/src/index.ts is missing");
 
       const server = readManifest("packages/server/package.json");
-      assert.equal(server.scripts?.start, "node dist/index.js", "server workspace must declare a start script for its own dist");
+      assert.equal(server.scripts?.start, "node dist/index.cjs", "server workspace must declare a start script for its own dist");
       assert.match(server.scripts?.dev ?? "", /src\/index\.ts/, "server dev script must run the boot entry, not the app factory");
     });
 
@@ -159,9 +160,10 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("declares the startup smoke test next to the packed-contents one", () => {
+    it("declares the startup and packed smoke tests", () => {
       assert.equal(root.scripts?.["smoke:start"], "node scripts/smoke-start.mjs");
       assert.equal(root.scripts?.["smoke:packed"], "node scripts/smoke-packed.mjs");
+      assert.equal(root.scripts?.["smoke:packed:start"], "node scripts/smoke-packed-start.mjs");
     });
 
     it("does not depend on tooling no script uses", () => {
@@ -296,9 +298,16 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("runs typecheck, test, build, the packed-artifact smoke test and the startup smoke test", () => {
+    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test and the startup smoke test", () => {
       const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
-      for (const command of ["npm run typecheck", "npm test", "npm run build", "npm run smoke:packed", "npm run smoke:start"]) {
+      for (const command of [
+        "npm run typecheck",
+        "npm test",
+        "npm run build",
+        "npm run smoke:packed",
+        "npm run smoke:packed:start",
+        "npm run smoke:start",
+      ]) {
         assert.match(text, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `CI does not run \`${command}\``);
       }
     });
@@ -308,6 +317,70 @@ describe("Packaging contract", () => {
       const build = text.indexOf("npm run build");
       const smoke = text.indexOf("npm run smoke:start");
       assert.ok(build >= 0 && smoke >= 0 && build < smoke, "smoke:start must come after the build step");
+    });
+  });
+
+  describe("clean-install artifact execution", () => {
+    it("runs the self-contained bundle in an isolated directory outside the source tree", async () => {
+      const bundleSource = path.join(repoRoot, "packages", "server", "dist", "index.cjs");
+      assert.ok(fs.existsSync(bundleSource), "packages/server/dist/index.cjs must exist (run build first)");
+
+      const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-clean-install-"));
+      try {
+        const artifactPath = path.join(tmp, "index.cjs");
+        await fsp.copyFile(bundleSource, artifactPath);
+
+        // Verify no node_modules or package.json exist in this isolated dir
+        assert.ok(!fs.existsSync(path.join(tmp, "node_modules")));
+        assert.ok(!fs.existsSync(path.join(tmp, "package.json")));
+
+        const child = spawn(process.execPath, [artifactPath], {
+          cwd: tmp,
+          env: {
+            PATH: process.env.PATH,
+            HOST: "127.0.0.1",
+            PORT: "0",
+            WINDOWS_RUNNER_PERSISTENCE_MODE: "memory",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        let stdout = "";
+        child.stdout?.setEncoding("utf8");
+        child.stdout?.on("data", (chunk) => (stdout += chunk));
+
+        const readyUrl = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`Timeout waiting for clean-install server ready.\nOutput: ${stdout}`)),
+            15000
+          );
+          const check = () => {
+            const match = /^windows-runner listening on (http:\/\/\S+)$/m.exec(stdout);
+            if (match) {
+              clearTimeout(timer);
+              resolve(match[1]);
+            }
+          };
+          child.stdout?.on("data", check);
+          child.on("exit", (code) => {
+            clearTimeout(timer);
+            reject(new Error(`Server exited prematurely with code ${code}`));
+          });
+        });
+
+        // Test health endpoint
+        const res = await fetch(`${readyUrl}/healthz`);
+        assert.equal(res.status, 200);
+        const data = (await res.json()) as { status: string };
+        assert.equal(data.status, "ok");
+
+        // Stop gracefully
+        child.kill("SIGTERM");
+        const exitCode = await new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+        assert.equal(exitCode, 0);
+      } finally {
+        await fsp.rm(tmp, { recursive: true, force: true });
+      }
     });
   });
 });
