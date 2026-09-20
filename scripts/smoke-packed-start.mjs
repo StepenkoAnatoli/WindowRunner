@@ -147,9 +147,13 @@ async function main() {
     assert(healthRes.status === 200, `/api/health returned ${healthRes.status}`);
     step("/api/health responds ok");
 
-    // Shutdown gracefully
+    // Shutdown gracefully. On Windows shell:true wraps npm in cmd.exe, so plain
+    // child.kill() only terminates cmd and leaves node running as an orphan —
+    // which keeps serving and locks the temp dir (EBUSY on cleanup). taskkill
+    // /T kills the whole tree (cmd + npm + node).
     if (IS_WINDOWS) {
-      child.kill();
+      const kill = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { encoding: "utf8" });
+      if (kill.status !== 0) child.kill();
     } else {
       process.kill(-child.pid, "SIGTERM");
     }
@@ -172,8 +176,10 @@ async function main() {
   } finally {
     if (child && child.exitCode === null) {
       try {
-        if (IS_WINDOWS) child.kill();
-        else process.kill(-child.pid, "SIGKILL");
+        if (IS_WINDOWS) {
+          const kill = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
+          if (kill.status !== 0) child.kill();
+        } else process.kill(-child.pid, "SIGKILL");
       } catch {}
     }
     rmSync(tmp, { recursive: true, force: true });
