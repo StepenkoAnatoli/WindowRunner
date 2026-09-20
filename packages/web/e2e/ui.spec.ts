@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { E2E_PROJECT, E2E_TOKEN, MCP_CONFIG_HASH } from "./server.js";
+import { E2E_PROJECT, E2E_TOKEN, MCP_CONFIG_HASH } from "./fixture.js";
 
 /**
  * Browser E2E for the web UI against the real server + scripted provider

@@ -20,23 +20,18 @@
  * `POST /__e2e/cut-next-events`, which arms it to sever the next `/events`
  * response right after the first SSE event has been forwarded — the only
  * reliable way to exercise the client's Last-Event-ID resume from a browser. Playwright starts this via `webServer` in
- * playwright.config.ts; `npm run e2e` runs it.
+ * playwright.config.ts; `npm run e2e` runs it. Specs must import constants from
+ * ./fixture.ts, never from this file: importing this file boots the server.
  */
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { startServer } from "../../server/src/boot.js";
-import { computeConfigHash } from "../../server/src/agent/project-trust.js";
 import type { LLMChunk, LLMProvider, LLMRequest } from "../../server/src/providers/types.js";
 import type { ToolDefinition } from "../../server/src/agent/tools/types.js";
 
-export const E2E_PORT = Number(process.env.E2E_PORT ?? 7699);
-export const E2E_TOKEN = "e2e-fixed-token-0123456789abcdef";
-export const MCP_CONFIG = { command: "npx", args: ["-y", "example-mcp"], env: { EXAMPLE: "1" } };
-export const MCP_CONFIG_HASH = computeConfigHash(MCP_CONFIG);
-/** Fixed so the spec files can compute it without parsing server output. */
-export const E2E_PROJECT = path.join(os.tmpdir(), "wr-e2e-project");
+import { E2E_PORT, E2E_PROJECT, E2E_TOKEN, MCP_CONFIG_HASH } from "./fixture.js";
 
 class ScriptedProvider implements LLMProvider {
   async *stream(request: LLMRequest, { signal }: { signal: AbortSignal }): AsyncIterable<LLMChunk> {
