@@ -1,0 +1,6 @@
+{
+  "id": "feature",
+  "category": "feature work",
+  "prompt": "Add a new function `slugify(text)` to src/text.js and export it. It lowercases, trims, replaces runs of non-alphanumeric characters with a single '-', and strips leading/trailing dashes. Example: slugify('  Hello, World! ') === 'hello-world'.",
+  "check": "node check.js"
+}

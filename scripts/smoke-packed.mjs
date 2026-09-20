@@ -34,6 +34,9 @@ const REQUIRED = [
   "packages/server/dist/index.js",
   "packages/server/dist/index.cjs",
   "packages/web/dist/turn-state.js",
+  "packages/web/dist/app/index.html",
+  "packages/web/dist/app/app.js",
+  "packages/web/dist/app/app.css",
 ];
 
 /**
@@ -61,6 +64,7 @@ function ensureBuilt() {
     "packages/server/dist/index.js",
     "packages/server/dist/index.cjs",
     "packages/web/dist/turn-state.js",
+    "packages/web/dist/app/app.js",
   ];
   const missing = outputs.filter((o) => !existsSync(path.join(repoRoot, o)));
   if (missing.length === 0) return true;

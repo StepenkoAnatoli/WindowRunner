@@ -1,0 +1,11 @@
+const assert = require("assert");
+const fs = require("fs");
+const src = fs.readFileSync("./src/config.js", "utf8");
+assert.ok(/function readEnv\s*\(|const readEnv\s*=/.test(src), "readEnv helper must exist");
+assert.strictEqual((src.match(/process\.env\b/g) || []).length, 1, "process.env must be read in exactly one place");
+delete process.env.APP_PORT; process.env.APP_HOST = "  0.0.0.0 "; process.env.APP_LOG_LEVEL = "";
+const c = require("./src/config.js");
+assert.strictEqual(c.getPort(), "8080");
+assert.strictEqual(c.getHost(), "0.0.0.0");
+assert.strictEqual(c.getLogLevel(), "info");
+console.log("ok");

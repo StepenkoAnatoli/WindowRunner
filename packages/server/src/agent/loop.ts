@@ -1,5 +1,5 @@
 import type { SessionId, TurnId, TurnLimits, TurnUsage } from "@windows-runner/shared";
-import type { LLMProvider, LLMRequest } from "../providers/types.js";
+import { ProviderError, type LLMProvider, type LLMRequest } from "../providers/types.js";
 import type { ToolDefinition } from "./tools/types.js";
 import { ApprovalRegistry, type ApprovalResolution } from "./approval-registry.js";
 import { TurnManager } from "./turn-manager.js";
@@ -8,6 +8,7 @@ import { executeTool } from "./tools/executor.js";
 import { DeadlineError } from "../deadline.js";
 import { ProjectRoot, PathError } from "../project-root.js";
 import type { MetricsRegistry } from "./metrics.js";
+import type { ProjectTrustRegistry } from "./project-trust.js";
 
 export interface RunTurnInput {
   sessionId: SessionId;
@@ -29,6 +30,12 @@ export interface TurnRunnerDependencies {
   clock?: any;
   allowedRoots?: string[];
   metrics?: MetricsRegistry;
+  /**
+   * Trust decisions for project-supplied tool configuration. When absent,
+   * every tool that declares `trust` is refused with PROJECT_NOT_TRUSTED —
+   * the safe default for a runtime that has not been given a registry.
+   */
+  trust?: ProjectTrustRegistry;
 }
 
 export interface TurnResult {
@@ -58,6 +65,7 @@ export class TurnRunner {
   private clock?: any;
   private allowedRoots: string[];
   private metrics?: MetricsRegistry;
+  private trust?: ProjectTrustRegistry;
 
   constructor(deps: TurnRunnerDependencies) {
     this.provider = deps.provider;
@@ -68,6 +76,7 @@ export class TurnRunner {
     this.clock = deps.clock;
     this.allowedRoots = deps.allowedRoots ?? [];
     this.metrics = deps.metrics;
+    this.trust = deps.trust;
   }
 
   async run(input: RunTurnInput): Promise<TurnResult> {
@@ -121,10 +130,27 @@ export class TurnRunner {
         if (signal.aborted) {
           throw new DeadlineError("cancelled", "model", "Stop pressed");
         }
+        await append({ type: "model_call", step: step + 1, maxSteps: limits.maxSteps });
 
+        // Text is streamed to the log as it arrives; `streamed` tracks how much
+        // of the model's text has already been appended so the post-call paths
+        // below only emit what is still missing (nothing, in the normal case).
+        let streamed = "";
+        const emitRemaining = async (full: string) => {
+          if (full.length > streamed.length && full.startsWith(streamed)) {
+            await append({ type: "text_delta", delta: full.slice(streamed.length) });
+          } else if (!full.startsWith(streamed) && full) {
+            await append({ type: "text_delta", delta: full });
+          }
+          streamed = full;
+        };
         let modelResult;
         try {
-          modelResult = await runModelCall(this.provider, request, signal, limits.modelCallTimeoutMs, this.clock, 1000);
+          modelResult = await runModelCall(this.provider, request, signal, limits.modelCallTimeoutMs, this.clock, 1000, async (delta) => {
+            if (signal.aborted) return;
+            await append({ type: "text_delta", delta });
+            streamed += delta;
+          });
         } catch (err: any) {
           const deadlineInfo = mapDeadlineError(err);
           // shutdown_timeout must be checked before cancelled/signal.aborted — it indicates abort-ignoring operation
@@ -154,10 +180,7 @@ export class TurnRunner {
             return { status: "cancelled", message: err.message };
           }
 
-          const partialText = err.partialText ?? "";
-          if (partialText) {
-            await append({ type: "text_delta", delta: partialText });
-          }
+          await emitRemaining(err.partialText ?? "");
 
           if (deadlineInfo?.kind === "deadline_expired") {
             await append({
@@ -167,25 +190,26 @@ export class TurnRunner {
               retryable: true,
             });
             if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
-            return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
+            return { status: "failed", message: err.message, usage: addUsage(usage, err.partialUsage) };
           }
 
+          const providerError = err instanceof ProviderError ? err : err?.cause instanceof ProviderError ? err.cause : undefined;
           await append({
             type: "turn_failed",
-            code: "MODEL_FAILED",
+            code: providerError?.code ?? "MODEL_FAILED",
             message: err.message ?? "model call failed",
-            retryable: false,
+            retryable: providerError?.retryable ?? false,
           });
           if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
-          return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
+          return { status: "failed", message: err.message, usage: addUsage(usage, err.partialUsage) };
         }
 
-        usage = modelResult.usage ?? usage;
+        // Usage is summed across the steps of a turn so multi-step turns report
+        // total spend, not the last call's.
+        usage = addUsage(usage, modelResult.usage);
 
         if (modelResult.toolCalls.length === 0) {
-          if (modelResult.text) {
-            await append({ type: "text_delta", delta: modelResult.text });
-          }
+          await emitRemaining(modelResult.text);
           await append({ type: "turn_completed", usage });
           if (this.metrics) {
             try {
@@ -196,10 +220,10 @@ export class TurnRunner {
         }
 
         const nextMessages = [...request.messages];
-        if (modelResult.text) {
-          await append({ type: "text_delta", delta: modelResult.text });
-          nextMessages.push({ role: "assistant", content: modelResult.text });
-        }
+        await emitRemaining(modelResult.text);
+        // The assistant turn carries its tool calls so wire formats that require
+        // the calls to be echoed back (OpenAI) can rebuild the transcript.
+        nextMessages.push({ role: "assistant", content: modelResult.text, toolCalls: modelResult.toolCalls });
 
         for (const toolCall of modelResult.toolCalls) {
           if (signal.aborted) {
@@ -209,6 +233,21 @@ export class TurnRunner {
           await append({ type: "tool_call", callId: toolCall.id, toolName: toolCall.name, input: toolCall.input });
 
           const tool = this.tools.get(toolCall.name);
+
+          // Malformed arguments (unparsable JSON from the model) are a
+          // controlled tool failure the model can correct, never a crash.
+          if (tool && toolCall.inputError !== undefined) {
+            const result = {
+              ok: false as const,
+              code: "TOOL_FAILED" as const,
+              message: `malformed tool input for ${toolCall.name}: ${toolCall.inputError}`,
+              retryable: true,
+              details: { rawInput: (toolCall.rawInput ?? "").slice(0, 2000) },
+            };
+            await append({ type: "tool_completed", callId: toolCall.id, toolName: toolCall.name, result });
+            nextMessages.push({ role: "tool", content: `${result.code}: ${result.message}`, toolCallId: toolCall.id, toolName: toolCall.name });
+            continue;
+          }
 
           if (!tool) {
             const result = {
@@ -225,6 +264,41 @@ export class TurnRunner {
               toolName: toolCall.name,
             });
             continue;
+          }
+
+          // Project trust gate — evaluated before approval so a user is never
+          // asked to approve a call the project is not trusted to make.
+          const trustRequirement = tool.trust ? tool.trust(toolCall.input) : undefined;
+          if (trustRequirement) {
+            const realRoot = projectRoot.getRealRoot();
+            const check = this.trust ? this.trust.check(realRoot, trustRequirement.configHash) : { trusted: false as const };
+            if (!check.trusted) {
+              const stale = "staleGrant" in check && check.staleGrant;
+              const result = {
+                ok: false as const,
+                code: "PROJECT_NOT_TRUSTED" as const,
+                message: stale
+                  ? `project ${realRoot} was trusted for a different ${trustRequirement.source} configuration (${stale.configHash}); ` +
+                    `it changed to ${trustRequirement.configHash} and must be trusted again`
+                  : `project ${realRoot} is not trusted to run ${trustRequirement.source} (${trustRequirement.configHash}); ` +
+                    `grant trust via POST /api/sessions/${sessionId}/trust`,
+                retryable: false,
+                details: {
+                  realRoot,
+                  configHash: trustRequirement.configHash,
+                  source: trustRequirement.source,
+                  ...(stale ? { staleConfigHash: stale.configHash } : {}),
+                },
+              };
+              await append({ type: "tool_completed", callId: toolCall.id, toolName: toolCall.name, result });
+              nextMessages.push({
+                role: "tool",
+                content: `${result.code}: ${result.message}`,
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+              });
+              continue;
+            }
           }
 
           if (tool.requiresApproval(toolCall.input)) {
@@ -390,4 +464,11 @@ export class TurnRunner {
       this.approvals.cancelTurn(turnId);
     }
   }
+}
+
+function addUsage(a: TurnUsage | undefined, b: TurnUsage | undefined): TurnUsage | undefined {
+  if (!b) return a;
+  if (!a) return b;
+  const sum = (x?: number, y?: number) => (x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0));
+  return { inputTokens: sum(a.inputTokens, b.inputTokens), outputTokens: sum(a.outputTokens, b.outputTokens), totalTokens: sum(a.totalTokens, b.totalTokens) };
 }

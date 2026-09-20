@@ -1,12 +1,12 @@
-import type { LLMProvider, LLMRequest } from "./types.js";
+import type { LLMProvider, LLMRequest, LLMToolCall } from "./types.js";
 import { runWithDeadline, DeadlineError } from "../deadline.js";
 
 export interface ModelCallResult {
   text: string;
-  toolCalls: Array<{ id: string; name: string; input: unknown }>;
+  toolCalls: LLMToolCall[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   partialText?: string;
-  partialToolCalls?: Array<{ id: string; name: string; input: unknown }>;
+  partialToolCalls?: LLMToolCall[];
   partialUsage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 }
 
@@ -16,17 +16,19 @@ export async function runModelCall(
   signal: AbortSignal,
   timeoutMs: number,
   clock?: any,
-  shutdownGraceMs = 1000
+  shutdownGraceMs = 1000,
+  /** Called for each text delta as it arrives so callers can stream it onward. Awaited; errors propagate. */
+  onTextDelta?: (delta: string) => Promise<void> | void
 ): Promise<ModelCallResult> {
   let partialText = "";
-  let partialToolCalls: Array<{ id: string; name: string; input: unknown }> = [];
+  let partialToolCalls: LLMToolCall[] = [];
   let partialUsage: ModelCallResult["usage"] | undefined;
 
   try {
     const result = await runWithDeadline(
       async (childSignal) => {
         let text = "";
-        const toolCalls: Array<{ id: string; name: string; input: unknown }> = [];
+        const toolCalls: LLMToolCall[] = [];
         let usage: ModelCallResult["usage"] | undefined;
 
         const stream = provider.stream(request, { signal: childSignal });
@@ -39,6 +41,7 @@ export async function runModelCall(
           if (chunk.type === "text_delta") {
             text += chunk.text;
             partialText = text;
+            if (onTextDelta && chunk.text.length > 0) await onTextDelta(chunk.text);
           } else if (chunk.type === "tool_call") {
             toolCalls.push(chunk.call);
             partialToolCalls = [...toolCalls];

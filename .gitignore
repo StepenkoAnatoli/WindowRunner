@@ -15,3 +15,11 @@ MOCK_DEMO.md
 # Crash reports from error-handler skill — users upload .md manually to GitHub, not via git
 .windows-runner/crash-reports/
 crash-reports/
+
+# Playwright output (packages/web)
+test-results/
+playwright-report/
+
+# Eval reports from CI runs (committed reports live in eval/results/)
+eval-scripted.json
+eval/results/validate-*fake*.json

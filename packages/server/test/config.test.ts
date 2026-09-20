@@ -165,6 +165,13 @@ describe("loadServerConfig", () => {
       assert.equal(load({ WINDOWS_RUNNER_PROVIDER: "openai" }).provider, "openai");
     });
 
+    it("parses model retries (default 2, 0 allowed, garbage rejected)", () => {
+      assert.equal(load({}).model.maxRetries, 2);
+      assert.equal(load({ WINDOWS_RUNNER_MODEL_MAX_RETRIES: "0" }).model.maxRetries, 0);
+      assert.equal(load({ WINDOWS_RUNNER_MODEL_MAX_RETRIES: "5" }).model.maxRetries, 5);
+      expectConfigError({ WINDOWS_RUNNER_MODEL_MAX_RETRIES: "-1" }, ENV.modelMaxRetries, /non-negative integer/);
+    });
+
     it("parses the grace period as non-negative integer milliseconds", () => {
       assert.equal(load({ WINDOWS_RUNNER_SHUTDOWN_GRACE_MS: "0" }).shutdownGraceMs, 0);
       assert.equal(load({ WINDOWS_RUNNER_SHUTDOWN_GRACE_MS: "250" }).shutdownGraceMs, 250);

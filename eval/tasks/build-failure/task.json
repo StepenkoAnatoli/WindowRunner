@@ -1,0 +1,6 @@
+{
+  "id": "build-failure",
+  "category": "build failure",
+  "prompt": "`npm run build` fails in this project. Run it, read the error, and fix the code so the build passes. Do not modify package.json.",
+  "check": "node check.js"
+}

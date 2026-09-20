@@ -6,6 +6,8 @@ import type { ToolDefinition } from "./agent/tools/types.js";
 import { TurnRunner } from "./agent/loop.js";
 import { SessionManager } from "./agent/session-manager.js";
 import { MetricsRegistry } from "./agent/metrics.js";
+import { createSecurityPolicy, type SecurityPolicy, type SecurityOptions } from "./security.js";
+import { ProjectTrustRegistry, isValidConfigHash } from "./agent/project-trust.js";
 
 export interface LongRunningThresholds {
   /** active turn duration before considered stuck; default 2h */
@@ -22,6 +24,8 @@ export interface AppDeps {
   tools: Map<string, ToolDefinition>;
   approvals: ApprovalRegistry;
   allowedRoots?: string[];
+  /** Per-turn loop limits; defaults are used for anything omitted. */
+  limits?: Partial<{ maxSteps: number; modelCallTimeoutMs: number; toolTimeoutMs: number; approvalTimeoutMs: number }>;
   sessionManager?: SessionManager;
   // For operational observability — optional, exposed via /api/health
   getBootDiagnostics?: () => any;
@@ -32,6 +36,22 @@ export interface AppDeps {
   validationIntervalMs?: number; // default 60000, 0 to disable (for tests)
   validationThresholds?: LongRunningThresholds;
   clock?: any; // optional fake clock for tests (provides now())
+  /**
+   * HTTP security boundary (src/security.ts): Host validation, Origin
+   * allowlist and bearer-token auth in front of every /api route. Boot always
+   * supplies one. Tests that construct the app directly may omit it, which
+   * yields an unauthenticated app — that is a test convenience, never a
+   * production configuration (startServer refuses it off loopback).
+   */
+  security?: SecurityOptions | SecurityPolicy;
+  /** Project trust registry; an in-memory one is created when omitted. */
+  trust?: ProjectTrustRegistry;
+  /**
+   * Directory of the built web UI (packages/web/dist/app). When set, it is
+   * served at `/` — public assets, but behind Host/Origin validation. Unset
+   * when the UI has not been built; the API works without it.
+   */
+  webDir?: string;
 }
 
 export interface ValidationResult {
@@ -71,12 +91,73 @@ function runValidation(
   return { stuckTurns, longWaitingApprovals, idleSessions, activeTurns, activeApprovals };
 }
 
+const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const TURN_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const MAX_MESSAGE_CHARS = 200_000;
+const MAX_PATH_CHARS = 4_096;
+const MAX_REASON_CHARS = 1_000;
+
 export function createApp(deps: AppDeps) {
   const app: any = express();
-  app.use(express.json());
+  app.disable("x-powered-by");
 
   const now = deps.now ?? (() => Date.now());
   const metrics = deps.metrics ?? new MetricsRegistry({ now });
+  const trust = deps.trust ?? new ProjectTrustRegistry({ now });
+
+  // Security boundary first: nothing below runs for a request that fails
+  // Host/Origin validation or (in token mode) lacks a valid bearer token.
+  // Body parsing comes after it so an unauthenticated client cannot make the
+  // server buffer a payload.
+  const security: SecurityPolicy | undefined = deps.security
+    ? "middleware" in deps.security
+      ? deps.security
+      : createSecurityPolicy({
+          ...deps.security,
+          onReject: (rejection) => {
+            metrics.recordSecurityRejection(rejection.kind, { detail: `${rejection.code} ${rejection.method} ${rejection.path}` });
+            deps.security && "onReject" in deps.security && deps.security.onReject?.(rejection);
+          },
+        })
+    : undefined;
+  if (security) app.use(security.middleware);
+  app.use(express.json({ limit: "1mb" }));
+  app.use((err: any, _req: any, res: any, next: any) => {
+    if (err && (err.type === "entity.parse.failed" || err.type === "entity.too.large" || err.status === 400 || err.status === 413)) {
+      return res.status(err.status ?? 400).json({ error: err.type === "entity.too.large" ? "request body too large" : "request body must be valid JSON", code: err.type === "entity.too.large" ? "BODY_TOO_LARGE" : "BODY_INVALID" });
+    }
+    next(err);
+  });
+
+  // Path/body validation helpers. Each returns undefined on success or sends
+  // the 400 and returns the response.
+  const requireSessionId = (req: any, res: any): string | undefined => {
+    const sessionId = req.params.sessionId;
+    if (typeof sessionId !== "string" || !SESSION_ID_RE.test(sessionId)) {
+      res.status(400).json({ error: "sessionId must match [A-Za-z0-9_-]{1,128}", code: "SESSION_ID_INVALID" });
+      return undefined;
+    }
+    return sessionId;
+  };
+  const requireTurnId = (req: any, res: any): string | undefined => {
+    const turnId = req.params.turnId;
+    if (typeof turnId !== "string" || !TURN_ID_RE.test(turnId)) {
+      res.status(400).json({ error: "turnId must match [A-Za-z0-9_-]{1,128}", code: "TURN_ID_INVALID" });
+      return undefined;
+    }
+    return turnId;
+  };
+  const bodyObject = (req: any, res: any): Record<string, unknown> | undefined => {
+    const body = req.body;
+    if (body === undefined || body === null) return {};
+    if (typeof body !== "object" || Array.isArray(body)) {
+      res.status(400).json({ error: "request body must be a JSON object", code: "BODY_INVALID" });
+      return undefined;
+    }
+    return body;
+  };
+  const isPathString = (value: unknown): value is string =>
+    typeof value === "string" && value.length > 0 && value.length <= MAX_PATH_CHARS && !value.includes("\0");
   const thresholds: Required<LongRunningThresholds> = {
     stuckTurnMs: deps.validationThresholds?.stuckTurnMs ?? 2 * 60 * 60 * 1000,
     approvalWaitMs: deps.validationThresholds?.approvalWaitMs ?? 30 * 60 * 1000,
@@ -158,6 +239,31 @@ export function createApp(deps: AppDeps) {
   app._metrics = metrics;
   app._doValidation = doValidation;
 
+  // Static web UI. index.html is never cached so a rebuilt bundle is picked up
+  // and a stale page cannot keep an old API contract; hashed assets could be
+  // cached but the bundle is small, so keep it simple and uniform. The static
+  // handler is skipped for every protected prefix (/api/ …) so a file in the UI
+  // directory can never shadow or answer for an API route.
+  if (deps.webDir) {
+    const protectedPrefixes = security?.protectedPrefixes ?? ["/api/"];
+    const serveStatic = express.static(deps.webDir, {
+      index: "index.html",
+      fallthrough: true,
+      etag: true,
+      setHeaders: (res: any) => {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Referrer-Policy", "no-referrer");
+        res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'");
+      },
+    });
+    app.use((req: any, res: any, next: any) => {
+      const p: string = req.path ?? "";
+      if (p === "/healthz" || protectedPrefixes.some((prefix) => p.startsWith(prefix))) return next();
+      return serveStatic(req, res, next);
+    });
+  }
+
   // GET /healthz — liveness only: "the process is up and serving HTTP". It
   // deliberately runs no validation and touches no store, so it stays cheap
   // enough for container health checks. Readiness/diagnostics live at
@@ -168,11 +274,14 @@ export function createApp(deps: AppDeps) {
 
   // POST /api/sessions/:sessionId — explicit session creation with pinned root
   app.post("/api/sessions/:sessionId", async (req: any, res: any) => {
-    const sessionId = req.params.sessionId;
-    const { cwd } = req.body ?? {};
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const body = bodyObject(req, res);
+    if (!body) return;
+    const { cwd } = body;
 
-    if (typeof cwd !== "string") {
-      return res.status(400).json({ error: "cwd must be string", code: "CWD_REQUIRED" });
+    if (!isPathString(cwd)) {
+      return res.status(400).json({ error: `cwd must be a non-empty string of at most ${MAX_PATH_CHARS} characters`, code: "CWD_REQUIRED" });
     }
 
     try {
@@ -198,7 +307,8 @@ export function createApp(deps: AppDeps) {
 
   // DELETE /api/sessions/:sessionId — cleanup, cancel active turn
   app.delete("/api/sessions/:sessionId", async (req: any, res: any) => {
-    const sessionId = req.params.sessionId;
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
     const session = sessionManager.getSession(sessionId);
     if (!session) {
       return res.status(404).json({ error: "session not found", code: "SESSION_NOT_FOUND", sessionId });
@@ -218,11 +328,20 @@ export function createApp(deps: AppDeps) {
 
   // POST /api/sessions/:sessionId/turns
   app.post("/api/sessions/:sessionId/turns", async (req: any, res: any) => {
-    const sessionId = req.params.sessionId;
-    const { cwd, message } = req.body ?? {};
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const body = bodyObject(req, res);
+    if (!body) return;
+    const { cwd, message } = body;
 
     if (typeof message !== "string") {
       return res.status(400).json({ error: "message must be string", code: "MESSAGE_REQUIRED" });
+    }
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return res.status(400).json({ error: `message must be at most ${MAX_MESSAGE_CHARS} characters`, code: "MESSAGE_TOO_LONG" });
+    }
+    if (cwd !== undefined && !isPathString(cwd)) {
+      return res.status(400).json({ error: `cwd must be a non-empty string of at most ${MAX_PATH_CHARS} characters`, code: "CWD_INVALID" });
     }
 
     let session = sessionManager.getSession(sessionId);
@@ -288,11 +407,12 @@ export function createApp(deps: AppDeps) {
       metrics,
       now,
       clock: deps.clock,
+      trust,
     });
 
     const request = {
       messages: [{ role: "user" as const, content: message }],
-      tools: [...deps.tools.values()].map((t) => ({ name: t.name, description: t.description })),
+      tools: [...deps.tools.values()].map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema })),
     };
 
     const limits = {
@@ -300,6 +420,7 @@ export function createApp(deps: AppDeps) {
       modelCallTimeoutMs: 30_000,
       toolTimeoutMs: 30_000,
       approvalTimeoutMs: 300_000,
+      ...deps.limits,
     };
 
     runner
@@ -328,18 +449,23 @@ export function createApp(deps: AppDeps) {
 
   // GET /api/sessions/:sessionId/turns/:turnId/events — SSE with Last-Event-ID
   app.get("/api/sessions/:sessionId/turns/:turnId/events", (req: any, res: any) => {
-    const sessionId = req.params.sessionId;
-    const turnId = req.params.turnId;
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const turnId = requireTurnId(req, res);
+    if (!turnId) return;
 
-    const lastEventIdHeader = req.headers["last-event-id"] as string | undefined;
-    const afterSeqQuery = req.query.afterSeq as string | undefined;
+    // Both cursors must be a non-negative decimal integer; anything else is a
+    // 400 rather than a silent replay from 0 (which would hand a reconnecting
+    // client a duplicated stream).
+    const lastEventIdHeader = req.headers["last-event-id"];
+    const afterSeqQuery = req.query.afterSeq;
     let afterSeq = 0;
-    if (lastEventIdHeader) {
-      const parsed = parseInt(lastEventIdHeader, 10);
-      if (!Number.isNaN(parsed)) afterSeq = parsed;
-    } else if (afterSeqQuery) {
-      const parsed = parseInt(afterSeqQuery, 10);
-      if (!Number.isNaN(parsed)) afterSeq = parsed;
+    const cursorRaw = lastEventIdHeader !== undefined ? lastEventIdHeader : afterSeqQuery;
+    if (cursorRaw !== undefined) {
+      if (typeof cursorRaw !== "string" || !/^\d{1,15}$/.test(cursorRaw)) {
+        return res.status(400).json({ error: "Last-Event-ID / afterSeq must be a non-negative integer", code: "CURSOR_INVALID" });
+      }
+      afterSeq = Number(cursorRaw);
     }
 
     res.writeHead(200, {
@@ -397,8 +523,22 @@ export function createApp(deps: AppDeps) {
 
   // POST /api/sessions/:sessionId/turns/:turnId/cancel
   app.post("/api/sessions/:sessionId/turns/:turnId/cancel", (req: any, res: any) => {
-    const turnId = req.params.turnId;
-    const { reason } = req.body ?? {};
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const turnId = requireTurnId(req, res);
+    if (!turnId) return;
+    const body = bodyObject(req, res);
+    if (!body) return;
+    const { reason } = body;
+    if (reason !== undefined && (typeof reason !== "string" || reason.length > MAX_REASON_CHARS)) {
+      return res.status(400).json({ error: `reason must be a string of at most ${MAX_REASON_CHARS} characters`, code: "REASON_INVALID" });
+    }
+
+    // A turn may only be cancelled through the session it belongs to.
+    const log = deps.manager.getLog(turnId);
+    if (log && log.state.sessionId !== sessionId) {
+      return res.status(404).json({ error: "turn does not belong to session", code: "TURN_NOT_FOUND" });
+    }
 
     const controller = activeControllers.get(turnId);
     if (controller) {
@@ -411,11 +551,14 @@ export function createApp(deps: AppDeps) {
 
   // POST /api/sessions/:sessionId/approve
   app.post("/api/sessions/:sessionId/approve", (req: any, res: any) => {
-    const urlSessionId = req.params.sessionId;
-    const { requestId, decision } = req.body ?? {};
+    const urlSessionId = requireSessionId(req, res);
+    if (!urlSessionId) return;
+    const body = bodyObject(req, res);
+    if (!body) return;
+    const { requestId, decision } = body;
 
-    if (typeof requestId !== "string" || (decision !== "approve" && decision !== "deny")) {
-      return res.status(400).json({ error: "requestId and decision (approve|deny) required" });
+    if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 256 || (decision !== "approve" && decision !== "deny")) {
+      return res.status(400).json({ error: "requestId and decision (approve|deny) required", code: "APPROVAL_INVALID" });
     }
 
     const peeked = deps.approvals.peek(requestId);
@@ -431,6 +574,56 @@ export function createApp(deps: AppDeps) {
       return res.status(409).json({ error: "approval already settled" });
     }
 
+    res.status(204).end();
+  });
+
+  // Project trust (P0-02). A grant is keyed by the session's *real* root and a
+  // configHash the client obtained from the tool's PROJECT_NOT_TRUSTED result
+  // (or from an approval request). It is a separate, explicit act from
+  // approving a tool call.
+  //
+  // GET    /api/sessions/:sessionId/trust  -> { realRoot, canonicalRoot, grant|null }
+  // POST   /api/sessions/:sessionId/trust  { configHash, source? } -> 201 grant
+  // DELETE /api/sessions/:sessionId/trust  -> 204 (revoked) | 404
+  app.get("/api/sessions/:sessionId/trust", (req: any, res: any) => {
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: "session not found", code: "SESSION_NOT_FOUND", sessionId });
+    const realRoot = session.projectRoot.getRealRoot();
+    res.json({ sessionId, realRoot, canonicalRoot: session.projectRoot.getRoot(), grant: trust.get(realRoot) ?? null });
+  });
+
+  app.post("/api/sessions/:sessionId/trust", async (req: any, res: any) => {
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const body = bodyObject(req, res);
+    if (!body) return;
+    const { configHash, source } = body;
+    if (!isValidConfigHash(configHash)) {
+      return res.status(400).json({ error: "configHash must be sha256:<64 hex>", code: "CONFIG_HASH_INVALID" });
+    }
+    if (source !== undefined && (typeof source !== "string" || source.length > 256)) {
+      return res.status(400).json({ error: "source must be a string of at most 256 characters", code: "SOURCE_INVALID" });
+    }
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: "session not found", code: "SESSION_NOT_FOUND", sessionId });
+    const grant = await trust.grant({
+      realRoot: session.projectRoot.getRealRoot(),
+      canonicalRoot: session.projectRoot.getRoot(),
+      configHash,
+      source: typeof source === "string" ? source : undefined,
+    });
+    res.status(201).json({ sessionId, grant });
+  });
+
+  app.delete("/api/sessions/:sessionId/trust", async (req: any, res: any) => {
+    const sessionId = requireSessionId(req, res);
+    if (!sessionId) return;
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return res.status(404).json({ error: "session not found", code: "SESSION_NOT_FOUND", sessionId });
+    const revoked = await trust.revoke(session.projectRoot.getRealRoot());
+    if (!revoked) return res.status(404).json({ error: "project is not trusted", code: "TRUST_NOT_FOUND" });
     res.status(204).end();
   });
 
@@ -488,6 +681,7 @@ export function createApp(deps: AppDeps) {
     if (recent.quarantinedFiles > 0) alerts.push({ level: "warn", category: "quarantine", message: `${recent.quarantinedFiles} quarantined files in last ${snapshot.recent.windowMs}ms` });
     if (recent.sessionsSkipped > 0) alerts.push({ level: "warn", category: "skippedSession", message: `${recent.sessionsSkipped} sessions skipped in last ${snapshot.recent.windowMs}ms` });
     if (recent.shutdownTimeouts > 0) alerts.push({ level: "warn", category: "shutdownTimeout", message: `${recent.shutdownTimeouts} shutdown timeouts in last ${snapshot.recent.windowMs}ms` });
+    if (recent.securityRejections > 0) alerts.push({ level: "warn", category: "securityRejection", message: `${recent.securityRejections} request(s) refused by the security boundary in last ${snapshot.recent.windowMs}ms` });
     if (validation.stuckTurns.length > 0) alerts.push({ level: "warn", category: "stuckTurn", message: `${validation.stuckTurns.length} active turn(s) exceed stuckTurnMs=${thresholds.stuckTurnMs}` });
     if (validation.longWaitingApprovals.length > 0) alerts.push({ level: "warn", category: "approvalWait", message: `${validation.longWaitingApprovals.length} approval(s) exceed approvalWaitMs=${thresholds.approvalWaitMs}` });
     if (validation.idleSessions.length > 0) alerts.push({ level: "info", category: "idleSession", message: `${validation.idleSessions.length} idle session(s) exceed idleSessionMs=${thresholds.idleSessionMs}` });
@@ -498,6 +692,8 @@ export function createApp(deps: AppDeps) {
       status,
       timestamp: n,
       alerts,
+      security: security ? security.describe() : { mode: "off", allowedHosts: [], allowedOrigins: "loopback", note: "no security policy configured (test app)" },
+      trust: trust.getDiagnostics(),
       persistence: {
         mode: (deps.manager.getStore() as any).getDataDir ? "file" : "memory",
         dataDir: (deps.manager.getStore() as any).getDataDir ? (deps.manager.getStore() as any).getDataDir() : undefined,

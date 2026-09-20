@@ -10,8 +10,20 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@windows-runner/shared": ["../shared/src/index.ts"]
-    }
+      "@windows-runner/shared": [
+        "../shared/src/index.ts"
+      ]
+    },
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["src", "test"]
+  "include": [
+    "src",
+    "test",
+    "e2e",
+    "playwright.config.ts"
+  ]
 }

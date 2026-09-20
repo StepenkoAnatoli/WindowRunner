@@ -5,9 +5,14 @@
 # so the runtime container needs no node_modules or monorepo workspace
 # symlinks. See docs/INSTALL.md ("Docker") and RELEASE_CHECKLIST.md.
 #
-# Security note: the API has no authentication yet (RELEASE_CHECKLIST.md,
-# P0-01). The published port below is loopback-only for that reason; the
-# container binds 0.0.0.0 only inside its own network namespace, which the
+# Security note: every /api route requires `Authorization: Bearer <token>`.
+# The token is generated on first boot into the data volume at
+# /home/node/.windows-runner/auth-token — read it with
+#   docker compose exec windows-runner cat /home/node/.windows-runner/auth-token
+# or pin your own with WINDOWS_RUNNER_AUTH_TOKEN below. The published port is
+# still loopback-only: the token travels over plain HTTP, so keep it off shared
+# networks unless TLS terminates in front (docs/INSTALL.md, "Remote access").
+# The container binds 0.0.0.0 only inside its own network namespace, which the
 # entry point requires WINDOWS_RUNNER_ALLOW_REMOTE=1 to acknowledge.
 services:
   windows-runner:
@@ -15,10 +20,9 @@ services:
     # Reap child processes (the agent spawns MCP servers and terminal commands).
     init: true
     ports:
-      # Loopback only: the API has no authentication yet (P0-01), so never
-      # publish it beyond 127.0.0.1 on a shared network. Change to "7634:7634"
-      # only if you intentionally want LAN access AND have decided the network
-      # is trusted — WINDOWS_RUNNER_ALLOW_REMOTE=1 below only acknowledges the
+      # Loopback only: the bearer token travels over plain HTTP. Change to
+      # "7634:7634" only if you intentionally want LAN access AND terminate TLS
+      # in front — WINDOWS_RUNNER_ALLOW_REMOTE=1 below only acknowledges the
       # non-loopback bind inside the container's network namespace.
       - "127.0.0.1:7634:7634"
     volumes:
@@ -40,6 +44,9 @@ services:
       - WINDOWS_RUNNER_ALLOWED_ROOTS=/work
       - WINDOWS_RUNNER_PERSISTENCE_MODE=file
       - WINDOWS_RUNNER_DATA_DIR=/home/node/.windows-runner
+      # Optional: pin the API token instead of using the generated one in the
+      # data volume. Must be at least 16 characters with no whitespace.
+      # - WINDOWS_RUNNER_AUTH_TOKEN=change-me-to-a-long-random-value
     # `node` (uid 1000 in the image) needs write access to ${PWD}. If your host
     # uid differs, run with `user: "${UID}:${GID}"` or fix ownership; see
     # docs/INSTALL.md.

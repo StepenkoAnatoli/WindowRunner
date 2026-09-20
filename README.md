@@ -52,10 +52,15 @@ fails with an actionable message if it is broken. Set
 `WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
 `npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
-when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
-offline `mock` provider is the only provider in this checkout, no tools are
-registered, there is no web UI, and the server binds loopback only because the
-API has no authentication yet. Configuration, endpoints and limits are in
+when `dist/` is missing or stale). What starts is the HTTP API plus a **minimal
+web UI** served at `/` (`packages/web`): the offline `mock` provider is the
+default (set `WINDOWS_RUNNER_PROVIDER=openai-compatible` or `anthropic` for a real model),
+five root-confined tools are registered, every `/api` route
+requires a bearer token (printed once in memory mode — the banner's `ui:` line
+carries it as a `#token=` fragment the page consumes and removes — and stored
+at `~/.windows-runner/auth-token` in file mode), and the server binds loopback
+only. The UI talks to the API with `fetch` only (bearer on every request,
+streamed SSE with `Last-Event-ID` resume); it is not exposed via any endpoint. Configuration, endpoints and limits are in
 [docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
 `npm run smoke:start` boots the built server and runs a turn against it.
 
@@ -166,17 +171,17 @@ All styles live in `packages/web/src/styles.css` (Tailwind v4 + custom utilities
 
 ## Providers
 
-| Provider | Notes |
+| Provider | Status in this checkout |
 | --- | --- |
-| **Anthropic** | Native Messages API, prompt caching enabled |
-| **OpenAI** | Chat Completions API |
-| **OpenRouter** | One key, hundreds of models |
-| **Google Gemini** | Via Google's OpenAI-compatible endpoint |
-| **Ollama** | `http://localhost:11434/v1`, no key needed |
-| **OpenAI-compatible** | Groq, Together, vLLM, llama.cpp, LiteLLM, anything `/v1/chat/completions`-shaped |
-| **Mock** | Offline rehearsal of the whole loop — no key, no network |
+| **Mock** | ✅ Default. Offline rehearsal of the whole loop — no key, no network |
+| **OpenAI-compatible** | ✅ `WINDOWS_RUNNER_PROVIDER=openai-compatible`. Covers OpenAI, OpenRouter, Groq, Together, vLLM, llama.cpp, LiteLLM, LM Studio, Google Gemini's OpenAI endpoint |
+| **Ollama** | ✅ via OpenAI-compatible: `WINDOWS_RUNNER_MODEL_BASE_URL=http://127.0.0.1:11434/v1`, no key |
+| **Anthropic (native)** | ✅ `WINDOWS_RUNNER_PROVIDER=anthropic`, `WINDOWS_RUNNER_MODEL=claude-…`, key from `WINDOWS_RUNNER_MODEL_API_KEY` or `ANTHROPIC_API_KEY` |
 
-Keys live in `~/.windows-runner/config.json` with mode `0600`. You can also put `env:ANTHROPIC_API_KEY` in the key field to read from your shell instead of storing anything. Existing `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` and `GEMINI_API_KEY` environment variables are detected on first run.
+Configure with `WINDOWS_RUNNER_MODEL` (required), `WINDOWS_RUNNER_MODEL_BASE_URL`
+(default `https://api.openai.com/v1`) and `WINDOWS_RUNNER_MODEL_API_KEY` (or
+`OPENAI_API_KEY`). The key is read from the environment only, never printed,
+and redacted from error messages. There is no `config.json` key store yet.
 
 ## Skills
 
@@ -251,20 +256,19 @@ See `.windows-runner/mcp.example.json` for a complete example.
 
 ## What the agent can do
 
+Tools shipped in this checkout (`packages/server/src/agent/tools/builtin.ts`).
+Every path is relative to the session's project root and cannot leave it —
+not via `..`, absolute paths, encoded traversal or symlinks, for reads or writes.
+
 | Tool | Approval |
 | --- | --- |
-| `read_file`, `list_files`, `grep` | never |
-| `read_project_context` | never — scans project config files |
-| `write_file`, `str_replace` | auto-approved by default (toggle in Settings) |
-| `apply_patch` | auto-approved by default — multi-file edits |
-| `delete_file` | **always asks first** |
-| `git_status`, `git_diff`, `git_log` | never |
-| `run_terminal` | **always asks first** |
-| `web_fetch`, `web_search` | asks (auto-approved by the research skill) |
-| `session_memory` | never — saves/reads session notes |
-| `record_error`, `list_error_reports` | never — crash recorder for error-handler skill, writes to `.windows-runner/crash-reports/` |
-| `skill` | never |
-| `mcp_*` | **always asks first** (external tool servers) |
+| `read_file` (with optional line range), `list_dir` | never |
+| `write_file`, `edit_file` (exact-match replace, must be unique) | **always asks first** |
+| `run_terminal` | **always asks first** — runs in the project root, server secrets stripped from its environment, bounded output, killed as a whole process tree on Stop/timeout |
+
+Set `WINDOWS_RUNNER_TOOLS=0` for a text-only agent. Tools described elsewhere in
+this README (`grep`, `apply_patch`, `git_*`, `web_*`, skills, `mcp_*`) are not
+implemented yet; the project-trust gate that will guard `mcp_*` already is.
 
 ### Error handling (new)
 
@@ -324,7 +328,7 @@ packages/
              src/config.ts  environment parsing, strict, safe defaults
              src/boot.ts    composes createApp(), recovers persisted state, graceful shutdown
              src/app.ts     Express app factory (REST + SSE), agent loop, executor, persistence, metrics
-             src/providers/ LLMProvider contract + the offline mock (the only provider here)
+             src/providers/ LLMProvider contract, the offline mock, the openai-compatible and anthropic adapters, retry wrapper
   web/       UI-side turn-state projection (no bundler, no React in this checkout)
 scripts/
   setup.mjs         install -> typecheck -> build
@@ -397,8 +401,18 @@ boot with a message naming the variable; the full table with semantics is in
 | --- | --- | --- |
 | `PORT` | `7634` | Server port (`0` = ephemeral, printed in the ready line) |
 | `HOST` | `127.0.0.1` | Bind address. Non-loopback is refused unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
-| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the unauthenticated API is exposed beyond loopback |
-| `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists in this checkout |
+| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the token-protected API is exposed beyond loopback over plain HTTP |
+| `WINDOWS_RUNNER_AUTH` | `token` | `token` = bearer auth on every `/api` route; `off` only with a loopback `HOST` |
+| `WINDOWS_RUNNER_AUTH_TOKEN` | generated | The bearer token (≥16 chars). Unset: `<data dir>/auth-token` in file mode, else per-process and printed once |
+| `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values accepted besides loopback and the bind address |
+| `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Explicit browser origins allowed to call the API (no wildcard) |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline), `openai-compatible` or `anthropic` |
+| `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for network providers), endpoint base URL (default per provider), key (never printed; falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) |
+| `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Retries for transient model errors (429/5xx/network) before any output streamed; `0` disables |
+| `WINDOWS_RUNNER_MAX_STEPS` | `10` | Model calls per turn before `MAX_STEPS_EXCEEDED`; lower it to cap spend |
+| `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` | `30000` | Wall-clock limit for one model call |
+| `WINDOWS_RUNNER_TOOLS` | `1` | `0` disables the built-in tools |
+| `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` / `_TERMINAL_OUTPUT_LIMIT` | `60000` / `65536` | `run_terminal` wall-clock limit and output cap |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |
 | `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Where sessions and turn logs are stored in file mode |
 | `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY` | `true` (file mode) | Persist before notifying SSE listeners |

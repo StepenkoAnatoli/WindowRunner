@@ -51,6 +51,13 @@ export async function executeTool(
     );
     return result;
   } catch (err: any) {
+    // Parent cancellation (Stop, session delete, shutdown) is never a tool
+    // result: the loop must end the turn as cancelled, not call the model
+    // again with a "failed tool". The abort reason is whatever the caller
+    // used (app.ts aborts with a plain Error), so check the signal itself.
+    if (ctx.signal.aborted) {
+      throw new DeadlineError("cancelled", "tool", err?.message ?? "cancelled");
+    }
     if (err instanceof PathError) {
       return {
         ok: false,

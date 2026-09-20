@@ -1,0 +1,114 @@
+{
+  "at": "2026-09-20T18:21:23.120Z",
+  "provider": "scripted",
+  "model": "scripted-solutions",
+  "approvePolicy": "approve",
+  "limits": {
+    "maxSteps": 10,
+    "modelCallTimeoutMs": 30000,
+    "toolTimeoutMs": 30000,
+    "approvalTimeoutMs": 300000
+  },
+  "node": "v22.22.3",
+  "platform": "linux",
+  "summary": {
+    "tasks": 5,
+    "passed": 5,
+    "completionRate": 1,
+    "userInterventions": 9,
+    "totalTokens": 5939,
+    "elapsedMs": 846
+  },
+  "results": [
+    {
+      "id": "bug-fix",
+      "category": "bug fix",
+      "passed": true,
+      "turnStatus": "completed",
+      "steps": 2,
+      "toolCalls": 2,
+      "toolFailures": 0,
+      "approvalsAsked": 1,
+      "approvalsDenied": 0,
+      "usage": {
+        "inputTokens": 1029,
+        "outputTokens": 20,
+        "totalTokens": 1049
+      },
+      "elapsedMs": 60,
+      "checkOutput": "ok"
+    },
+    {
+      "id": "build-failure",
+      "category": "build failure",
+      "passed": true,
+      "turnStatus": "completed",
+      "steps": 2,
+      "toolCalls": 4,
+      "toolFailures": 0,
+      "approvalsAsked": 3,
+      "approvalsDenied": 0,
+      "usage": {
+        "inputTokens": 1209,
+        "outputTokens": 20,
+        "totalTokens": 1229
+      },
+      "elapsedMs": 344,
+      "checkOutput": "ok"
+    },
+    {
+      "id": "feature",
+      "category": "feature work",
+      "passed": true,
+      "turnStatus": "completed",
+      "steps": 2,
+      "toolCalls": 2,
+      "toolFailures": 0,
+      "approvalsAsked": 1,
+      "approvalsDenied": 0,
+      "usage": {
+        "inputTokens": 1083,
+        "outputTokens": 20,
+        "totalTokens": 1103
+      },
+      "elapsedMs": 15,
+      "checkOutput": "ok"
+    },
+    {
+      "id": "multi-file",
+      "category": "multi-file change",
+      "passed": true,
+      "turnStatus": "completed",
+      "steps": 2,
+      "toolCalls": 7,
+      "toolFailures": 0,
+      "approvalsAsked": 3,
+      "approvalsDenied": 0,
+      "usage": {
+        "inputTokens": 1343,
+        "outputTokens": 20,
+        "totalTokens": 1363
+      },
+      "elapsedMs": 32,
+      "checkOutput": "ok"
+    },
+    {
+      "id": "refactor",
+      "category": "refactor",
+      "passed": true,
+      "turnStatus": "completed",
+      "steps": 2,
+      "toolCalls": 2,
+      "toolFailures": 0,
+      "approvalsAsked": 1,
+      "approvalsDenied": 0,
+      "usage": {
+        "inputTokens": 1175,
+        "outputTokens": 20,
+        "totalTokens": 1195
+      },
+      "elapsedMs": 14,
+      "checkOutput": "ok"
+    }
+  ]
+}

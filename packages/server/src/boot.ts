@@ -2,8 +2,13 @@ import { constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
+import * as path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
-import { ConfigError, isLoopbackHost, ENV, type ServerConfig } from "./config.js";
+import { ConfigError, isLoopbackHost, ENV, MIN_AUTH_TOKEN_LENGTH, type ServerConfig } from "./config.js";
+import { generateAuthToken } from "./security.js";
+import { ProjectTrustRegistry } from "./agent/project-trust.js";
 import { TurnManager } from "./agent/turn-manager.js";
 import { InMemoryTurnLogStore } from "./agent/turn-log-store.js";
 import { FileTurnLogStore } from "./agent/file-turn-log-store.js";
@@ -13,6 +18,7 @@ import { SessionManager } from "./agent/session-manager.js";
 import { createProvider, UnknownProviderError } from "./providers/index.js";
 import type { LLMProvider } from "./providers/types.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
+import { createBuiltinTools } from "./agent/tools/builtin.js";
 
 /**
  * Server boot path.
@@ -39,6 +45,29 @@ export interface RuntimeOverrides {
   now?: () => number;
   /** Boot-time logger. Default: silent (index.ts passes console.log). */
   log?: (line: string) => void;
+  /** Built web UI directory. Default: packages/web/dist/app next to this package, if it exists; `null` disables. */
+  webDir?: string | null;
+}
+
+/**
+ * Locate the built web UI relative to this file. Works from src/ (tsx) and
+ * from the bundled dist/index.cjs: both are two levels below `packages/`, so
+ * `../../web/dist/app` is the same directory either way.
+ */
+export function resolveWebDir(): string | undefined {
+  let here: string | undefined;
+  try {
+    if (typeof __dirname === "string") here = __dirname;
+  } catch {}
+  if (!here) {
+    try {
+      const url = typeof import.meta !== "undefined" ? import.meta.url : undefined;
+      if (url) here = path.dirname(fileURLToPath(url));
+    } catch {}
+  }
+  if (!here) return undefined;
+  const candidate = path.resolve(here, "..", "..", "web", "dist", "app");
+  return existsSync(path.join(candidate, "index.html")) ? candidate : undefined;
 }
 
 export interface TurnBootDiagnostics {
@@ -47,12 +76,22 @@ export interface TurnBootDiagnostics {
   diagnostics?: unknown;
 }
 
+export interface AuthBootDiagnostics {
+  mode: "token" | "off";
+  /** Where the effective token came from. Never the token itself. */
+  tokenSource?: "env" | "file" | "generated";
+  /** Path of the persisted token file (file persistence mode only). */
+  tokenFile?: string;
+}
+
 export interface BootDiagnostics {
   startedAt: number;
   persistenceMode: ServerConfig["persistence"]["mode"];
   dataDir?: string;
   turns: TurnBootDiagnostics;
   sessions?: SessionBootDiagnostics;
+  auth: AuthBootDiagnostics;
+  trust?: { loaded: number; warnings: string[] };
 }
 
 export interface Runtime {
@@ -63,7 +102,16 @@ export interface Runtime {
   sessionManager: SessionManager;
   provider: LLMProvider;
   tools: Map<string, ToolDefinition>;
+  trust: ProjectTrustRegistry;
   boot: BootDiagnostics;
+  /** Directory the web UI is served from, if any. */
+  webDir?: string;
+  /**
+   * The bearer token clients must present (undefined when auth is off). Held
+   * on the runtime so the entry point can print it once and tests can use it;
+   * it is never part of BootDiagnostics or any HTTP response.
+   */
+  authToken?: string;
 }
 
 export interface CloseOptions {
@@ -90,16 +138,56 @@ export interface StartedServer extends Runtime {
 }
 
 export class BindRefusedError extends ConfigError {
-  constructor(host: string) {
+  constructor(host: string, reason: "opt-in" | "auth-off") {
     super(
-      `refusing to bind ${host}: the API has no authentication yet (RELEASE_CHECKLIST.md, P0-01), ` +
-        `so a non-loopback bind exposes an unauthenticated agent that can read and edit files under ` +
-        `the allowed roots to anyone who can reach the port. Use a loopback HOST (default 127.0.0.1), ` +
-        `or set ${ENV.allowRemote}=1 to accept that risk explicitly.`,
+      reason === "auth-off"
+        ? `refusing to bind ${host} with ${ENV.auth}=off: an unauthenticated agent that can read and edit files under ` +
+            `the allowed roots would be exposed to anyone who can reach the port. Remove ${ENV.auth}=off (bearer-token ` +
+            `auth is the default) or bind a loopback HOST.`
+        : `refusing to bind ${host}: a non-loopback bind exposes the agent API — and every project under the allowed ` +
+            `roots — to the network, protected only by the bearer token over plain HTTP. Use a loopback HOST (default ` +
+            `127.0.0.1), or set ${ENV.allowRemote}=1 to accept that explicitly (put TLS in front; see docs/INSTALL.md, "Remote access").`,
       ENV.host
     );
     this.name = "BindRefusedError";
   }
+}
+
+/**
+ * Resolve the bearer token for token mode, in this order:
+ *   1. WINDOWS_RUNNER_AUTH_TOKEN (config.auth.token);
+ *   2. file mode: `<dataDir>/auth-token`, created (0600) on first boot so the
+ *      token survives restarts and other local tools can read it;
+ *   3. memory mode: a fresh token for this process.
+ */
+async function resolveAuthToken(config: ServerConfig): Promise<{ token: string; source: "env" | "file" | "generated"; file?: string }> {
+  if (config.auth.token !== undefined) return { token: config.auth.token, source: "env" };
+  if (config.persistence.mode === "file") {
+    const file = path.join(config.persistence.dataDir, "auth-token");
+    try {
+      const existing = (await fs.readFile(file, "utf8")).trim();
+      if (existing.length >= MIN_AUTH_TOKEN_LENGTH && !/\s/.test(existing)) return { token: existing, source: "file", file };
+      throw new ConfigError(
+        `${file} does not contain a usable token (need >= ${MIN_AUTH_TOKEN_LENGTH} non-whitespace characters). ` +
+          `Delete the file to generate a new one, or set ${ENV.authToken}.`,
+        ENV.authToken
+      );
+    } catch (err: any) {
+      if (err instanceof ConfigError) throw err;
+      if (err?.code !== "ENOENT") {
+        throw new ConfigError(`cannot read ${file} (${err?.code ?? err?.message}); set ${ENV.authToken} or fix the file's permissions.`, ENV.authToken);
+      }
+    }
+    const token = generateAuthToken();
+    try {
+      await fs.writeFile(file, token + "\n", { mode: 0o600, flag: "wx" });
+    } catch (err: any) {
+      if (err?.code === "EEXIST") return resolveAuthToken(config); // another boot raced us; read theirs
+      throw new ConfigError(`cannot write ${file} (${err?.code ?? err?.message}); set ${ENV.authToken} or make the data dir writable.`, ENV.authToken);
+    }
+    return { token, source: "generated", file };
+  }
+  return { token: generateAuthToken(), source: "generated" };
 }
 
 export async function createRuntime(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<Runtime> {
@@ -109,13 +197,17 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   // Fail on an unknown provider before touching the filesystem.
   let provider: LLMProvider;
   try {
-    provider = overrides.provider ?? createProvider(config.provider);
+    provider = overrides.provider ?? createProvider(config.provider, config.model, log);
   } catch (err) {
     if (err instanceof UnknownProviderError) throw new ConfigError(err.message, ENV.provider);
     throw err;
   }
 
-  const tools = overrides.tools ?? new Map<string, ToolDefinition>();
+  const tools =
+    overrides.tools ??
+    (config.tools.enabled
+      ? createBuiltinTools({ terminalTimeoutMs: config.tools.terminalTimeoutMs, terminalOutputLimit: config.tools.terminalOutputLimit })
+      : new Map<string, ToolDefinition>());
   const approvals = new ApprovalRegistry({ now });
 
   let manager: TurnManager;
@@ -124,12 +216,16 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     startedAt: now(),
     persistenceMode: config.persistence.mode,
     turns: { turnsLoaded: 0, turnsWithRestart: 0 },
+    auth: { mode: config.auth.mode },
   };
 
+  let trust: ProjectTrustRegistry;
   if (config.persistence.mode === "file") {
     const { dataDir, fsync, durableBeforeNotify } = config.persistence;
     await ensureDataDir(dataDir);
     boot.dataDir = dataDir;
+    trust = new ProjectTrustRegistry({ now, dataDir });
+    boot.trust = await trust.boot();
 
     const turnStore = new FileTurnLogStore({ dataDir, fsync, now });
     sessionStore = new FileSessionStore({ dataDir, now });
@@ -148,7 +244,23 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     for (const warning of collectWarnings(boot)) log(`warning:     ${warning}`);
   } else {
     manager = new TurnManager({ store: new InMemoryTurnLogStore(), now, durableBeforeNotify: config.persistence.durableBeforeNotify });
+    trust = new ProjectTrustRegistry({ now });
   }
+
+  // Authentication. Resolved after the data dir exists (the token may live
+  // there) and before the app is built, so the middleware never sees a
+  // half-configured policy.
+  let authToken: string | undefined;
+  if (config.auth.mode === "token") {
+    const resolved = await resolveAuthToken(config);
+    authToken = resolved.token;
+    boot.auth.tokenSource = resolved.source;
+    boot.auth.tokenFile = resolved.file;
+    log(`auth:        bearer token ${resolved.source === "env" ? `from ${ENV.authToken}` : resolved.source === "file" ? `from ${resolved.file}` : "generated for this process"}`);
+  } else {
+    log(`auth:        off — every local process can drive the agent (loopback bind only)`);
+  }
+  if (boot.trust && boot.trust.loaded > 0) log(`trust:       ${boot.trust.loaded} trusted project(s) loaded`);
 
   const sessionManager = new SessionManager({
     now,
@@ -159,23 +271,37 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     sessionStore,
   });
 
+  const webDir = overrides.webDir === null ? undefined : overrides.webDir ?? resolveWebDir();
+
   const app = createApp({
+    webDir,
     manager,
     provider,
     tools,
     approvals,
     sessionManager,
     allowedRoots: config.allowedRoots,
+    limits: { maxSteps: config.model.maxSteps, modelCallTimeoutMs: config.model.callTimeoutMs },
     now,
     getBootDiagnostics: () => boot,
+    trust,
+    security: {
+      mode: config.auth.mode,
+      token: authToken,
+      bindHost: config.host,
+      allowedHosts: config.auth.allowedHosts,
+      allowedOrigins: config.auth.allowedOrigins,
+    },
   });
 
-  return { config, app, manager, approvals, sessionManager, provider, tools, boot };
+  return { config, app, manager, approvals, sessionManager, provider, tools, trust, boot, authToken, webDir };
 }
 
 export async function startServer(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<StartedServer> {
-  if (!config.allowRemote && !isLoopbackHost(config.host)) {
-    throw new BindRefusedError(config.host);
+  if (!isLoopbackHost(config.host)) {
+    // Auth off is never acceptable off loopback, and cannot be opted into.
+    if (config.auth.mode === "off") throw new BindRefusedError(config.host, "auth-off");
+    if (!config.allowRemote) throw new BindRefusedError(config.host, "opt-in");
   }
 
   const runtime = await createRuntime(config, overrides);

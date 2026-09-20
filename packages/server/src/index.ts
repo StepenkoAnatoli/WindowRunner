@@ -59,13 +59,31 @@ async function main(): Promise<void> {
   }
 
   const ready = started;
+  if (ready.authToken !== undefined && ready.boot.auth.tokenSource === "generated" && ready.boot.auth.tokenFile === undefined) {
+    // Memory mode: the token exists only in this process, so the terminal is
+    // the only place a user can get it. File mode and env-supplied tokens are
+    // never echoed; the banner says where they live instead.
+    console.log(`  token:       ${ready.authToken}`);
+    console.log(`               (generated for this run; send it as "Authorization: Bearer <token>". Set ${"WINDOWS_RUNNER_AUTH_TOKEN"} or use file persistence for a stable one)`);
+  }
   if (ready.tools.size === 0) {
-    console.log("  tools:       none registered in this checkout (the agent can only answer in text)");
+    console.log("  tools:       none registered (WINDOWS_RUNNER_TOOLS=0; the agent can only answer in text)");
+  } else {
+    const names = [...ready.tools.values()].map((t) => `${t.name}${t.requiresApproval(undefined) ? "*" : ""}`);
+    console.log(`  tools:       ${names.join(", ")}  (* = asks for approval every call; all paths confined to the session root)`);
   }
   if (ready.config.provider === "mock") {
     console.log(`  note:        replies come from the offline mock provider and are prefixed "[mock]"`);
   }
   console.log(`${TAG} listening on ${ready.url}`);
+  if (ready.webDir) {
+    // In memory mode the generated token was printed above; the fragment form
+    // lets the UI pick it up without retyping (fragments never reach the server).
+    const fragment = ready.authToken !== undefined && ready.boot.auth.tokenSource === "generated" && ready.boot.auth.tokenFile === undefined ? `/#token=${ready.authToken}` : "/";
+    console.log(`  ui:          ${ready.url}${fragment}`);
+  } else {
+    console.log(`  ui:          not built (run npm run build --workspace packages/web)`);
+  }
   console.log(`  health:      ${ready.url}/healthz  (liveness)   ${ready.url}/api/health  (diagnostics)`);
   console.log("  press Ctrl+C to stop");
 

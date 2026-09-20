@@ -1,0 +1,6 @@
+{
+  "id": "bug-fix",
+  "category": "bug fix",
+  "prompt": "The function `sum` in src/math.js returns the wrong result for an empty array (it returns undefined instead of 0). Fix it. Do not change the exported name.",
+  "check": "node check.js"
+}

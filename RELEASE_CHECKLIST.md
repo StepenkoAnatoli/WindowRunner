@@ -22,12 +22,14 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-Three jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
+Four jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
 cancels superseded runs on the same ref; each job has a 20-minute timeout; a
 diagnostics artifact is uploaded on failure. `CI` (`ubuntu-latest`) and
 `Platform` (`windows-latest` + `macos-latest` matrix, after `CI`) pin Node
 exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
-`node:22-alpine` images and needs no runner Node at all.
+`node:22-alpine` images and needs no runner Node at all; `Browser E2E`
+(`ubuntu-latest`, after `CI`) installs Chromium via Playwright and drives the
+web UI against the real server with a scripted offline provider.
 
 | Check | Command |
 | --- | --- |
@@ -38,6 +40,8 @@ exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
+| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; five tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
+| Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
 
@@ -54,7 +58,7 @@ this checklist tracks.
 | `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
-| Browser E2E (P1-07) | No E2E suite and no browser/Playwright dependency. |
+| Real-model evaluation runs (P2-02) | Deliberately manual: they cost money and are not reproducible. `eval/README.md`. |
 | Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
 
 ### Merge gating is NOT configured
@@ -84,47 +88,48 @@ a pull request.
 
 | Issue | Snapshot |
 | --- | --- |
-| P0-01 | Core landed in Batch 2 (bearer-token auth, loopback-only CORS allowlist, Host validation, compose loopback bind). Residual: documented remote-mode auth/transport-security requirements. |
-| P0-02 | Core landed in Batch 3 (consent gate before any spawn, `ENV_ALLOWLIST`, `DANGEROUS_TOOLS`, `try/finally` cleanup). Residual: remembered approvals keyed to project identity + `configHash` invalidation, and a consent UI showing the source configuration. |
+| P0-01 | **Landed in this checkout (2026-09-20)** — `packages/server/src/security.ts` middleware in front of every `/api` route: bearer token (env → `<dataDir>/auth-token` → generated), Host validation, explicit Origin allowlist (loopback default, no wildcard, `null` refused), CORS only for allowed origins, `/healthz` public. Boot refuses `WINDOWS_RUNNER_AUTH=off` off loopback unconditionally. Covered by `test/security.test.ts`, `test/boot.test.ts`, `scripts/smoke-start.mjs`, the Docker CI job. Residual: TLS is the operator's job (documented under "Remote access"); a browser/Electron client does not exist yet to exercise the credential flow end to end. The earlier "Batch 2" claim referred to files not present in this repository. |
+| P0-02 | **Trust boundary landed in this checkout (2026-09-20)** — `packages/server/src/agent/project-trust.ts`: grants keyed by real root + `configHash`, invalidated on change, persisted to `<dataDir>/trust.json`, checked by `TurnRunner` before any approval for tools declaring `trust`, exposed at `/api/sessions/:id/trust`. Residual: no MCP runtime or spawning tool exists in this checkout, so env allowlisting, `try/finally` client cleanup and a consent UI showing the source configuration remain to be built *on* this gate when those land. |
 | P0-03 | Landed — `packages/server/src/access.ts` binds every `cwd`-accepting endpoint (fs, sessions, skills, git, project-context, folder picker) to authorized roots (`allowedProjectRoots` + home by default), canonicalized so symlink/alias escapes are refused. (2026-09-17) |
-| P0-04 | Partial — `PATCH /api/config` is strictly validated (F9); approval endpoints (`/approve`, `/mcp-approve`) and `/fs/*` query parameters are still loosely coerced. |
+| P0-04 | **Landed for every route that exists (2026-09-20)** — ids, bodies (object, ≤1 MB), `cwd`, `message`, approval/cancel payloads, `Last-Event-ID`/`afterSeq` and trust payloads are validated with stable `400`/`413` codes before any state is touched (`app.ts`, `test/security.test.ts` "input validation"). No config-mutation or `/fs/*` endpoint exists in this checkout; when they land they must use the same helpers. |
 | P1-01 | Open (Phase 4). Related: F16 — the test suite still writes into the real `~/.windows-runner`. |
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
-| P1-05 | Claimed complete in Batch 6. **"Windows CI green" was not reproducible when claimed: there was no Windows job in this repository then** (a `Platform` matrix with a Windows leg exists now; see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
+| P1-05 | **Largely landed 2026-09-20 (Phase 3).** `src/process-tree.ts` (process group on POSIX, `taskkill /T` on Windows) and `run_terminal` in `src/agent/tools/builtin.ts`; tree kill on timeout and Stop is tested with a grandchild pid on POSIX (`builtin-tools.test.ts`); Windows leg runs the same suite minus the pid checks. Malformed/unknown tool calls are controlled errors. Open: usage accounting across retries (no automatic retry exists), Electron quit on Windows (no Electron). |
 | P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
-| P1-07 | Open (Phase 5 unchecked tasks). |
+| P1-07 | **Partial as of 2026-09-20.** Browser E2E (Phase 2) as before. Phase 3 added the fake-provider failure suite: `test/openai-compatible.test.ts` against an OpenAI-shaped fake covers auth, 429 (+ Retry-After), 5xx, retry/backoff (`test/retry.test.ts`), context exhaustion, dropped/garbage streams, malformed tool arguments, cancellation mid-stream; `test/anthropic.test.ts` repeats the matrix against an Anthropic-shaped fake. Real-endpoint validation: `npm run validate:provider` (manual, ordered, stops at first failure, secret-free report) — **not yet run against a paid account**. Not covered: settings, edit/diff review, reload-resume; no job gates merges. |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
-| P2-02 | Open (Phase 5). |
+| P2-02 | **Partial as of 2026-09-20 (Phase 3).** `eval/` harness with five task categories and hidden checks; scripted mode runs in CI, real-model runs are manual and reported as JSON under `eval/results/`. Metrics recorded: completion, steps, tool calls/failures, approvals (interventions), tokens, elapsed. Not recorded: cost, regressions across releases (no real-model baseline committed yet). |
 
 ## P0 — Must fix before recommending installation
 
-### [ ] P0-01: Secure local API access and require explicit network opt-in
+### [x] P0-01: Secure local API access and require explicit network opt-in
 Title: Secure local API boundary and explicit network exposure
 
 Files to inspect:
-- `packages/server/src/index.ts`
-- `packages/server/src/routes.ts`
-- `packages/server/src/auth.ts`
-- `packages/web/src/api.ts`
-- `packages/desktop/src/main.js`
-- `docker-compose.yml`
-- `docs/THREAT_MODEL.md`
+- `packages/server/src/security.ts` (policy + middleware)
+- `packages/server/src/config.ts` (`WINDOWS_RUNNER_AUTH`, `_AUTH_TOKEN`, `_ALLOWED_HOSTS`, `_ALLOWED_ORIGINS`)
+- `packages/server/src/boot.ts` (`resolveAuthToken`, `BindRefusedError`)
+- `packages/server/src/app.ts` (middleware mounted before body parsing and every `/api` route)
+- `packages/server/test/security.test.ts`, `packages/server/test/boot.test.ts`
+- `scripts/smoke-start.mjs`, `scripts/smoke-packed-start.mjs`, `.github/workflows/ci.yml` (Docker job), `docker-compose.yml`
+- `docs/INSTALL.md` → "Authentication", "Remote access"
 
 Acceptance criteria:
-- [ ] All sensitive endpoints require authentication before file, config, session, approval, diagnostic, or stream access succeeds.
-- [ ] CORS is replaced with explicit allowed origins; wildcard origins are not used.
-- [ ] Origin/Host validation rejects untrusted origins and DNS rebinding attempts.
-- [ ] Missing or null Origin headers are handled safely and do not grant access.
-- [ ] Default bind remains loopback-only; remote access is explicit and documented. *(Partial, 2026-09-20: the boot entry `packages/server/src/index.ts` defaults to `127.0.0.1` and refuses a non-loopback `HOST` unless `WINDOWS_RUNNER_ALLOW_REMOTE=1`; the rest of this issue — auth, CORS, Host validation — is untouched.)*
-- [ ] Browser and Electron flows still work with valid credentials.
-- [ ] Unauthorized requests cannot read files, change settings, start turns, or approve actions.
-- [ ] Regression tests cover auth failure, host rejection, and valid client access.
+- [x] All sensitive endpoints require authentication before file, config, session, approval, diagnostic, or stream access succeeds. *(Every `/api` route; only `/healthz` is public. Verified per route in `security.test.ts`.)*
+- [x] CORS is replaced with explicit allowed origins; wildcard origins are not used. *(`WINDOWS_RUNNER_ALLOWED_ORIGINS` parse refuses `*`/`null`; CORS headers echo only an allowed origin.)*
+- [x] Origin/Host validation rejects untrusted origins and DNS rebinding attempts. *(`403 HOST_NOT_ALLOWED` / `403 ORIGIN_NOT_ALLOWED`, also on `/healthz`.)*
+- [x] Missing or null Origin headers are handled safely and do not grant access. *(Absent Origin = no CORS grant, token still required; `Origin: null` always refused.)*
+- [x] Default bind remains loopback-only; remote access is explicit and documented. *(`WINDOWS_RUNNER_ALLOW_REMOTE=1` still required; `WINDOWS_RUNNER_AUTH=off` cannot be combined with a non-loopback bind.)*
+- [ ] Browser and Electron flows still work with valid credentials. *(Browser: yes — Playwright E2E sends the bearer on every request incl. SSE reconnects. Electron: no client exists.)*
+- [x] Unauthorized requests cannot read files, change settings, start turns, or approve actions. *(Verified: provider never invoked, no active turn after a 401.)*
+- [x] Regression tests cover auth failure, host rejection, and valid client access.
 
 ---
 
-### [ ] P0-02: Require explicit project trust before launching MCP commands
+### [~] P0-02: Require explicit project trust before launching MCP commands
+*(2026-09-20: the trust boundary — identity, `configHash` invalidation, persistence, loop gate, HTTP API, regression tests — is in place: `packages/server/src/agent/project-trust.ts`, `ToolDefinition.trust`, `test/security.test.ts` "project trust". The MCP runtime this issue was written against does not exist in this checkout; the remaining boxes describe what it must satisfy when it is built on the gate.)*
 Title: Require explicit project trust and consent before MCP subprocess launch
 
 Files to inspect:
@@ -136,16 +141,16 @@ Files to inspect:
 - `docs/THREAT_MODEL.md`
 
 Acceptance criteria:
-- [ ] MCP subprocesses do not start until the user explicitly approves the command.
-- [ ] Approval UI shows command, arguments, environment-variable names, and source configuration before launch.
-- [ ] Approval is tied to canonical project identity and configuration contents.
-- [ ] If approved MCP config changes, prior approval is invalidated.
-- [ ] No subprocess starts when consent is denied or absent.
+- [x] MCP subprocesses do not start until the user explicitly approves the command. *(Any tool declaring `trust` is refused with `PROJECT_NOT_TRUSTED` before `tool_started`; no MCP tool ships yet.)*
+- [ ] Approval UI shows command, arguments, environment-variable names, and source configuration before launch. *(Server exposes `source` + `configHash`; UI pending P1-07.)*
+- [x] Approval is tied to canonical project identity and configuration contents. *(Keyed by real root, bound to `configHash`.)*
+- [x] If approved MCP config changes, prior approval is invalidated. *(Stale grant named in the refusal; tested.)*
+- [x] No subprocess starts when consent is denied or absent. *(Trust is checked before the approval request is minted; tested.)*
 - [ ] Environment allowlisting prevents accidental secret leakage to child processes.
 - [ ] Dummy secrets do not appear in child environment unless explicitly granted.
 - [ ] Skill metadata cannot bypass user-required approvals.
 - [ ] Error and cancellation paths clean up MCP clients using structured `try/finally`.
-- [ ] Regression tests cover untrusted project launch blocking and config invalidation.
+- [x] Regression tests cover untrusted project launch blocking and config invalidation.
 
 ---
 
@@ -168,20 +173,19 @@ Acceptance criteria:
 
 ---
 
-### [ ] P0-04: Validate API inputs before applying config or approval updates
+### [x] P0-04: Validate API inputs before applying config or approval updates
 Title: Validate request bodies and query parameters at the API boundary
 
 Files to inspect:
-- `packages/server/src/routes.ts`
-- `packages/server/src/index.ts`
-- `packages/server/test/`
+- `packages/server/src/app.ts` (`requireSessionId`, `requireTurnId`, `bodyObject`, `isPathString`, JSON error handler)
+- `packages/server/test/security.test.ts` ("input validation (P0-04)")
 
 Acceptance criteria:
-- [ ] Configuration update endpoints validate type, format, and allowed ranges before mutation.
-- [ ] Approval update endpoints reject malformed or unexpected payloads.
-- [ ] Query parameters are validated before any state-changing action.
-- [ ] Invalid or null request values fail with a controlled error, not partial mutation.
-- [ ] Regression tests cover malformed config payloads and approval payloads.
+- [x] Configuration update endpoints validate type, format, and allowed ranges before mutation. *(No config-mutation endpoint exists in this checkout; configuration is environment-only and strictly parsed in `config.ts`.)*
+- [x] Approval update endpoints reject malformed or unexpected payloads. *(`400 APPROVAL_INVALID`; trust payloads `400 CONFIG_HASH_INVALID` / `SOURCE_INVALID`.)*
+- [x] Query parameters are validated before any state-changing action. *(`afterSeq` / `Last-Event-ID` → `400 CURSOR_INVALID`; path ids → `400 SESSION_ID_INVALID` / `TURN_ID_INVALID`.)*
+- [x] Invalid or null request values fail with a controlled error, not partial mutation. *(Non-object/invalid JSON → `400 BODY_INVALID`; >1 MB → `413 BODY_TOO_LARGE`; all checks run before any store or provider call.)*
+- [x] Regression tests cover malformed config payloads and approval payloads.
 
 ---
 
@@ -271,19 +275,19 @@ Title: Terminate process trees on cancel and keep retries/transcripts coherent
 
 Files to inspect:
 - `packages/server/src/process-tree.ts`
-- `packages/server/src/agent/tools/terminal.ts`
-- `packages/server/src/agent/loop.ts`
-- `packages/server/test/process-cleanup.test.ts`
-- `packages/server/test/`
+- `packages/server/src/agent/tools/builtin.ts` (`run_terminal`, `runCommand`)
+- `packages/server/src/agent/tools/executor.ts` (parent cancellation is never a tool result)
+- `packages/server/src/agent/loop.ts` (malformed tool input → controlled `TOOL_FAILED`)
+- `packages/server/test/builtin-tools.test.ts`, `packages/server/test/openai-compatible.test.ts`
 
 Acceptance criteria:
-- [ ] Long-running terminal commands are terminated with their full process tree on timeout or Stop.
-- [ ] Windows and POSIX process cleanup are both covered.
-- [ ] Cancellation while awaiting approval exits cleanly without hanging or leaking resources.
-- [ ] Partial-stream retries do not duplicate visible text or create stale errors.
-- [ ] Usage accounting remains consistent across retries.
-- [ ] Malformed or unknown tool calls are handled as controlled errors instead of uncaught failures.
-- [ ] Regression tests cover cancellation, retries, and malformed tool calls.
+- [x] Long-running terminal commands are terminated with their full process tree on timeout or Stop. *(POSIX: `detached` + `kill(-pgid)` TERM→KILL; verified by checking a grandchild pid is dead. Windows: `taskkill /T /F`.)*
+- [ ] Windows and POSIX process cleanup are both covered. *(Both implemented; only the POSIX path asserts on grandchild pids — the Windows CI leg runs the suite with those cases skipped.)*
+- [x] Cancellation while awaiting approval exits cleanly without hanging or leaking resources. *(`approvals.cancelTurn` on abort; covered in loop tests and browser E2E "Stop".)*
+- [ ] Partial-stream retries do not duplicate visible text or create stale errors. *(No automatic retry exists; partial text is emitted once and the failure code is retryable where appropriate.)*
+- [ ] Usage accounting remains consistent across retries. *(Same — no retries yet.)*
+- [x] Malformed or unknown tool calls are handled as controlled errors instead of uncaught failures. *(`UNKNOWN_TOOL`; unparsable JSON arguments → `TOOL_FAILED` with the raw input, never an approval prompt.)*
+- [x] Regression tests cover cancellation, retries, and malformed tool calls. *(Cancellation and malformed calls; retries n/a.)*
 
 ---
 
@@ -322,22 +326,28 @@ Title: Add end-to-end browser coverage and fake-provider failure tests
 Boundary note: P1-05 covers loop-level cancellation/retry correctness (unit and
 loop tests). P1-07 adds end-to-end breadth of the same behaviors through the
 real UI and provider boundary, plus the browser flows no other issue exercises.
-It builds on existing infrastructure: the mock provider, the OpenAI-shaped fake
-provider used by `mock-session-smoke.test.ts`, and the retry fixtures in
-`process-cleanup.test.ts`.
+
+Status 2026-09-20: the web UI and browser suite exist (see "CI enforcement
+status"). The UI is deliberately minimal — the smallest client that exercises
+every server boundary: token entry (form or `#token=` fragment, kept in
+`sessionStorage`, never in the URL), session create/delete, turn submission,
+`fetch`-streamed SSE (not `EventSource`, so the bearer header rides on every
+request, including reconnects, which resume with `Last-Event-ID`), streamed
+text, Stop, approval cards, the project-trust prompt (grant/revoke) and error
+banners. Electron, real providers and the broader product UI are out of scope.
 
 Files to inspect:
-- `packages/web/`
-- `packages/server/test/`
-- `.github/workflows/ci.yml`
-- `package.json`
+- `packages/web/src/{api,app-state,main}.ts`, `packages/web/e2e/`, `packages/web/playwright.config.ts`
+- `packages/server/src/app.ts` (static serving under `webDir`, protected prefixes bypass static), `packages/server/test/web-ui.test.ts`
+- `.github/workflows/ci.yml` (`Browser E2E` job)
+- `package.json` (`e2e`, `e2e:install`)
 
 Acceptance criteria:
-- [ ] Browser E2E suite runs against the mock provider, no API keys required.
-- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display.
-- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream.
-- [ ] Both suites run in the normal Linux CI job and gate merges.
-- [ ] No real-provider keys are required by ordinary CI.
+- [x] Browser E2E suite runs against the mock provider, no API keys required. *(`packages/web/e2e/ui.spec.ts`; scripted provider in `e2e/server.ts` reacts to the message text.)*
+- [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display. *(Covered: auth, session creation + root refusal, streaming, reconnect, approval/denial with diff preview for write/edit and command preview for run_terminal, cancellation, provider failure, trust prompt, error banner. Not covered: settings — no such UI; reload-resume of an in-flight turn.)*
+- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream. *(All covered: `test/openai-compatible.test.ts` for the adapter; `test/retry.test.ts` for backoff — `providers/retry.ts` retries retryable errors up to `WINDOWS_RUNNER_MODEL_MAX_RETRIES` (default 2) with Retry-After or jittered exponential backoff, only before any chunk was streamed, and aborts the wait on cancel.)*
+- [ ] Both suites run in the normal Linux CI job and gate merges. *(E2E runs in its own `Browser E2E` job; merge gating is not configured.)*
+- [x] No real-provider keys are required by ordinary CI.
 
 ---
 
@@ -365,17 +375,16 @@ Acceptance criteria:
 Title: Add evaluation harness for representative coding tasks and operational metrics
 
 Files to inspect:
-- `docs/`
-- `packages/server/test/`
-- `README.md`
+- `eval/run.mts`, `eval/tasks/*/`, `eval/README.md`, `eval/results/`
+- `.github/workflows/ci.yml` (scripted run)
 
 Acceptance criteria:
-- [ ] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
-- [ ] Each task uses hidden or independent checks where practical.
-- [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior.
-- [ ] Evaluation results identify model version, task fixture, limits, and failure modes.
-- [ ] Real-provider evaluations are explicitly separated from ordinary CI and require spending authorization.
-- [ ] Results are documented for fair comparison across releases.
+- [x] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
+- [x] Each task uses hidden or independent checks where practical. *(`check.js` lives outside the project root the agent is confined to.)*
+- [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior. *(Completion, interventions, tokens, elapsed, steps, tool failures: yes. Cost and regressions: no — no committed real-model baseline yet.)*
+- [x] Evaluation results identify model version, task fixture, limits, and failure modes.
+- [x] Real-provider evaluations are explicitly separated from ordinary CI and require spending authorization. *(CI runs scripted mode only.)*
+- [ ] Results are documented for fair comparison across releases. *(Format exists; first real-model report still to be committed.)*
 
 ---
 
