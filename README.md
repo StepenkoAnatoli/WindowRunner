@@ -9,86 +9,108 @@ WindowsRunner is a **Windows-first, local-first coding agent**: parallel local s
 - **Project context auto-discovery** — Point the agent at a folder and it automatically reads `package.json`, `tsconfig.json`, `Makefile`, `Cargo.toml`, and other build config files to understand how to build, test, and run your project (inspired by Claude Code).
 - **Auto-build & Manual-build skills** — Two modes: autonomous implementation (agent does everything end-to-end) or teaching mode (agent coaches you through building it yourself).
 - **Premium dark UI** — glassmorphism, subtle gradients, Inter + JetBrains Mono, animated micro-interactions inspired by Linear/Raycast/Vercel.
-- **Install without a build step** — the published package ships a prebuilt server bundle and UI (`npx windows-runner`, `npm i -g windows-runner`), and a source checkout builds itself on `npm run setup`. See [docs/INSTALL.md](./docs/INSTALL.md) for which paths are verified.
-- **Better DX** — CLI (`wr`), one-time setup for contributors, optional Docker and Electron paths.
+- **One-command source setup** — `npm run setup` installs, typechecks and builds a checkout. The no-build packed path (`npx windows-runner`, `npm i -g windows-runner`) is **not available yet**: see [docs/INSTALL.md](./docs/INSTALL.md) for what is verified and what is blocked.
 
 ## 🚀 Installation
 
-Full details, prerequisites and troubleshooting: **[docs/INSTALL.md](./docs/INSTALL.md)**.
-Every advertised path has a recorded smoke-test result; anything without one is
-marked experimental rather than promised.
+Full details, prerequisites, known gaps and troubleshooting:
+**[docs/INSTALL.md](./docs/INSTALL.md)**.
+
+Status below is what was actually executed on Linux (Node 22, npm 10) — not what
+the packaging intends. CI enforces the Linux row only; there is no Windows,
+macOS or Docker job in this repository.
 
 | Path | Status |
 | --- | --- |
-| Clone + `npm run setup` (Linux) | **Verified** |
-| Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Verified** (Linux, from the packed tarball) |
-| Docker / `docker compose up` | Experimental — image never built in the verification environment |
-| `install.sh` / `install.ps1` | Experimental — the Unix clone path is exercised on Linux; Windows is untested |
-| Electron desktop shell | Experimental — requires a graphical session |
+| Clone + `npm ci` / `npm run setup` / `npm test` / `npm run build` | **Verified** (Linux) |
+| `npm run smoke:packed` (tarball contents) | **Verified** (Linux) |
+| Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** — no `bin`, package unpublished |
+| `npm start` | **Not available** — no server boot entry point |
+| `npm run dev` | **Not available** — no web dev server or bundler |
+| Docker / `docker compose up` | **Blocked** — image has no runnable entry point; build fails loudly by design |
+| `install.sh` | Experimental — sets up a checkout on Linux; cannot start a server |
+| `install.ps1` | **Untested** — no Windows runner available |
+| Electron desktop shell | **Not available** — `packages/desktop` does not exist |
 
-### Option 1 — Clone and set up (recommended)
+### Option 1 — Clone and set up (the path that works)
 
 ```bash
-git clone https://github.com/StepenkoAnatoli/WindowsRunner.git
+git clone https://github.com/StepenkoAnatoli/WindowRunner.git
 cd WindowsRunner
-npm run setup   # checks Node >=20.10, installs, builds, prints next steps
-npm start       # → http://127.0.0.1:7634
+npm ci            # installs all three workspaces, runs the postinstall check
+npm run setup     # install -> typecheck -> build, in one step
+npm test          # full suite, no API keys required
+npm run build     # emit packages/*/dist
 ```
 
-`npm start` **auto-builds if `dist` is missing**, so `npm install && npm start` also works.
+`npm ci` runs a real `postinstall` hook that verifies the workspace tree and
+fails with an actionable message if it is broken. Set
+`WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
-### Option 2 — Packed artifact (no build step)
+There is no `npm start`: `packages/server` exports `createApp()` but has no boot
+entry point, so nothing in this checkout serves HTTP yet
+([docs/INSTALL.md](./docs/INSTALL.md), gap G-02).
 
-```bash
-npx windows-runner          # run without installing
-# or
-npm install -g windows-runner
-wr                          # alias for the same CLI
-wr --help                   # never installs, builds or starts anything
-```
+### Option 2 — Packed artifact (not available yet)
 
-The published tarball ships the prebuilt server bundle and UI, with no runtime
-dependencies and no sources, so first run is a start — not a 30-second build.
-Verify it yourself with `npm run smoke:packed` from a checkout.
+`npx windows-runner`, `npm install -g windows-runner` and `wr` do not work. The
+package declares no `bin`, is not published (`npm view windows-runner` returns
+`E404`), and the built `dist/` is not self-contained — see gaps G-01, G-03, G-04
+and G-05 in [docs/INSTALL.md](./docs/INSTALL.md).
+
+`npm run smoke:packed` *does* work: it packs the tarball and asserts it contains
+`dist/`, docs and licence, and no sources, tests or build config. It validates
+tarball **contents** only; it does not prove an installable CLI runs.
 
 ### Option 3 — Curl installer (Unix, experimental)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/StepenkoAnatoli/WindowsRunner/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.sh | bash
 # options: --no-start; WINDOWS_RUNNER_HOME / WINDOWS_RUNNER_REPO_URL override the target and source
 ```
 
-### Option 4 — PowerShell (Windows, experimental)
+Clones a checkout and runs `npm run setup`. It cannot start a server (gap G-02),
+so `--no-start` is accepted but changes nothing.
+
+### Option 4 — PowerShell (Windows, untested)
 
 ```powershell
-irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowsRunner/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex
 # or: .\install.ps1 -NoStart
 ```
 
-### Option 5 — Docker (experimental)
+No Windows runner is available to this repository and CI is Linux-only, so this
+script has no recorded smoke-test result (gap G-06).
+
+### Option 5 — Docker (blocked)
 
 ```bash
-docker compose up --build   # → http://localhost:7634 (loopback only)
+docker compose up --build   # fails during the image build, by design
 ```
 
-### Option 6 — Desktop app (Electron, optional ~120 MB, experimental)
+The image has no runnable entry point (gaps G-02 and G-03), so the Dockerfile
+fails the build with an explicit message instead of producing an image that dies
+at `docker run`. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
-```bash
-npm run desktop   # installs Electron on first run, then launches native window
-```
+### Option 6 — Desktop app (Electron, not available)
+
+`npm run desktop` was removed: `packages/desktop` does not exist and Electron is
+not a dependency (gap G-04 covers the packaging side; the desktop shell itself is
+simply absent from this checkout).
 
 ---
 
-After launch:
+The "paste an API key, click **New session**, ask for something" flow described
+elsewhere in this README requires a running server and UI. Neither exists in this
+checkout yet, so there is nothing to launch. For development there is likewise no
+hot-reload path: `npm run dev` was removed because there is no web dev server and
+no bundler (gap G-03).
 
-1. Click **Settings** and paste an API key for at least one provider (or point it at Ollama).
-2. Click **New session**, pick your project folder, and ask for something.
+> Scope note: this section covers install, build and packaging claims only. The
+> product-feature claims elsewhere in this README are tracked separately as
+> P2-01 in [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md) and were not
+> re-verified here.
 
-For development with hot reload:
-
-```bash
-npm run dev   # server on :7634 + Vite UI on :5173
-```
 
 ## 📂 Project Context Auto-Discovery
 
@@ -248,7 +270,9 @@ Each crash creates `.json` (bounded diagnostic context) + `.md` (GitHub-ready is
 
 Local-first describes where WindowsRunner runs and stores its state; it does not mean every value remains on the machine.
 
-Configuration, complete session transcripts, session memory, and crash reports are stored locally. Configured model and search providers receive the data needed for their requests; approved MCP servers and `web_fetch` calls cross their disclosed boundaries. See the [authoritative data-flow map](./docs/THREAT_MODEL.md#5-secrets-and-data-egress) for the exact flows.
+Configuration, complete session transcripts, session memory, and crash reports are stored locally. Configured model and search providers receive the data needed for their requests; approved MCP servers and `web_fetch` calls cross their disclosed boundaries. There is no data-flow map in this repository: `docs/THREAT_MODEL.md` is cited by
+`RELEASE_CHECKLIST.md` but does not exist, so the paragraph above is the only
+recorded description of these flows.
 
 Crash-report JSON and Markdown are redacted before they are written. The same redaction is applied again when a stored report is opened for preview, which also protects legacy reports. It removes configured provider/search credential values (including `env:NAME` values), secret-named nested fields, authorization credentials, and common token formats. Redaction is best-effort, not a guarantee: review the preview before sharing it.
 
@@ -275,24 +299,27 @@ it does not make command execution safe. Only approve commands you would type
 yourself, and run WindowsRunner on an untrusted repository the way you would run
 that repository's own scripts — in a VM or container if that matters to you.
 OS-level isolation is a separate project, not something the current controls
-provide. See `docs/THREAT_MODEL.md`.
+provide. (`docs/THREAT_MODEL.md` is referenced by the release checklist but is
+not present in this checkout.)
 
 ## How it fits together
 
 ```
 packages/
-  shared/    types shared by server + UI (stream events, sessions, provider config)
-  server/    Express API, agent loop, tools, provider adapters
-  web/       React + Vite UI (served by the server in production)
-  desktop/   Electron shell (optional, installed separately)
-bin/
-  windows-runner.js  one-click CLI launcher (npx / global)
+  shared/    turn-state reducer + types shared by server and UI
+  server/    Express app factory, agent loop, tools, providers, persistence, metrics
+  web/       UI-side turn-state projection (no bundler, no React in this checkout)
 scripts/
-  setup.mjs        one-click setup
-  postinstall.mjs  auto-build on npm install
-  ensure-built.mjs auto-build on npm start
-  desktop.mjs      Electron launcher
-install.sh / install.ps1  curl installers
+  setup.mjs         install -> typecheck -> build
+  postinstall.mjs   verifies the workspace tree on npm ci / npm install
+  smoke-packed.mjs  validates the packed tarball against the manifest
+docs/INSTALL.md     install-path status and the known packaging gaps (G-01..G-06)
+install.sh / install.ps1   clone-and-setup installers
+Dockerfile / docker-compose.yml   blocked: no runnable entry point
+
+Not present, though earlier revisions of this README listed them: bin/ (no CLI),
+packages/desktop/ (no Electron shell), scripts/ensure-built.mjs and
+scripts/desktop.mjs. Each absence is recorded as a gap in docs/INSTALL.md.
 ```
 
 ## Persistence
@@ -389,9 +416,14 @@ No API keys required.
 
 WindowsRunner is an independent project. The agent loop, tools, provider adapters
 and user interface are written for this repository; no third-party agent code is
-included. Third-party components (Node.js, React, Vite, Express, Tailwind CSS,
-highlight.js, `diff`, `picomatch`, …) are used under their own licenses — see
+included. Third-party components are used under their own licenses — see
 [NOTICE](./NOTICE).
+
+The dependency set in this checkout is much smaller than the list above used to
+claim: `express` is the only runtime dependency, with `typescript`, `tsx` and
+`@types/*` for development. There is no React, Vite, Tailwind CSS, highlight.js,
+`diff` or `picomatch` in `package-lock.json`. Verify with
+`npm ls --all --depth=0`.
 
 ## License
 

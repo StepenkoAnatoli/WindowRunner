@@ -1,3 +1,9 @@
+# BLOCKED: `docker compose up --build` cannot work while the Dockerfile's build
+# guard fails. The server package has no boot entry point (docs/INSTALL.md, gap
+# G-02) and there is no bundler to produce one (gap G-03), so there is nothing
+# for the container to run. This file describes the intended topology — including
+# auth and remote-access behavior that is likewise not implemented yet — and is
+# kept so that intent is not lost. Do not advertise it as a supported path.
 services:
   windows-runner:
     build: .

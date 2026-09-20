@@ -7,10 +7,6 @@
   "engines": {
     "node": ">=20.10"
   },
-  "bin": {
-    "windows-runner": "./bin/windows-runner.js",
-    "wr": "./bin/windows-runner.js"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/StepenkoAnatoli/WindowsRunner.git"
@@ -20,7 +16,7 @@
     "url": "https://github.com/StepenkoAnatoli/WindowsRunner/issues"
   },
   "files": [
-    "bin/",
+    "packages/shared/dist/",
     "packages/server/dist/",
     "packages/web/dist/",
     "scripts/postinstall.mjs",
@@ -35,23 +31,12 @@
     "packages/web"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:server": "npm run dev --workspace packages/server",
-    "dev:web": "npm run dev --workspace packages/web",
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/server && npm run build --workspace packages/web",
-    "prestart": "node scripts/ensure-built.mjs",
-    "start": "npm run start --workspace packages/server",
-    "prepack": "npm run build",
+    "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
+    "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
     "setup": "node scripts/setup.mjs",
     "postinstall": "node scripts/postinstall.mjs",
-    "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
-    "desktop": "node scripts/desktop.mjs",
-    "desktop:install": "npm --prefix packages/desktop install",
-    "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
-    "smoke:packed": "node scripts/smoke-packed.mjs",
-    "skills:check": "tsx packages/server/src/skills-check.ts"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
+    "prepack": "npm run build",
+    "smoke:packed": "node scripts/smoke-packed.mjs"
   }
 }
