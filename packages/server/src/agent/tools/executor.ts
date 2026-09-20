@@ -2,6 +2,7 @@ import type { ToolDefinition, ToolExecutionContext } from "./types.js";
 import type { ToolResult } from "@windows-runner/shared";
 import { runWithDeadline, DeadlineError } from "../../deadline.js";
 import { PathError } from "../../project-root.js";
+import type { MetricsRegistry } from "../metrics.js";
 
 export async function executeTool(
   tool: ToolDefinition,
@@ -9,7 +10,8 @@ export async function executeTool(
   ctx: ToolExecutionContext,
   timeoutMs: number,
   clock?: any,
-  shutdownGraceMs = 5000
+  shutdownGraceMs = 5000,
+  metrics?: MetricsRegistry
 ): Promise<ToolResult> {
   try {
     const result = await runWithDeadline(
@@ -70,6 +72,13 @@ export async function executeTool(
         };
       }
       if (err.kind === "shutdown_timeout") {
+        if (metrics) {
+          try {
+            metrics.recordShutdownTimeout("tool", {
+              detail: `${tool.name} shutdown timeout`,
+            });
+          } catch {}
+        }
         return {
           ok: false,
           code: "TOOL_FAILED",

@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { ProjectRoot } from "../project-root.js";
+import type { MetricsRegistry } from "./metrics.js";
 
 export interface SessionMetaV1 {
   version: 1;
@@ -16,6 +17,8 @@ export interface SessionMetaV1 {
 
 export interface FileSessionStoreOptions {
   dataDir: string;
+  metrics?: MetricsRegistry;
+  now?: () => number;
 }
 
 export interface SessionBootDiagnostics {
@@ -41,9 +44,13 @@ function isValidSessionId(id: string): boolean {
  */
 export class FileSessionStore {
   private dataDir: string;
+  private metrics?: MetricsRegistry;
+  private now: () => number;
 
   constructor(opts: FileSessionStoreOptions) {
     this.dataDir = path.resolve(opts.dataDir);
+    this.metrics = opts.metrics;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   private getSessionDir(sessionId: string): string {
@@ -177,6 +184,11 @@ export class FileSessionStore {
         diagnostics.sessionsSkipped++;
         diagnostics.warnings.push(`Failed to load meta for ${sessionId}, skipping`);
         diagnostics.skippedSessions.push({ sessionId, reason: "load failed or invalid" });
+        if (this.metrics) {
+          try {
+            this.metrics.recordSkippedSession({ sessionId, detail: "load failed or invalid", at: this.now() });
+          } catch {}
+        }
         continue;
       }
 
@@ -209,6 +221,11 @@ export class FileSessionStore {
         const reason = err.message ?? String(err);
         diagnostics.warnings.push(`Root re-validation failed for ${sessionId} canonicalRoot=${meta.canonicalRoot}: ${reason}, skipping session`);
         diagnostics.skippedSessions.push({ sessionId, reason });
+        if (this.metrics) {
+          try {
+            this.metrics.recordSkippedSession({ sessionId, detail: reason, at: this.now() });
+          } catch {}
+        }
         // Do not delete, just skip loading — optionally quarantine?
         continue;
       }
@@ -246,7 +263,16 @@ export class FileSessionStore {
     return meta;
   }
 
+  setMetrics(metrics: MetricsRegistry): void {
+    this.metrics = metrics;
+  }
+
+  setNow(now: () => number): void {
+    this.now = now;
+  }
+
   getDataDir(): string {
     return this.dataDir;
   }
 }
+

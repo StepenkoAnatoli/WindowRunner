@@ -251,4 +251,25 @@ export class SessionManager {
   setTurnTerminalChecker(fn: (turnId: TurnId) => boolean): void {
     this.isTurnTerminal = fn;
   }
+
+  // ---- Public snapshot API for long-running validation ----
+  listSessions(): Session[] {
+    return [...this.sessions.values()];
+  }
+
+  getIdleSessions(now: number, thresholdMs: number): Array<{ sessionId: string; idleMs: number; lastActivityAt: number }> {
+    const idle: Array<{ sessionId: string; idleMs: number; lastActivityAt: number }> = [];
+    for (const s of this.sessions.values()) {
+      if (s.activeTurnId !== null) continue; // only idle (no active turn) sessions
+      const idleMs = now - s.lastActivityAt;
+      if (idleMs > thresholdMs) {
+        idle.push({ sessionId: s.sessionId, idleMs, lastActivityAt: s.lastActivityAt });
+      }
+    }
+    return idle;
+  }
+
+  getSessionCount(): number {
+    return this.sessions.size;
+  }
 }

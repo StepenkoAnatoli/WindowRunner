@@ -7,6 +7,7 @@ import { runModelCall } from "../providers/model-call.js";
 import { executeTool } from "./tools/executor.js";
 import { DeadlineError } from "../deadline.js";
 import { ProjectRoot, PathError } from "../project-root.js";
+import type { MetricsRegistry } from "./metrics.js";
 
 export interface RunTurnInput {
   sessionId: SessionId;
@@ -27,6 +28,7 @@ export interface TurnRunnerDependencies {
   now?: () => number;
   clock?: any;
   allowedRoots?: string[];
+  metrics?: MetricsRegistry;
 }
 
 export interface TurnResult {
@@ -55,6 +57,7 @@ export class TurnRunner {
   private now: () => number;
   private clock?: any;
   private allowedRoots: string[];
+  private metrics?: MetricsRegistry;
 
   constructor(deps: TurnRunnerDependencies) {
     this.provider = deps.provider;
@@ -64,6 +67,7 @@ export class TurnRunner {
     this.now = deps.now ?? (() => Date.now());
     this.clock = deps.clock;
     this.allowedRoots = deps.allowedRoots ?? [];
+    this.metrics = deps.metrics;
   }
 
   async run(input: RunTurnInput): Promise<TurnResult> {
@@ -108,6 +112,7 @@ export class TurnRunner {
     }
 
     await append({ type: "turn_started", limits, message: request.messages[0]?.content ?? "", root: projectRoot.getRoot(), realRoot: projectRoot.getRealRoot() } as any);
+    const turnStartedAt = this.now();
 
     let usage: TurnUsage | undefined;
 
@@ -122,8 +127,30 @@ export class TurnRunner {
           modelResult = await runModelCall(this.provider, request, signal, limits.modelCallTimeoutMs, this.clock, 1000);
         } catch (err: any) {
           const deadlineInfo = mapDeadlineError(err);
+          // shutdown_timeout must be checked before cancelled/signal.aborted — it indicates abort-ignoring operation
+          if (deadlineInfo?.kind === "shutdown_timeout") {
+            if (this.metrics) {
+              try {
+                this.metrics.recordShutdownTimeout("model", {
+                  turnId,
+                  sessionId,
+                  detail: err.message,
+                });
+              } catch {}
+            }
+            await append({
+              type: "turn_failed",
+              code: "MODEL_FAILED",
+              message: `model shutdown timeout: ${err.message} — abort requested, operation not confirmed stopped`,
+              retryable: false,
+            });
+            if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
+            return { status: "failed", message: err.message, usage };
+          }
+
           if (deadlineInfo?.kind === "cancelled" || signal.aborted) {
             await append({ type: "turn_cancelled", reason: err.message ?? "cancelled" });
+            if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
             return { status: "cancelled", message: err.message };
           }
 
@@ -139,17 +166,8 @@ export class TurnRunner {
               message: err.message ?? "model call timed out",
               retryable: true,
             });
+            if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
             return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
-          }
-
-          if (deadlineInfo?.kind === "shutdown_timeout") {
-            await append({
-              type: "turn_failed",
-              code: "MODEL_FAILED",
-              message: `model shutdown timeout: ${err.message} — abort requested, operation not confirmed stopped`,
-              retryable: false,
-            });
-            return { status: "failed", message: err.message, usage };
           }
 
           await append({
@@ -158,6 +176,7 @@ export class TurnRunner {
             message: err.message ?? "model call failed",
             retryable: false,
           });
+          if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
           return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
         }
 
@@ -168,6 +187,11 @@ export class TurnRunner {
             await append({ type: "text_delta", delta: modelResult.text });
           }
           await append({ type: "turn_completed", usage });
+          if (this.metrics) {
+            try {
+              this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt);
+            } catch {}
+          }
           return { status: "completed", usage };
         }
 
@@ -243,13 +267,20 @@ export class TurnRunner {
               return { status: "failed", message: err.message, usage };
             }
 
+            const approvalResolvedAt = this.now();
             await append({
               type: "approval_resolved",
               requestId: approvalRequest.requestId,
               decision: resolution.kind === "approved" ? "approve" : resolution.kind === "denied" ? "deny" : resolution.kind,
-              resolvedAt: this.now(),
+              resolvedAt: approvalResolvedAt,
               resolution,
             });
+            if (this.metrics) {
+              try {
+                const waitMs = approvalResolvedAt - (approvalRequest.createdAt ?? approvalResolvedAt);
+                this.metrics.observeDuration("approvalWait", waitMs);
+              } catch {}
+            }
 
             if (resolution.kind === "denied") {
               const result = {
@@ -299,7 +330,8 @@ export class TurnRunner {
               },
               limits.toolTimeoutMs,
               this.clock,
-              5000
+              5000,
+              this.metrics
             );
           } catch (err: any) {
             const deadlineInfo = mapDeadlineError(err);
@@ -333,6 +365,9 @@ export class TurnRunner {
         message: `max steps ${limits.maxSteps} exceeded`,
         retryable: false,
       });
+      if (this.metrics) {
+        try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {}
+      }
       return { status: "failed", message: "max steps exceeded", usage };
     } catch (err: any) {
       const deadlineInfo = mapDeadlineError(err);

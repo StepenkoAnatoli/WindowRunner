@@ -3,10 +3,14 @@ import * as path from "node:path";
 import { createWriteStream } from "node:fs";
 import type { StreamEvent, TurnId, TurnLogStore, SessionId } from "@windows-runner/shared";
 
+import type { MetricsRegistry } from "./metrics.js";
+
 export interface FileTurnLogStoreOptions {
   dataDir: string;
   fsync?: boolean; // default false
   maxLineBytes?: number; // default 1MB
+  metrics?: MetricsRegistry;
+  now?: () => number;
 }
 
 export interface BootDiagnostics {
@@ -63,6 +67,8 @@ export class FileTurnLogStore implements TurnLogStore {
   private fsync: boolean;
   private queues = new Map<TurnId, Promise<void>>();
   private maxLineBytes: number;
+  private metrics?: MetricsRegistry;
+  private now: () => number;
 
   // For diagnostics during boot/read
   private diagnostics: BootDiagnostics = {
@@ -84,6 +90,8 @@ export class FileTurnLogStore implements TurnLogStore {
     this.dataDir = path.resolve(opts.dataDir);
     this.fsync = opts.fsync ?? false;
     this.maxLineBytes = opts.maxLineBytes ?? 1024 * 1024;
+    this.metrics = opts.metrics;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   private getSessionTurnPath(sessionId: SessionId, turnId: TurnId): string {
@@ -210,14 +218,25 @@ export class FileTurnLogStore implements TurnLogStore {
     // Store queue, with error handling to not break chain
     const self = this;
     const queueWithCleanup = next.catch((err: any) => {
-      // Record failure for observability
+      const at = self.now();
+      // Record failure for observability (diagnostics + metrics)
       self.persistenceFailures.push({
         turnId,
         seq: event.seq,
         error: err instanceof Error ? err.message : String(err),
-        at: Date.now(),
+        at,
       });
       self.diagnostics.warnings.push(`Persistence failed for ${turnId} seq ${event.seq}: ${err}`);
+      if (self.metrics) {
+        try {
+          self.metrics.recordPersistenceFailure({
+            turnId,
+            sessionId: event.sessionId,
+            detail: err instanceof Error ? err.message : String(err),
+            at,
+          });
+        } catch {}
+      }
       console.warn(`FileTurnLogStore append failed for ${turnId}:`, err);
       throw err;
     }).finally(() => {
@@ -398,6 +417,15 @@ export class FileTurnLogStore implements TurnLogStore {
         await fs.rename(filePath, quarantinePath);
         result.warnings.push(`Quarantined file ${filePath} to ${quarantinePath} due to >50% invalid lines (${invalidLines}/${totalLines}) — file moved, cannot be loaded as active`);
         this.diagnostics.quarantinedFiles.push(filePath);
+        if (this.metrics) {
+          try {
+            this.metrics.recordQuarantine({
+              turnId: expectedTurnId,
+              detail: `${invalidLines}/${totalLines} invalid`,
+              at: this.now(),
+            });
+          } catch {}
+        }
         // Return empty result after quarantine move — file no longer active
         return {
           events: [],
@@ -522,6 +550,14 @@ export class FileTurnLogStore implements TurnLogStore {
     } catch {
       return false;
     }
+  }
+
+  setMetrics(metrics: MetricsRegistry): void {
+    this.metrics = metrics;
+  }
+
+  setNow(now: () => number): void {
+    this.now = now;
   }
 
   // Expose dataDir for session store integration

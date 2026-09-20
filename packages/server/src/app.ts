@@ -5,6 +5,16 @@ import type { LLMProvider } from "./providers/types.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
 import { TurnRunner } from "./agent/loop.js";
 import { SessionManager } from "./agent/session-manager.js";
+import { MetricsRegistry } from "./agent/metrics.js";
+
+export interface LongRunningThresholds {
+  /** active turn duration before considered stuck; default 2h */
+  stuckTurnMs?: number;
+  /** approval wait duration before considered long-waiting; default 30m */
+  approvalWaitMs?: number;
+  /** idle session (no active turn) duration before flagged; default undefined (disabled) */
+  idleSessionMs?: number;
+}
 
 export interface AppDeps {
   manager: TurnManager;
@@ -16,11 +26,62 @@ export interface AppDeps {
   // For operational observability — optional, exposed via /api/health
   getBootDiagnostics?: () => any;
   getPersistenceDiagnostics?: () => any;
+  // Metrics: process-local, reset on restart, windowed alerts
+  metrics?: MetricsRegistry;
+  now?: () => number;
+  validationIntervalMs?: number; // default 60000, 0 to disable (for tests)
+  validationThresholds?: LongRunningThresholds;
+  clock?: any; // optional fake clock for tests (provides now())
+}
+
+export interface ValidationResult {
+  stuckTurns: Array<{ turnId: string; sessionId: string; durationMs: number; startedAt: number }>;
+  longWaitingApprovals: Array<{ requestId: string; turnId: string; waitMs: number; createdAt: number }>;
+  idleSessions: Array<{ sessionId: string; idleMs: number; lastActivityAt: number }>;
+  activeTurns: number;
+  activeApprovals: number;
+}
+
+function runValidation(
+  manager: TurnManager,
+  sessionManager: SessionManager,
+  approvals: ApprovalRegistry,
+  now: number,
+  thresholds: Required<LongRunningThresholds>
+): ValidationResult {
+  const stuckTurns = (manager as any).getStuckTurns
+    ? (manager as any).getStuckTurns(now, thresholds.stuckTurnMs)
+    : [];
+  const longWaitingApprovals = (approvals as any).getLongWaitingApprovals
+    ? (approvals as any).getLongWaitingApprovals(now, thresholds.approvalWaitMs)
+    : [];
+  const idleSessions =
+    thresholds.idleSessionMs !== undefined && (sessionManager as any).getIdleSessions
+      ? (sessionManager as any).getIdleSessions(now, thresholds.idleSessionMs)
+      : [];
+  const activeTurns = (manager as any).getActiveTurnCount
+    ? (manager as any).getActiveTurnCount()
+    : 0;
+  const activeApprovals = (approvals as any).getPendingCount
+    ? (approvals as any).getPendingCount()
+    : (approvals as any).entries
+      ? (approvals as any).entries.size
+      : 0;
+
+  return { stuckTurns, longWaitingApprovals, idleSessions, activeTurns, activeApprovals };
 }
 
 export function createApp(deps: AppDeps) {
-  const app = express();
+  const app: any = express();
   app.use(express.json());
+
+  const now = deps.now ?? (() => Date.now());
+  const metrics = deps.metrics ?? new MetricsRegistry({ now });
+  const thresholds: Required<LongRunningThresholds> = {
+    stuckTurnMs: deps.validationThresholds?.stuckTurnMs ?? 2 * 60 * 60 * 1000,
+    approvalWaitMs: deps.validationThresholds?.approvalWaitMs ?? 30 * 60 * 1000,
+    idleSessionMs: deps.validationThresholds?.idleSessionMs ?? undefined as any,
+  };
 
   const activeControllers = new Map<string, AbortController>();
   const sessionManager = deps.sessionManager ?? new SessionManager({
@@ -35,8 +96,57 @@ export function createApp(deps: AppDeps) {
     return log ? log.state.isTerminal : true;
   });
 
+  // Wire metrics into stores if they support setMetrics (after sessionManager created)
+  try {
+    const store: any = deps.manager.getStore();
+    if (store && typeof store.setMetrics === "function") {
+      store.setMetrics(metrics);
+      if (typeof store.setNow === "function") store.setNow(now);
+    }
+  } catch {}
+  try {
+    const smStore: any = (sessionManager as any).sessionStore;
+    if (smStore && typeof smStore.setMetrics === "function") {
+      smStore.setMetrics(metrics);
+      if (typeof smStore.setNow === "function") smStore.setNow(now);
+    }
+  } catch {}
+
+  // Validation loop — explicit lifecycle ownership
+  const validationIntervalMs = deps.validationIntervalMs ?? 60_000;
+  let validationTimer: any = undefined;
+
+  const doValidation = () => {
+    const n = now();
+    const result = runValidation(deps.manager, sessionManager, deps.approvals, n, thresholds);
+    metrics.setGauge("activeTurns", result.activeTurns);
+    metrics.setGauge("activeApprovals", result.activeApprovals);
+    metrics.setGauge("stuckTurns", result.stuckTurns.length);
+    metrics.setGauge("idleSessions", result.idleSessions.length);
+    return result;
+  };
+
+  if (validationIntervalMs > 0) {
+    validationTimer = setInterval(doValidation, validationIntervalMs);
+    // Don't prevent process exit if only timer remains
+    if (validationTimer && typeof validationTimer.unref === "function") validationTimer.unref();
+    // Initial validation
+    try { doValidation(); } catch {}
+  }
+
+  // Expose close for lifecycle ownership test and graceful shutdown
+  app.close = () => {
+    if (validationTimer !== undefined) {
+      clearInterval(validationTimer);
+      validationTimer = undefined;
+    }
+  };
+  app._validationTimer = () => validationTimer;
+  app._metrics = metrics;
+  app._doValidation = doValidation;
+
   // POST /api/sessions/:sessionId — explicit session creation with pinned root
-  app.post("/api/sessions/:sessionId", async (req, res) => {
+  app.post("/api/sessions/:sessionId", async (req: any, res: any) => {
     const sessionId = req.params.sessionId;
     const { cwd } = req.body ?? {};
 
@@ -66,7 +176,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // DELETE /api/sessions/:sessionId — cleanup, cancel active turn
-  app.delete("/api/sessions/:sessionId", async (req, res) => {
+  app.delete("/api/sessions/:sessionId", async (req: any, res: any) => {
     const sessionId = req.params.sessionId;
     const session = sessionManager.getSession(sessionId);
     if (!session) {
@@ -86,7 +196,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // POST /api/sessions/:sessionId/turns
-  app.post("/api/sessions/:sessionId/turns", async (req, res) => {
+  app.post("/api/sessions/:sessionId/turns", async (req: any, res: any) => {
     const sessionId = req.params.sessionId;
     const { cwd, message } = req.body ?? {};
 
@@ -154,6 +264,9 @@ export function createApp(deps: AppDeps) {
       approvals: deps.approvals,
       manager: deps.manager,
       allowedRoots: deps.allowedRoots,
+      metrics,
+      now,
+      clock: deps.clock,
     });
 
     const request = {
@@ -193,7 +306,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // GET /api/sessions/:sessionId/turns/:turnId/events — SSE with Last-Event-ID
-  app.get("/api/sessions/:sessionId/turns/:turnId/events", (req, res) => {
+  app.get("/api/sessions/:sessionId/turns/:turnId/events", (req: any, res: any) => {
     const sessionId = req.params.sessionId;
     const turnId = req.params.turnId;
 
@@ -215,7 +328,7 @@ export function createApp(deps: AppDeps) {
     });
 
     try {
-      const { replay, state, unsubscribe } = deps.manager.subscribe(sessionId, turnId, afterSeq, (event) => {
+      const { replay, state, unsubscribe } = deps.manager.subscribe(sessionId, turnId, afterSeq, (event: any) => {
         res.write(`id: ${event.seq}\n`);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       });
@@ -250,7 +363,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // POST /api/sessions/:sessionId/turns/:turnId/cancel
-  app.post("/api/sessions/:sessionId/turns/:turnId/cancel", (req, res) => {
+  app.post("/api/sessions/:sessionId/turns/:turnId/cancel", (req: any, res: any) => {
     const turnId = req.params.turnId;
     const { reason } = req.body ?? {};
 
@@ -264,7 +377,7 @@ export function createApp(deps: AppDeps) {
   });
 
   // POST /api/sessions/:sessionId/approve
-  app.post("/api/sessions/:sessionId/approve", (req, res) => {
+  app.post("/api/sessions/:sessionId/approve", (req: any, res: any) => {
     const urlSessionId = req.params.sessionId;
     const { requestId, decision } = req.body ?? {};
 
@@ -288,11 +401,70 @@ export function createApp(deps: AppDeps) {
     res.status(204).end();
   });
 
-  // GET /api/health — operational observability: boot diagnostics, persistence failures, single-process writer limitation
-  app.get("/api/health", (req, res) => {
+  // GET /api/metrics — JSON metrics (process-local, reset on restart)
+  app.get("/api/metrics", (req: any, res: any) => {
+    // Validation first so gauges in snapshot are fresh
+    let validation: ValidationResult | undefined;
+    try {
+      validation = doValidation();
+    } catch {
+      validation = undefined;
+    }
+    const snapshot = metrics.snapshot(now());
+    res.json({
+      ...snapshot,
+      validation: validation
+        ? {
+            thresholds,
+            stuckTurns: validation.stuckTurns,
+            longWaitingApprovals: validation.longWaitingApprovals,
+            idleSessions: validation.idleSessions,
+          }
+        : undefined,
+    });
+  });
+
+  // GET /api/health — operational observability: boot diagnostics, persistence failures, single-process writer limitation, metrics
+  app.get("/api/health", (req: any, res: any) => {
+    const n = now();
+    // Validation first so snapshot gauges reflect current stuck/idle state
+    let validation: ValidationResult;
+    try {
+      validation = doValidation();
+    } catch {
+      validation = {
+        stuckTurns: [],
+        longWaitingApprovals: [],
+        idleSessions: [],
+        activeTurns: metrics.getGauge("activeTurns"),
+        activeApprovals: metrics.getGauge("activeApprovals"),
+      };
+    }
+    const snapshot = metrics.snapshot(n);
+
+    const recent = snapshot.recent.counts;
+    const hasRecentFailure =
+      recent.persistenceFailures > 0 ||
+      recent.quarantinedFiles > 0 ||
+      recent.shutdownTimeouts > 0 ||
+      recent.sessionsSkipped > 0;
+    const hasStuck = validation.stuckTurns.length > 0 || validation.longWaitingApprovals.length > 0;
+
+    const alerts: Array<{ level: string; category: string; message: string }> = [];
+    if (recent.persistenceFailures > 0) alerts.push({ level: "error", category: "persistenceFailure", message: `${recent.persistenceFailures} persistence failures in last ${snapshot.recent.windowMs}ms` });
+    if (recent.quarantinedFiles > 0) alerts.push({ level: "warn", category: "quarantine", message: `${recent.quarantinedFiles} quarantined files in last ${snapshot.recent.windowMs}ms` });
+    if (recent.sessionsSkipped > 0) alerts.push({ level: "warn", category: "skippedSession", message: `${recent.sessionsSkipped} sessions skipped in last ${snapshot.recent.windowMs}ms` });
+    if (recent.shutdownTimeouts > 0) alerts.push({ level: "warn", category: "shutdownTimeout", message: `${recent.shutdownTimeouts} shutdown timeouts in last ${snapshot.recent.windowMs}ms` });
+    if (validation.stuckTurns.length > 0) alerts.push({ level: "warn", category: "stuckTurn", message: `${validation.stuckTurns.length} active turn(s) exceed stuckTurnMs=${thresholds.stuckTurnMs}` });
+    if (validation.longWaitingApprovals.length > 0) alerts.push({ level: "warn", category: "approvalWait", message: `${validation.longWaitingApprovals.length} approval(s) exceed approvalWaitMs=${thresholds.approvalWaitMs}` });
+    if (validation.idleSessions.length > 0) alerts.push({ level: "info", category: "idleSession", message: `${validation.idleSessions.length} idle session(s) exceed idleSessionMs=${thresholds.idleSessionMs}` });
+
+    const status = hasRecentFailure || hasStuck ? "degraded" : "ok";
+
     const health: any = {
-      status: "ok",
-      timestamp: Date.now(),
+      status,
+      timestamp: n,
+      alerts,
       persistence: {
         mode: (deps.manager.getStore() as any).getDataDir ? "file" : "memory",
         dataDir: (deps.manager.getStore() as any).getDataDir ? (deps.manager.getStore() as any).getDataDir() : undefined,
@@ -303,6 +475,19 @@ export function createApp(deps: AppDeps) {
           concurrency: "per-turn queue Map<turnId, Promise> ensures serialized writes within one process",
         },
       },
+      metrics: {
+        counters: snapshot.counters,
+        gauges: snapshot.gauges,
+        recent: snapshot.recent,
+        durations: snapshot.durations,
+        validation: {
+          thresholds,
+          stuckTurns: validation.stuckTurns,
+          longWaitingApprovals: validation.longWaitingApprovals,
+          idleSessions: validation.idleSessions,
+        },
+        meta: snapshot.meta,
+      },
       diagnostics: {
         boot: deps.getBootDiagnostics ? deps.getBootDiagnostics() : undefined,
         persistence: deps.getPersistenceDiagnostics
@@ -311,7 +496,7 @@ export function createApp(deps: AppDeps) {
             ? (deps.manager.getStore() as any).getDiagnostics()
             : undefined,
         approvals: {
-          pendingCount: (deps.approvals as any).entries ? (deps.approvals as any).entries.size : undefined,
+          pendingCount: (deps.approvals as any).getPendingCount ? (deps.approvals as any).getPendingCount() : (deps.approvals as any).entries ? (deps.approvals as any).entries.size : undefined,
           byTurnCount: (deps.approvals as any).byTurn ? (deps.approvals as any).byTurn.size : undefined,
         },
       },
@@ -321,12 +506,13 @@ export function createApp(deps: AppDeps) {
   });
 
   // GET /api/diagnostics/persistence — detailed persistence failures and quarantine
-  app.get("/api/diagnostics/persistence", (req, res) => {
+  app.get("/api/diagnostics/persistence", (req: any, res: any) => {
     const store: any = deps.manager.getStore();
     const diagnostics = store.getDiagnostics ? store.getDiagnostics() : { warnings: [], persistenceFailures: [] };
     res.json({
       ...diagnostics,
       persistenceFailures: store.getPersistenceFailures ? store.getPersistenceFailures() : diagnostics.persistenceFailures || [],
+      metrics: metrics.snapshot(now()),
     });
   });
 
