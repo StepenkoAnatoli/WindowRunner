@@ -8,6 +8,7 @@ import { executeTool } from "./tools/executor.js";
 import { DeadlineError } from "../deadline.js";
 import { ProjectRoot, PathError } from "../project-root.js";
 import type { MetricsRegistry } from "./metrics.js";
+import type { ProjectTrustRegistry } from "./project-trust.js";
 
 export interface RunTurnInput {
   sessionId: SessionId;
@@ -29,6 +30,12 @@ export interface TurnRunnerDependencies {
   clock?: any;
   allowedRoots?: string[];
   metrics?: MetricsRegistry;
+  /**
+   * Trust decisions for project-supplied tool configuration. When absent,
+   * every tool that declares `trust` is refused with PROJECT_NOT_TRUSTED —
+   * the safe default for a runtime that has not been given a registry.
+   */
+  trust?: ProjectTrustRegistry;
 }
 
 export interface TurnResult {
@@ -58,6 +65,7 @@ export class TurnRunner {
   private clock?: any;
   private allowedRoots: string[];
   private metrics?: MetricsRegistry;
+  private trust?: ProjectTrustRegistry;
 
   constructor(deps: TurnRunnerDependencies) {
     this.provider = deps.provider;
@@ -68,6 +76,7 @@ export class TurnRunner {
     this.clock = deps.clock;
     this.allowedRoots = deps.allowedRoots ?? [];
     this.metrics = deps.metrics;
+    this.trust = deps.trust;
   }
 
   async run(input: RunTurnInput): Promise<TurnResult> {
@@ -225,6 +234,35 @@ export class TurnRunner {
               toolName: toolCall.name,
             });
             continue;
+          }
+
+          // Project trust gate — evaluated before approval so a user is never
+          // asked to approve a call the project is not trusted to make.
+          const trustRequirement = tool.trust ? tool.trust(toolCall.input) : undefined;
+          if (trustRequirement) {
+            const realRoot = projectRoot.getRealRoot();
+            const check = this.trust ? this.trust.check(realRoot, trustRequirement.configHash) : { trusted: false as const };
+            if (!check.trusted) {
+              const stale = "staleGrant" in check && check.staleGrant;
+              const result = {
+                ok: false as const,
+                code: "PROJECT_NOT_TRUSTED" as const,
+                message: stale
+                  ? `project ${realRoot} was trusted for a different ${trustRequirement.source} configuration (${stale.configHash}); ` +
+                    `it changed to ${trustRequirement.configHash} and must be trusted again`
+                  : `project ${realRoot} is not trusted to run ${trustRequirement.source} (${trustRequirement.configHash}); ` +
+                    `grant trust via POST /api/sessions/${sessionId}/trust`,
+                retryable: false,
+              };
+              await append({ type: "tool_completed", callId: toolCall.id, toolName: toolCall.name, result });
+              nextMessages.push({
+                role: "tool",
+                content: `${result.code}: ${result.message}`,
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
+              });
+              continue;
+            }
           }
 
           if (tool.requiresApproval(toolCall.input)) {

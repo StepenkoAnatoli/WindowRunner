@@ -25,11 +25,43 @@ export interface PersistenceConfig {
   fsync: boolean;
 }
 
+export type AuthMode = "token" | "off";
+
+export interface AuthConfig {
+  /**
+   * "token": every /api route requires `Authorization: Bearer <token>` (default).
+   * "off": no authentication. Only permitted on a loopback bind; boot refuses
+   * the combination of auth off and a non-loopback HOST regardless of
+   * WINDOWS_RUNNER_ALLOW_REMOTE.
+   */
+  mode: AuthMode;
+  /**
+   * Explicit token from WINDOWS_RUNNER_AUTH_TOKEN. When undefined in token
+   * mode, boot resolves one: the persisted `<dataDir>/auth-token` in file
+   * mode, otherwise a token generated for this process (printed once).
+   */
+  token?: string;
+  /**
+   * Host header values accepted in addition to the loopback names and the
+   * bind address. Compared case-insensitively, port ignored. Anything else is
+   * refused with 403 HOST_NOT_ALLOWED (DNS-rebinding defence).
+   */
+  allowedHosts: string[];
+  /**
+   * Browser origins allowed to call the API. Empty means "any loopback
+   * origin" (http(s)://localhost|127.x|[::1] on any port). Never a wildcard:
+   * a request carrying an Origin outside this set is refused before auth,
+   * and `Origin: null` is always refused.
+   */
+  allowedOrigins: string[];
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
   /** Explicit opt-in required to bind anything but a loopback address. */
   allowRemote: boolean;
+  auth: AuthConfig;
   /** Provider name; resolved against the registry in providers/index.ts at boot. */
   provider: string;
   persistence: PersistenceConfig;
@@ -43,6 +75,8 @@ export const DEFAULT_PORT = 7634;
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PROVIDER = "mock";
 export const DEFAULT_SHUTDOWN_GRACE_MS = 5_000;
+/** Shorter tokens are refused: they must survive an online guess. */
+export const MIN_AUTH_TOKEN_LENGTH = 16;
 
 /** Environment variables the boot path reads. Kept in one place so docs can be checked against it. */
 export const ENV = {
@@ -57,6 +91,10 @@ export const ENV = {
   allowedRoots: "WINDOWS_RUNNER_ALLOWED_ROOTS",
   home: "WINDOWS_RUNNER_HOME",
   shutdownGraceMs: "WINDOWS_RUNNER_SHUTDOWN_GRACE_MS",
+  auth: "WINDOWS_RUNNER_AUTH",
+  authToken: "WINDOWS_RUNNER_AUTH_TOKEN",
+  allowedHosts: "WINDOWS_RUNNER_ALLOWED_HOSTS",
+  allowedOrigins: "WINDOWS_RUNNER_ALLOWED_ORIGINS",
 } as const;
 
 export class ConfigError extends Error {
@@ -90,10 +128,28 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
   const allowedRoots = parseAllowedRoots(env[ENV.allowedRoots], env[ENV.home], homedir);
   const shutdownGraceMs = parseNonNegativeInteger(ENV.shutdownGraceMs, env[ENV.shutdownGraceMs], DEFAULT_SHUTDOWN_GRACE_MS);
 
+  const auth: AuthConfig = {
+    mode: parseAuthMode(env[ENV.auth]),
+    token: parseAuthToken(env[ENV.authToken]),
+    allowedHosts: parseHostList(ENV.allowedHosts, env[ENV.allowedHosts]),
+    allowedOrigins: parseOriginList(ENV.allowedOrigins, env[ENV.allowedOrigins]),
+  };
+  if (auth.mode === "off" && auth.token !== undefined) {
+    throw new ConfigError(`${ENV.authToken} is set but ${ENV.auth}=off disables authentication; unset one of them.`, ENV.auth);
+  }
+  if (auth.mode === "off" && !isLoopbackHost(host)) {
+    throw new ConfigError(
+      `${ENV.auth}=off is only permitted on a loopback ${ENV.host}; ${host} is reachable from the network. ` +
+        `Remove ${ENV.auth}=off (bearer-token auth is the default) or bind a loopback address.`,
+      ENV.auth
+    );
+  }
+
   return {
     host,
     port,
     allowRemote,
+    auth,
     provider,
     persistence: { mode, dataDir, durableBeforeNotify, fsync },
     allowedRoots,
@@ -117,6 +173,7 @@ export function describeConfig(config: ServerConfig): string[] {
     : config.allowRemote
       ? " (non-loopback; remote access explicitly enabled)"
       : " (non-loopback; requires " + ENV.allowRemote + "=1)";
+  // The auth line is printed by boot.ts once the token source is known.
   const lines = [
     `bind:        ${config.host}:${config.port}${bindNote}`,
     `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ""}`,
@@ -127,6 +184,8 @@ export function describeConfig(config: ServerConfig): string[] {
     lines.push(`durability:  durableBeforeNotify=${config.persistence.durableBeforeNotify} fsync=${config.persistence.fsync}`);
   }
   lines.push(`roots:       ${config.allowedRoots.join(", ")}`);
+  if (config.auth.allowedHosts.length > 0) lines.push(`hosts:       loopback + ${config.auth.allowedHosts.join(", ")}`);
+  lines.push(`origins:     ${config.auth.allowedOrigins.length > 0 ? config.auth.allowedOrigins.join(", ") : "any loopback origin"}`);
   return lines;
 }
 
@@ -244,4 +303,65 @@ function parseAllowedRoots(raw: string | undefined, homeOverride: string | undef
     return [path.resolve(expanded)];
   }
   return [path.resolve(homedir)];
+}
+
+function parseAuthMode(raw: string | undefined): AuthMode {
+  if (isBlank(raw)) return "token";
+  const value = raw.trim().toLowerCase();
+  if (value === "token" || value === "off") return value;
+  throw new ConfigError(`${ENV.auth} must be "token" or "off", got "${raw}".`, ENV.auth);
+}
+
+function parseAuthToken(raw: string | undefined): string | undefined {
+  if (isBlank(raw)) return undefined;
+  const token = raw.trim();
+  if (/\s/.test(token)) {
+    throw new ConfigError(`${ENV.authToken} must not contain whitespace.`, ENV.authToken);
+  }
+  if (token.length < MIN_AUTH_TOKEN_LENGTH) {
+    throw new ConfigError(
+      `${ENV.authToken} must be at least ${MIN_AUTH_TOKEN_LENGTH} characters (got ${token.length}); ` +
+        `unset it to let the server generate one.`,
+      ENV.authToken
+    );
+  }
+  return token;
+}
+
+function parseHostList(variable: string, raw: string | undefined): string[] {
+  if (isBlank(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim().toLowerCase();
+    if (trimmed === "") continue;
+    if (trimmed === "*" || /[\s/]/.test(trimmed)) {
+      throw new ConfigError(`${variable} entries must be hostnames or IP addresses (no wildcard, scheme or path), got "${entry.trim()}".`, variable);
+    }
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+function parseOriginList(variable: string, raw: string | undefined): string[] {
+  if (isBlank(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue;
+    if (trimmed === "*" || trimmed.toLowerCase() === "null") {
+      throw new ConfigError(`${variable} must list explicit origins; "${trimmed}" is not allowed.`, variable);
+    }
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      throw new ConfigError(`${variable} entries must be origins like http://localhost:5173, got "${trimmed}".`, variable);
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.pathname !== "/" || url.search !== "" || url.hash !== "" || url.username || url.password) {
+      throw new ConfigError(`${variable} entries must be bare http(s) origins (scheme://host[:port]), got "${trimmed}".`, variable);
+    }
+    const origin = url.origin.toLowerCase();
+    if (!out.includes(origin)) out.push(origin);
+  }
+  return out;
 }

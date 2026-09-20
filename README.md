@@ -54,8 +54,9 @@ fails with an actionable message if it is broken. Set
 `npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
 when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
 offline `mock` provider is the only provider in this checkout, no tools are
-registered, there is no web UI, and the server binds loopback only because the
-API has no authentication yet. Configuration, endpoints and limits are in
+registered, there is no web UI, every `/api` route requires a bearer token
+(printed once in memory mode, stored at `~/.windows-runner/auth-token` in file
+mode), and the server binds loopback only. Configuration, endpoints and limits are in
 [docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
 `npm run smoke:start` boots the built server and runs a turn against it.
 
@@ -397,7 +398,11 @@ boot with a message naming the variable; the full table with semantics is in
 | --- | --- | --- |
 | `PORT` | `7634` | Server port (`0` = ephemeral, printed in the ready line) |
 | `HOST` | `127.0.0.1` | Bind address. Non-loopback is refused unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
-| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the unauthenticated API is exposed beyond loopback |
+| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the token-protected API is exposed beyond loopback over plain HTTP |
+| `WINDOWS_RUNNER_AUTH` | `token` | `token` = bearer auth on every `/api` route; `off` only with a loopback `HOST` |
+| `WINDOWS_RUNNER_AUTH_TOKEN` | generated | The bearer token (≥16 chars). Unset: `<data dir>/auth-token` in file mode, else per-process and printed once |
+| `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values accepted besides loopback and the bind address |
+| `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Explicit browser origins allowed to call the API (no wildcard) |
 | `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists in this checkout |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |
 | `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Where sessions and turn logs are stored in file mode |

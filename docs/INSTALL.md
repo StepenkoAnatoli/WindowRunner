@@ -127,9 +127,23 @@ more than this repository contains (that reconciliation is P2-01):
 - **No tools.** `packages/server/src/agent/tools/` holds the executor and the
   contract, not tool implementations, so the loop runs with an empty tool map
   and the agent can only answer in text. The banner says so.
-- **No authentication** (P0-01 is open). Therefore the server refuses to bind
-  anything but a loopback address unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` is set
-  explicitly. Do not set it on a shared network.
+- **Bearer-token authentication on every `/api` route** (P0-01). Only
+  `/healthz` is public. Requests must send `Authorization: Bearer <token>`;
+  the token comes from `WINDOWS_RUNNER_AUTH_TOKEN`, else from
+  `<data dir>/auth-token` in file mode (generated on first boot, mode 0600),
+  else it is generated for the process and printed once in the banner. The
+  server also validates the `Host` header (loopback names, the bind address,
+  `WINDOWS_RUNNER_ALLOWED_HOSTS`) and, for browser requests, the `Origin`
+  header (loopback origins by default, `WINDOWS_RUNNER_ALLOWED_ORIGINS` to
+  replace that; never a wildcard, `Origin: null` is always refused). See
+  "Authentication" below.
+- **Explicit project trust before project-supplied code runs** (P0-02). A tool
+  that declares `trust` (an MCP server command, a project skill) is refused
+  with `PROJECT_NOT_TRUSTED` until the project's real root has been trusted for
+  that exact configuration via `POST /api/sessions/:id/trust`. No such tool
+  ships in this checkout; the gate and its persistence (`trust.json`) do.
+- The server still refuses to bind anything but a loopback address unless
+  `WINDOWS_RUNNER_ALLOW_REMOTE=1` is set: the token travels over plain HTTP.
 
 ### Configuration
 
@@ -141,7 +155,11 @@ back silently.
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Bind address. Non-loopback requires `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
 | `PORT` | `7634` | Port; `0` picks an ephemeral port and prints it in the ready line |
-| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Acknowledge that a non-loopback bind exposes an unauthenticated API |
+| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Acknowledge that a non-loopback bind exposes the token-protected API over plain HTTP |
+| `WINDOWS_RUNNER_AUTH` | `token` | `token` (bearer auth on `/api`) or `off` (loopback `HOST` only; refused otherwise) |
+| `WINDOWS_RUNNER_AUTH_TOKEN` | generated | Bearer token, ≥16 characters, no whitespace. Unset: `<data dir>/auth-token` in file mode, else per-process |
+| `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values (comma-separated, no port) accepted besides loopback names and the bind address |
+| `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Comma-separated browser origins (`scheme://host[:port]`) allowed to call the API; replaces the loopback default. No `*`, no `null` |
 | `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` (lost on restart) or `file` (JSONL + `meta.json` under the data dir) |
 | `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Absolute path; created on first file-mode boot. Unused in memory mode |
@@ -155,6 +173,85 @@ Booleans accept `1/true/yes/on` and `0/false/no/off`.
 
 `WINDOWS_RUNNER_DATA_DIR` in file mode is a single-writer directory: run one
 server per data dir (see README, "Persistence").
+
+### Authentication
+
+Every `/api` route answers `401 AUTH_REQUIRED` (or `401 AUTH_INVALID`) without
+a valid `Authorization: Bearer <token>` header; `/healthz` stays public for
+container health checks. The token is resolved at boot, in this order:
+
+1. `WINDOWS_RUNNER_AUTH_TOKEN`, if set (≥16 characters, no whitespace).
+2. File persistence mode: `<WINDOWS_RUNNER_DATA_DIR>/auth-token`. Created on
+   the first boot with mode 0600 and reused afterwards, so other local tools
+   can read it and restarts keep it stable. A corrupt file is a boot error.
+3. Memory mode: a fresh random token, printed once in the banner
+   (`token: …`). It is not printed in cases 1 and 2.
+
+```sh
+# memory mode: copy the token from the banner
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:7634/api/health
+
+# file mode
+curl -H "Authorization: Bearer $(cat ~/.windows-runner/auth-token)" \
+     -H "content-type: application/json" \
+     -d '{"cwd":"'"$PWD"'","message":"hello"}' \
+     http://127.0.0.1:7634/api/sessions/demo/turns
+```
+
+`EventSource` cannot set headers, so a browser client must open the SSE route
+with `fetch` and stream the body (the `Last-Event-ID` header is accepted the
+same way, or `?afterSeq=` as a query parameter).
+
+Before the token is checked the server validates two more headers, so an
+attacker page in your browser cannot reach a loopback server through DNS
+rebinding or cross-site requests:
+
+- `Host` must be a loopback name, the bind address, or an entry of
+  `WINDOWS_RUNNER_ALLOWED_HOSTS` — otherwise `403 HOST_NOT_ALLOWED`.
+- `Origin`, when a browser sends it, must be a loopback origin or an entry of
+  `WINDOWS_RUNNER_ALLOWED_ORIGINS` — otherwise `403 ORIGIN_NOT_ALLOWED`.
+  `Origin: null` is always refused; there is no wildcard. Allowed origins get
+  the matching CORS headers and preflights are answered.
+
+`WINDOWS_RUNNER_AUTH=off` disables the token check (Host/Origin validation
+stays). It is accepted only with a loopback `HOST`; combined with any other
+bind it is a configuration error that `WINDOWS_RUNNER_ALLOW_REMOTE` cannot
+override.
+
+Rejections are counted in `/api/metrics` (`counters.securityRejections`,
+by kind `host` / `origin` / `auth`) and surface as a `securityRejection`
+alert on `/api/health`. Neither the token nor the presented credential is ever
+written to logs, metrics or health output.
+
+### Remote access
+
+The default is loopback only. Setting `HOST` to a non-loopback address requires
+`WINDOWS_RUNNER_ALLOW_REMOTE=1` because the bearer token is sent over plain
+HTTP: anyone who can observe the traffic can replay it. If you must expose the
+server, terminate TLS in a reverse proxy in front of it, forward the original
+`Host` (and add that name to `WINDOWS_RUNNER_ALLOWED_HOSTS`), list the web
+origin in `WINDOWS_RUNNER_ALLOWED_ORIGINS`, and set an explicit
+`WINDOWS_RUNNER_AUTH_TOKEN`. Auth cannot be turned off for a remote bind.
+
+### Project trust
+
+Tools may declare `trust(input)` returning `{ configHash, source }` — the
+digest of project-supplied configuration they would execute (an MCP server
+command from `.mcp.json`, for example). The loop checks the session's real
+(symlink-resolved) root against the trust registry *before* any approval is
+requested and refuses with a `tool_completed` result of `PROJECT_NOT_TRUSTED`
+until the user has granted trust for that exact hash:
+
+```
+GET    /api/sessions/:id/trust            -> { realRoot, canonicalRoot, grant|null }
+POST   /api/sessions/:id/trust            { "configHash": "sha256:…", "source": ".mcp.json" }
+DELETE /api/sessions/:id/trust            -> 204
+```
+
+A grant is keyed by the real root and bound to the hash, so a changed
+configuration invalidates it (the refusal names the stale hash). In file mode
+grants persist in `<data dir>/trust.json` (0600). Approving a tool call never
+grants trust, and a persisted session never implies it.
 
 ### Startup smoke test
 
@@ -235,9 +332,15 @@ container.
 network namespace, and `WINDOWS_RUNNER_ALLOWED_ROOTS=/work` for the mounted
 workspace.
 
+The API inside the container is token-protected like everywhere else. The
+first boot writes the token to the data volume; read it with
+`docker compose exec windows-runner cat /home/node/.windows-runner/auth-token`,
+or pin one with `WINDOWS_RUNNER_AUTH_TOKEN` in the compose environment.
+
 CI enforces this on every push and pull request: the `Docker` job (which runs
 after `CI`) executes `docker compose up --build -d`, waits for `/healthz`,
-asserts `/api/health` reports file persistence, runs one mock turn over SSE
+asserts `/api/health` is 401 without the token and, with the token read from
+the volume, reports file persistence and token auth, runs one mock turn over SSE
 against a session rooted in the mounted `/work`, then stops the stack and
 asserts the container exited 0. Container logs are uploaded on failure.
 
@@ -267,9 +370,25 @@ Another process (often a previous server) holds the port. Stop it, or run with
 `PORT=<free port> npm start`. `PORT=0` picks an ephemeral port and prints it.
 
 **`npm start` says `refusing to bind 0.0.0.0`**
-Intentional: the API has no authentication yet (P0-01). Bind a loopback address,
-or set `WINDOWS_RUNNER_ALLOW_REMOTE=1` if you have decided the network is
-trusted — the message spells out what that exposes.
+Intentional: the bearer token travels over plain HTTP. Bind a loopback address,
+or set `WINDOWS_RUNNER_ALLOW_REMOTE=1` after putting TLS in front — the message
+spells out what that exposes. With `WINDOWS_RUNNER_AUTH=off` a non-loopback
+bind is refused unconditionally.
+
+**Every `/api` request returns `401 AUTH_REQUIRED`**
+Send `Authorization: Bearer <token>`. The token is `WINDOWS_RUNNER_AUTH_TOKEN`
+if you set it, else `<data dir>/auth-token` in file mode, else the `token:`
+line the banner printed (memory mode). See "Authentication".
+
+**A request returns `403 HOST_NOT_ALLOWED` or `403 ORIGIN_NOT_ALLOWED`**
+The `Host` header is not a loopback name or the bind address (add it to
+`WINDOWS_RUNNER_ALLOWED_HOSTS`), or a browser sent an `Origin` outside the
+allowed set (add it to `WINDOWS_RUNNER_ALLOWED_ORIGINS`).
+
+**A tool result says `PROJECT_NOT_TRUSTED`**
+The tool executes configuration supplied by the project, and this project has
+not been trusted for that configuration (or it changed). Inspect and grant with
+`GET`/`POST /api/sessions/:id/trust` using the `configHash` from the message.
 
 **`npm start` says `provider "…" is not available in this checkout`**
 Only the offline `mock` provider exists here. Unset `WINDOWS_RUNNER_PROVIDER` or

@@ -84,10 +84,10 @@ a pull request.
 
 | Issue | Snapshot |
 | --- | --- |
-| P0-01 | Core landed in Batch 2 (bearer-token auth, loopback-only CORS allowlist, Host validation, compose loopback bind). Residual: documented remote-mode auth/transport-security requirements. |
-| P0-02 | Core landed in Batch 3 (consent gate before any spawn, `ENV_ALLOWLIST`, `DANGEROUS_TOOLS`, `try/finally` cleanup). Residual: remembered approvals keyed to project identity + `configHash` invalidation, and a consent UI showing the source configuration. |
+| P0-01 | **Landed in this checkout (2026-09-20)** — `packages/server/src/security.ts` middleware in front of every `/api` route: bearer token (env → `<dataDir>/auth-token` → generated), Host validation, explicit Origin allowlist (loopback default, no wildcard, `null` refused), CORS only for allowed origins, `/healthz` public. Boot refuses `WINDOWS_RUNNER_AUTH=off` off loopback unconditionally. Covered by `test/security.test.ts`, `test/boot.test.ts`, `scripts/smoke-start.mjs`, the Docker CI job. Residual: TLS is the operator's job (documented under "Remote access"); a browser/Electron client does not exist yet to exercise the credential flow end to end. The earlier "Batch 2" claim referred to files not present in this repository. |
+| P0-02 | **Trust boundary landed in this checkout (2026-09-20)** — `packages/server/src/agent/project-trust.ts`: grants keyed by real root + `configHash`, invalidated on change, persisted to `<dataDir>/trust.json`, checked by `TurnRunner` before any approval for tools declaring `trust`, exposed at `/api/sessions/:id/trust`. Residual: no MCP runtime or spawning tool exists in this checkout, so env allowlisting, `try/finally` client cleanup and a consent UI showing the source configuration remain to be built *on* this gate when those land. |
 | P0-03 | Landed — `packages/server/src/access.ts` binds every `cwd`-accepting endpoint (fs, sessions, skills, git, project-context, folder picker) to authorized roots (`allowedProjectRoots` + home by default), canonicalized so symlink/alias escapes are refused. (2026-09-17) |
-| P0-04 | Partial — `PATCH /api/config` is strictly validated (F9); approval endpoints (`/approve`, `/mcp-approve`) and `/fs/*` query parameters are still loosely coerced. |
+| P0-04 | **Landed for every route that exists (2026-09-20)** — ids, bodies (object, ≤1 MB), `cwd`, `message`, approval/cancel payloads, `Last-Event-ID`/`afterSeq` and trust payloads are validated with stable `400`/`413` codes before any state is touched (`app.ts`, `test/security.test.ts` "input validation"). No config-mutation or `/fs/*` endpoint exists in this checkout; when they land they must use the same helpers. |
 | P1-01 | Open (Phase 4). Related: F16 — the test suite still writes into the real `~/.windows-runner`. |
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
@@ -100,31 +100,32 @@ a pull request.
 
 ## P0 — Must fix before recommending installation
 
-### [ ] P0-01: Secure local API access and require explicit network opt-in
+### [x] P0-01: Secure local API access and require explicit network opt-in
 Title: Secure local API boundary and explicit network exposure
 
 Files to inspect:
-- `packages/server/src/index.ts`
-- `packages/server/src/routes.ts`
-- `packages/server/src/auth.ts`
-- `packages/web/src/api.ts`
-- `packages/desktop/src/main.js`
-- `docker-compose.yml`
-- `docs/THREAT_MODEL.md`
+- `packages/server/src/security.ts` (policy + middleware)
+- `packages/server/src/config.ts` (`WINDOWS_RUNNER_AUTH`, `_AUTH_TOKEN`, `_ALLOWED_HOSTS`, `_ALLOWED_ORIGINS`)
+- `packages/server/src/boot.ts` (`resolveAuthToken`, `BindRefusedError`)
+- `packages/server/src/app.ts` (middleware mounted before body parsing and every `/api` route)
+- `packages/server/test/security.test.ts`, `packages/server/test/boot.test.ts`
+- `scripts/smoke-start.mjs`, `scripts/smoke-packed-start.mjs`, `.github/workflows/ci.yml` (Docker job), `docker-compose.yml`
+- `docs/INSTALL.md` → "Authentication", "Remote access"
 
 Acceptance criteria:
-- [ ] All sensitive endpoints require authentication before file, config, session, approval, diagnostic, or stream access succeeds.
-- [ ] CORS is replaced with explicit allowed origins; wildcard origins are not used.
-- [ ] Origin/Host validation rejects untrusted origins and DNS rebinding attempts.
-- [ ] Missing or null Origin headers are handled safely and do not grant access.
-- [ ] Default bind remains loopback-only; remote access is explicit and documented. *(Partial, 2026-09-20: the boot entry `packages/server/src/index.ts` defaults to `127.0.0.1` and refuses a non-loopback `HOST` unless `WINDOWS_RUNNER_ALLOW_REMOTE=1`; the rest of this issue — auth, CORS, Host validation — is untouched.)*
-- [ ] Browser and Electron flows still work with valid credentials.
-- [ ] Unauthorized requests cannot read files, change settings, start turns, or approve actions.
-- [ ] Regression tests cover auth failure, host rejection, and valid client access.
+- [x] All sensitive endpoints require authentication before file, config, session, approval, diagnostic, or stream access succeeds. *(Every `/api` route; only `/healthz` is public. Verified per route in `security.test.ts`.)*
+- [x] CORS is replaced with explicit allowed origins; wildcard origins are not used. *(`WINDOWS_RUNNER_ALLOWED_ORIGINS` parse refuses `*`/`null`; CORS headers echo only an allowed origin.)*
+- [x] Origin/Host validation rejects untrusted origins and DNS rebinding attempts. *(`403 HOST_NOT_ALLOWED` / `403 ORIGIN_NOT_ALLOWED`, also on `/healthz`.)*
+- [x] Missing or null Origin headers are handled safely and do not grant access. *(Absent Origin = no CORS grant, token still required; `Origin: null` always refused.)*
+- [x] Default bind remains loopback-only; remote access is explicit and documented. *(`WINDOWS_RUNNER_ALLOW_REMOTE=1` still required; `WINDOWS_RUNNER_AUTH=off` cannot be combined with a non-loopback bind.)*
+- [ ] Browser and Electron flows still work with valid credentials. *(No browser or Electron client exists in this checkout; the server side — bearer on SSE, CORS preflight, `Last-Event-ID` — is tested. Re-check when P1-07's UI lands.)*
+- [x] Unauthorized requests cannot read files, change settings, start turns, or approve actions. *(Verified: provider never invoked, no active turn after a 401.)*
+- [x] Regression tests cover auth failure, host rejection, and valid client access.
 
 ---
 
-### [ ] P0-02: Require explicit project trust before launching MCP commands
+### [~] P0-02: Require explicit project trust before launching MCP commands
+*(2026-09-20: the trust boundary — identity, `configHash` invalidation, persistence, loop gate, HTTP API, regression tests — is in place: `packages/server/src/agent/project-trust.ts`, `ToolDefinition.trust`, `test/security.test.ts` "project trust". The MCP runtime this issue was written against does not exist in this checkout; the remaining boxes describe what it must satisfy when it is built on the gate.)*
 Title: Require explicit project trust and consent before MCP subprocess launch
 
 Files to inspect:
@@ -136,16 +137,16 @@ Files to inspect:
 - `docs/THREAT_MODEL.md`
 
 Acceptance criteria:
-- [ ] MCP subprocesses do not start until the user explicitly approves the command.
-- [ ] Approval UI shows command, arguments, environment-variable names, and source configuration before launch.
-- [ ] Approval is tied to canonical project identity and configuration contents.
-- [ ] If approved MCP config changes, prior approval is invalidated.
-- [ ] No subprocess starts when consent is denied or absent.
+- [x] MCP subprocesses do not start until the user explicitly approves the command. *(Any tool declaring `trust` is refused with `PROJECT_NOT_TRUSTED` before `tool_started`; no MCP tool ships yet.)*
+- [ ] Approval UI shows command, arguments, environment-variable names, and source configuration before launch. *(Server exposes `source` + `configHash`; UI pending P1-07.)*
+- [x] Approval is tied to canonical project identity and configuration contents. *(Keyed by real root, bound to `configHash`.)*
+- [x] If approved MCP config changes, prior approval is invalidated. *(Stale grant named in the refusal; tested.)*
+- [x] No subprocess starts when consent is denied or absent. *(Trust is checked before the approval request is minted; tested.)*
 - [ ] Environment allowlisting prevents accidental secret leakage to child processes.
 - [ ] Dummy secrets do not appear in child environment unless explicitly granted.
 - [ ] Skill metadata cannot bypass user-required approvals.
 - [ ] Error and cancellation paths clean up MCP clients using structured `try/finally`.
-- [ ] Regression tests cover untrusted project launch blocking and config invalidation.
+- [x] Regression tests cover untrusted project launch blocking and config invalidation.
 
 ---
 
@@ -168,20 +169,19 @@ Acceptance criteria:
 
 ---
 
-### [ ] P0-04: Validate API inputs before applying config or approval updates
+### [x] P0-04: Validate API inputs before applying config or approval updates
 Title: Validate request bodies and query parameters at the API boundary
 
 Files to inspect:
-- `packages/server/src/routes.ts`
-- `packages/server/src/index.ts`
-- `packages/server/test/`
+- `packages/server/src/app.ts` (`requireSessionId`, `requireTurnId`, `bodyObject`, `isPathString`, JSON error handler)
+- `packages/server/test/security.test.ts` ("input validation (P0-04)")
 
 Acceptance criteria:
-- [ ] Configuration update endpoints validate type, format, and allowed ranges before mutation.
-- [ ] Approval update endpoints reject malformed or unexpected payloads.
-- [ ] Query parameters are validated before any state-changing action.
-- [ ] Invalid or null request values fail with a controlled error, not partial mutation.
-- [ ] Regression tests cover malformed config payloads and approval payloads.
+- [x] Configuration update endpoints validate type, format, and allowed ranges before mutation. *(No config-mutation endpoint exists in this checkout; configuration is environment-only and strictly parsed in `config.ts`.)*
+- [x] Approval update endpoints reject malformed or unexpected payloads. *(`400 APPROVAL_INVALID`; trust payloads `400 CONFIG_HASH_INVALID` / `SOURCE_INVALID`.)*
+- [x] Query parameters are validated before any state-changing action. *(`afterSeq` / `Last-Event-ID` → `400 CURSOR_INVALID`; path ids → `400 SESSION_ID_INVALID` / `TURN_ID_INVALID`.)*
+- [x] Invalid or null request values fail with a controlled error, not partial mutation. *(Non-object/invalid JSON → `400 BODY_INVALID`; >1 MB → `413 BODY_TOO_LARGE`; all checks run before any store or provider call.)*
+- [x] Regression tests cover malformed config payloads and approval payloads.
 
 ---
 

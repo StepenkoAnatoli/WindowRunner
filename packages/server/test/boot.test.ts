@@ -35,10 +35,17 @@ async function mkTmp(prefix = "wr-boot-"): Promise<string> {
   return dir;
 }
 
-type ConfigOverrides = Omit<Partial<ServerConfig>, "persistence"> & { persistence?: Partial<ServerConfig["persistence"]> };
+type ConfigOverrides = Omit<Partial<ServerConfig>, "persistence" | "auth"> & {
+  persistence?: Partial<ServerConfig["persistence"]>;
+  auth?: Partial<ServerConfig["auth"]>;
+};
+
+/** Every in-process server runs in the default token mode with this fixed token. */
+export const TEST_TOKEN = "boot-test-token-0123456789abcdef";
 
 function baseConfig(overrides: ConfigOverrides = {}): ServerConfig {
   const persistence = { mode: "memory" as const, dataDir: path.join(os.tmpdir(), "unused"), durableBeforeNotify: false, fsync: false };
+  const auth = { mode: "token" as const, token: TEST_TOKEN, allowedHosts: [] as string[], allowedOrigins: [] as string[] };
   return {
     host: "127.0.0.1",
     port: 0,
@@ -48,7 +55,15 @@ function baseConfig(overrides: ConfigOverrides = {}): ServerConfig {
     shutdownGraceMs: 2_000,
     ...overrides,
     persistence: { ...persistence, ...(overrides.persistence ?? {}) },
+    auth: { ...auth, ...(overrides.auth ?? {}) },
   };
+}
+
+/** fetch with the test bearer token attached. */
+function authed(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has("authorization")) headers.set("authorization", `Bearer ${TEST_TOKEN}`);
+  return fetch(url, { ...init, headers });
 }
 
 async function start(config: ServerConfig, overrides: Parameters<typeof startServer>[1] = {}): Promise<StartedServer> {
@@ -69,7 +84,7 @@ after(async () => {
 });
 
 async function postTurn(base: string, sessionId: string, cwd: string, message: string) {
-  const res = await fetch(`${base}/api/sessions/${sessionId}/turns`, {
+  const res = await authed(`${base}/api/sessions/${sessionId}/turns`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ cwd, message }),
@@ -82,7 +97,7 @@ async function readSseToEnd(url: string, timeoutMs = 5_000): Promise<any[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await authed(url, { signal: controller.signal });
     assert.equal(res.status, 200);
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -160,11 +175,11 @@ describe("startServer — memory mode", () => {
     assert.equal(handle.url, `http://127.0.0.1:${handle.port}`);
     assert.equal(handle.boot.persistenceMode, "memory");
 
-    const live = await fetch(`${handle.url}/healthz`);
+    const live = await authed(`${handle.url}/healthz`);
     assert.equal(live.status, 200);
     assert.deepEqual(await live.json(), { status: "ok" });
 
-    const health = (await fetch(`${handle.url}/api/health`).then((r) => r.json())) as any;
+    const health = (await authed(`${handle.url}/api/health`).then((r) => r.json())) as any;
     assert.equal(health.status, "ok");
     assert.equal(health.persistence.mode, "memory");
     assert.equal(health.diagnostics.boot.persistenceMode, "memory");
@@ -174,7 +189,7 @@ describe("startServer — memory mode", () => {
     assert.deepEqual(result, { abortedTurns: 0, forced: false });
     assert.equal(handle.app._validationTimer(), undefined, "validation timer cleared");
     assert.equal(await portIsFree(handle.port), true, "port released");
-    await assert.rejects(fetch(`${handle.url}/healthz`), "server no longer accepts connections");
+    await assert.rejects(authed(`${handle.url}/healthz`), "server no longer accepts connections");
   });
 
   it("close() is idempotent", async () => {
@@ -228,6 +243,13 @@ describe("startServer — refusals", () => {
     const handle = await start(baseConfig({ host: "0.0.0.0", allowRemote: true }));
     assert.equal(handle.host, "0.0.0.0");
     assert.equal(handle.url, `http://0.0.0.0:${handle.port}`);
+  });
+
+  it("refuses a non-loopback bind with auth off even when allowRemote is set", async () => {
+    await assert.rejects(
+      startServer(baseConfig({ host: "0.0.0.0", allowRemote: true, auth: { mode: "off", token: undefined } })),
+      (err: unknown) => err instanceof BindRefusedError && /WINDOWS_RUNNER_AUTH=off/.test(err.message)
+    );
   });
 
   it("rejects an unknown provider as a ConfigError naming WINDOWS_RUNNER_PROVIDER", async () => {
@@ -285,7 +307,7 @@ describe("startServer — file mode", () => {
     const replay = await readSseToEnd(`${second.url}/api/sessions/sess/turns/${body.turnId}/events`);
     assert.deepEqual(replay.map((e) => e.seq), events.map((e) => e.seq));
 
-    const health = (await fetch(`${second.url}/api/health`).then((r) => r.json())) as any;
+    const health = (await authed(`${second.url}/api/health`).then((r) => r.json())) as any;
     assert.equal(health.persistence.mode, "file");
     assert.equal(health.persistence.dataDir, dataDir);
     assert.equal(health.diagnostics.boot.turns.turnsLoaded, 1);
@@ -386,7 +408,7 @@ describe("close() with in-flight work", () => {
 
     // Hold an SSE stream open; it only ends when the turn becomes terminal.
     const controller = new AbortController();
-    const sse = await fetch(`${handle.url}/api/sessions/s-sse/turns/${body.turnId}/events`, { signal: controller.signal });
+    const sse = await authed(`${handle.url}/api/sessions/s-sse/turns/${body.turnId}/events`, { signal: controller.signal });
     const reader = sse.body!.getReader();
     await reader.read(); // turn_started replay
 
@@ -394,7 +416,7 @@ describe("close() with in-flight work", () => {
     const result = await handle.close({ graceMs: 0 });
     assert.equal(result.abortedTurns, 1);
     assert.equal(result.forced, true);
-    await assert.rejects(fetch(`${handle.url}/healthz`));
+    await assert.rejects(authed(`${handle.url}/healthz`));
     controller.abort();
   });
 
@@ -463,6 +485,13 @@ describe("src/index.ts executable", () => {
       const res = await fetch(`${url}/healthz`);
       assert.equal(res.status, 200);
       const { stdout } = proc.output();
+      // Memory mode with no WINDOWS_RUNNER_AUTH_TOKEN: the generated token is
+      // printed once, and it is the only thing that opens /api.
+      const tokenMatch = /^ {2}token: +(\S+)$/m.exec(stdout);
+      assert.ok(tokenMatch, `banner prints the generated token:\n${stdout}`);
+      assert.equal((await fetch(`${url}/api/health`)).status, 401);
+      assert.equal((await fetch(`${url}/api/health`, { headers: { authorization: `Bearer ${tokenMatch![1]}` } })).status, 200);
+      assert.match(stdout, /auth: +bearer token/);
       assert.match(stdout, /provider: +mock \(offline/);
       assert.match(stdout, /persistence: +memory/);
       assert.match(stdout, new RegExp(`roots: +${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));

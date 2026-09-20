@@ -59,6 +59,13 @@ async function main(): Promise<void> {
   }
 
   const ready = started;
+  if (ready.authToken !== undefined && ready.boot.auth.tokenSource === "generated" && ready.boot.auth.tokenFile === undefined) {
+    // Memory mode: the token exists only in this process, so the terminal is
+    // the only place a user can get it. File mode and env-supplied tokens are
+    // never echoed; the banner says where they live instead.
+    console.log(`  token:       ${ready.authToken}`);
+    console.log(`               (generated for this run; send it as "Authorization: Bearer <token>". Set ${"WINDOWS_RUNNER_AUTH_TOKEN"} or use file persistence for a stable one)`);
+  }
   if (ready.tools.size === 0) {
     console.log("  tools:       none registered in this checkout (the agent can only answer in text)");
   }

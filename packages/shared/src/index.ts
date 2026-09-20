@@ -13,6 +13,7 @@ export type ToolErrorCode =
   | "UNKNOWN_TOOL"
   | "CANCELLED"
   | "PATH_ESCAPES_ROOT"
+  | "PROJECT_NOT_TRUSTED"
   | "PATH_NOT_FOUND"
   | "NOT_A_FILE"
   | "NOT_A_DIRECTORY"

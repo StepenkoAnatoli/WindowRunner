@@ -409,7 +409,7 @@ describe("Metrics/alerts — required adjustments", () => {
       // Counters should be aggregate, not per-turn
       assert.equal(snap.counters.persistenceFailures, 10);
       assert.ok(!snap.counters.hasOwnProperty("t_0"));
-      assert.equal(Object.keys(snap.counters).length, 5); // persistenceFailures, quarantinedFiles, sessionsSkipped, shutdownTimeouts, shutdownTimeoutsByKind
+      assert.equal(Object.keys(snap.counters).length, 7); // persistenceFailures, quarantinedFiles, sessionsSkipped, shutdownTimeouts, shutdownTimeoutsByKind, securityRejections, securityRejectionsByKind
       assert.ok(!JSON.stringify(snap.counters).includes("t_0"));
       // Incidents bounded to 5, FIFO eviction
       assert.equal(snap.recent.incidents.length, 5);

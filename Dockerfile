@@ -37,9 +37,11 @@ FROM node:22-alpine
 # The server runs as a self-contained bundle at packages/server/dist/index.cjs
 # (gaps G-03/G-04 closed). No node_modules or workspace symlinks needed at runtime.
 # HOST=0.0.0.0 binds all interfaces *inside the container's network namespace*;
-# the entry point refuses that without WINDOWS_RUNNER_ALLOW_REMOTE=1 because the
-# API has no authentication (RELEASE_CHECKLIST.md, P0-01). docker-compose.yml
-# publishes the port on the host loopback only.
+# the entry point refuses that without WINDOWS_RUNNER_ALLOW_REMOTE=1 because it
+# is a non-loopback bind (RELEASE_CHECKLIST.md, P0-01). docker-compose.yml
+# publishes the port on the host loopback only. The API requires a bearer
+# token: pass WINDOWS_RUNNER_AUTH_TOKEN, or let the first boot generate one at
+# $WINDOWS_RUNNER_DATA_DIR/auth-token (read it with `docker compose exec`).
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=7634 \

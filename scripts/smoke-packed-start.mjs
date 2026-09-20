@@ -93,6 +93,7 @@ async function main() {
     env.PORT = "0";
     env.HOST = "127.0.0.1";
     env.WINDOWS_RUNNER_PERSISTENCE_MODE = "memory";
+    env.WINDOWS_RUNNER_AUTH_TOKEN = "smoke-packed-token-0123456789abcdef";
 
     child = spawn("npm", ["start"], {
       cwd: pkgDir,
@@ -143,9 +144,11 @@ async function main() {
     step("/healthz responds ok");
 
     // Probe /api/health
-    const healthRes = await fetch(`${baseUrl}/api/health`);
+    const unauth = await fetch(`${baseUrl}/api/health`);
+    assert(unauth.status === 401, `/api/health without a token returned ${unauth.status}, expected 401`);
+    const healthRes = await fetch(`${baseUrl}/api/health`, { headers: { authorization: `Bearer ${env.WINDOWS_RUNNER_AUTH_TOKEN}` } });
     assert(healthRes.status === 200, `/api/health returned ${healthRes.status}`);
-    step("/api/health responds ok");
+    step("/api/health responds ok with the bearer token (401 without)");
 
     // Shutdown gracefully. On Windows shell:true wraps npm in cmd.exe, so plain
     // child.kill() only terminates cmd and leaves node running as an orphan —

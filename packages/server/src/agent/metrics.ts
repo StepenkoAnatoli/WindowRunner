@@ -21,7 +21,8 @@ export type IncidentCategory =
   | "persistenceFailure"
   | "quarantine"
   | "skippedSession"
-  | "shutdownTimeout";
+  | "shutdownTimeout"
+  | "securityRejection";
 
 export interface Incident {
   at: number;
@@ -55,6 +56,9 @@ export interface MetricsSnapshot {
     sessionsSkipped: number;
     shutdownTimeouts: number;
     shutdownTimeoutsByKind: Record<string, number>;
+    /** requests refused by the security boundary (host, origin, auth) */
+    securityRejections: number;
+    securityRejectionsByKind: Record<string, number>;
   };
   gauges: {
     activeTurns: number;
@@ -69,6 +73,7 @@ export interface MetricsSnapshot {
       quarantinedFiles: number;
       sessionsSkipped: number;
       shutdownTimeouts: number;
+      securityRejections: number;
     };
     incidents: Incident[];
   };
@@ -107,6 +112,8 @@ export class MetricsRegistry {
     sessionsSkipped: 0,
     shutdownTimeouts: 0,
     shutdownTimeoutsByKind: new Map<string, number>(),
+    securityRejections: 0,
+    securityRejectionsByKind: new Map<string, number>(),
   };
 
   private gauges = {
@@ -242,6 +249,7 @@ export class MetricsRegistry {
       quarantinedFiles: 0,
       sessionsSkipped: 0,
       shutdownTimeouts: 0,
+      securityRejections: 0,
     };
     for (const inc of recent) {
       switch (inc.category) {
@@ -257,9 +265,28 @@ export class MetricsRegistry {
         case "shutdownTimeout":
           counts.shutdownTimeouts++;
           break;
+        case "securityRejection":
+          counts.securityRejections++;
+          break;
       }
     }
     return counts;
+  }
+
+  /**
+   * A request refused by the security middleware (src/security.ts). `kind` is
+   * host | origin | auth; `detail` is the route and code, never a credential.
+   */
+  recordSecurityRejection(kind: string, opts: { detail?: string; at?: number } = {}): void {
+    this.counters.securityRejections++;
+    const cur = this.counters.securityRejectionsByKind.get(kind) ?? 0;
+    this.counters.securityRejectionsByKind.set(kind, cur + 1);
+    this.pushIncident({
+      at: opts.at ?? this.nowFn(),
+      category: "securityRejection",
+      operationKind: kind,
+      detail: opts.detail,
+    });
   }
 
   // ---- Snapshot / reset ----
@@ -272,6 +299,11 @@ export class MetricsRegistry {
     const shutdownByKind: Record<string, number> = {};
     for (const [k, v] of this.counters.shutdownTimeoutsByKind.entries()) {
       shutdownByKind[k] = v;
+    }
+
+    const securityByKind: Record<string, number> = {};
+    for (const [k, v] of this.counters.securityRejectionsByKind.entries()) {
+      securityByKind[k] = v;
     }
 
     const durations: MetricsSnapshot["durations"] = {};
@@ -297,6 +329,8 @@ export class MetricsRegistry {
         sessionsSkipped: this.counters.sessionsSkipped,
         shutdownTimeouts: this.counters.shutdownTimeouts,
         shutdownTimeoutsByKind: shutdownByKind,
+        securityRejections: this.counters.securityRejections,
+        securityRejectionsByKind: securityByKind,
       },
       gauges: { ...this.gauges },
       recent: {
@@ -320,6 +354,8 @@ export class MetricsRegistry {
     this.counters.sessionsSkipped = 0;
     this.counters.shutdownTimeouts = 0;
     this.counters.shutdownTimeoutsByKind.clear();
+    this.counters.securityRejections = 0;
+    this.counters.securityRejectionsByKind.clear();
     this.gauges.activeTurns = 0;
     this.gauges.activeApprovals = 0;
     this.gauges.stuckTurns = 0;

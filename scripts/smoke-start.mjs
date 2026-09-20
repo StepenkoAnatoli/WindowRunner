@@ -14,7 +14,10 @@
  *   3. a session outside the allowed roots is refused (403 PATH_ESCAPES_ROOT);
  *   4. SIGTERM produces a clean exit (code 0) within the grace period;
  *   5. a second boot on the same data dir recovers the persisted session/turn;
- *   6. a non-loopback bind without WINDOWS_RUNNER_ALLOW_REMOTE is refused (exit 1).
+ *   6. a non-loopback bind without WINDOWS_RUNNER_ALLOW_REMOTE is refused (exit 1);
+ *   7. the bearer token is enforced: /api without it is 401, with a wrong one
+ *      401, and the token file the first boot created is what the second boot
+ *      reused.
  *
  * Nothing here touches ~/.windows-runner or needs an API key or the network.
  * `npm run smoke:start` runs this; CI runs it after the build.
@@ -29,6 +32,9 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = path.join(repoRoot, "packages", "server", "dist", "index.cjs");
 const READY_RE = /^windows-runner listening on (http:\/\/\S+)$/m;
+/** Fixed token for the smoke run: the API is authenticated by default. */
+const TOKEN = "smoke-start-token-0123456789abcdef";
+const AUTH = { authorization: `Bearer ${TOKEN}` };
 const READY_TIMEOUT_MS = 20_000;
 const EXIT_TIMEOUT_MS = 10_000;
 const IS_WINDOWS = process.platform === "win32";
@@ -112,7 +118,7 @@ async function readSse(url, timeoutMs = 10_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal: controller.signal, headers: AUTH });
     assert(res.status === 200, `SSE ${url} returned ${res.status}`);
     assert((res.headers.get("content-type") ?? "").startsWith("text/event-stream"), "SSE content-type missing");
     const reader = res.body.getReader();
@@ -144,7 +150,7 @@ async function probeHealth(base, expectations) {
   const liveBody = await live.json();
   assert(liveBody.status === "ok", `/healthz body ${JSON.stringify(liveBody)}`);
 
-  const health = await fetch(`${base}/api/health`);
+  const health = await fetch(`${base}/api/health`, { headers: AUTH });
   assert(health.status === 200, `/api/health returned ${health.status}`);
   const body = await health.json();
   assert(body.status === "ok" || body.status === "degraded", `/api/health status ${body.status}`);
@@ -194,6 +200,7 @@ async function main() {
     WINDOWS_RUNNER_DATA_DIR: dataDir,
     WINDOWS_RUNNER_ALLOWED_ROOTS: projectDir,
     WINDOWS_RUNNER_SHUTDOWN_GRACE_MS: "5000",
+    WINDOWS_RUNNER_AUTH_TOKEN: TOKEN,
   });
 
   let handle = null;
@@ -208,7 +215,7 @@ async function main() {
     // ---- 2. a full turn through the mock provider --------------------------
     const started = await fetch(`${base}/api/sessions/smoke/turns`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...AUTH },
       body: JSON.stringify({ cwd: projectDir, message: "smoke test" }),
     });
     if (started.status !== 202) throw new SmokeFailure(`POST /turns returned ${started.status}: ${await started.text()}`);
@@ -237,13 +244,25 @@ async function main() {
     // ---- 3. allowed roots are enforced -------------------------------------
     const outside = await fetch(`${base}/api/sessions/outside/turns`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...AUTH },
       body: JSON.stringify({ cwd: os.tmpdir(), message: "should be refused" }),
     });
     assert(outside.status === 403, `session outside allowed roots returned ${outside.status}`);
     const refusal = await outside.json();
     assert(refusal.code === "PATH_ESCAPES_ROOT", `refusal code ${refusal.code}`);
     step("session outside WINDOWS_RUNNER_ALLOWED_ROOTS refused (403 PATH_ESCAPES_ROOT)");
+
+    // ---- 3b. the API is authenticated -------------------------------------
+    const noToken = await fetch(`${base}/api/sessions/smoke/turns/${turnId}/events`);
+    assert(noToken.status === 401, `SSE without a token returned ${noToken.status}, expected 401`);
+    assert((await noToken.json()).code === "AUTH_REQUIRED", "401 body does not carry AUTH_REQUIRED");
+    const wrongToken = await fetch(`${base}/api/health`, { headers: { authorization: "Bearer not-the-token-000000000000" } });
+    assert(wrongToken.status === 401, `wrong token returned ${wrongToken.status}, expected 401`);
+    const badHostOrigin = await fetch(`${base}/api/health`, { headers: { ...AUTH, origin: "http://evil.example" } });
+    assert(badHostOrigin.status === 403, `foreign Origin returned ${badHostOrigin.status}, expected 403`);
+    const liveNoToken = await fetch(`${base}/healthz`);
+    assert(liveNoToken.status === 200, "/healthz must stay reachable without a token");
+    step("bearer token enforced on /api (401 without/with wrong token, 403 foreign Origin, /healthz public)");
 
     // ---- 4. graceful shutdown ----------------------------------------------
     await stopGracefully(handle, "first boot");
@@ -266,6 +285,27 @@ async function main() {
     assert(code === 1, `HOST=0.0.0.0 without WINDOWS_RUNNER_ALLOW_REMOTE exited ${code}, expected 1`);
     assert(/WINDOWS_RUNNER_ALLOW_REMOTE/.test(refused.output.stderr), "refusal message does not name the opt-in variable");
     step("HOST=0.0.0.0 without WINDOWS_RUNNER_ALLOW_REMOTE refused (exit 1)");
+
+    // ---- 7. generated token persisted in file mode ----------------------------
+    const generatedEnv = childEnv({
+      HOST: "127.0.0.1",
+      PORT: "0",
+      WINDOWS_RUNNER_PERSISTENCE_MODE: "file",
+      WINDOWS_RUNNER_DATA_DIR: path.join(tmp, "data-generated"),
+      WINDOWS_RUNNER_ALLOWED_ROOTS: projectDir,
+    });
+    handle = startServer(generatedEnv);
+    const base3 = await handle.ready;
+    const tokenFile = path.join(tmp, "data-generated", "auth-token");
+    assert(existsSync(tokenFile), `no token file at ${tokenFile}`);
+    const generated = readFileSync(tokenFile, "utf8").trim();
+    assert(generated.length >= 32, "generated token too short");
+    assert(!handle.output.stdout.includes(generated), "file-mode boot must not print the token");
+    assert((await fetch(`${base3}/api/health`)).status === 401, "generated-token server answered /api/health without a token");
+    assert((await fetch(`${base3}/api/health`, { headers: { authorization: `Bearer ${generated}` } })).status === 200, "generated token from the file was not accepted");
+    await stopGracefully(handle, "generated-token boot");
+    handle = null;
+    step("file mode generated a token at <dataDir>/auth-token and enforces it");
 
     console.log("\nStartup smoke test passed.");
     return 0;
