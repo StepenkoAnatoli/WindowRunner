@@ -11,6 +11,8 @@
  * web modules still import the bare specifier `@windows-runner/shared`, which
  * resolves through a workspace symlink that a published tarball does not have).
  * Those blockers are listed in docs/INSTALL.md, "Known packaging gaps".
+ * Whether the built server actually *boots* is a separate check:
+ * `npm run smoke:start` (scripts/smoke-start.mjs) runs it from a checkout.
  */
 
 import { spawnSync } from "node:child_process";
@@ -30,8 +32,10 @@ const REQUIRED = [
   "NOTICE",
   "docs/INSTALL.md",
   "scripts/postinstall.mjs",
+  "scripts/ensure-built.mjs",
   "packages/shared/dist/index.js",
   "packages/server/dist/app.js",
+  "packages/server/dist/index.js",
   "packages/web/dist/turn-state.js",
 ];
 
@@ -57,6 +61,7 @@ function ensureBuilt() {
   const outputs = [
     "packages/shared/dist/index.js",
     "packages/server/dist/app.js",
+    "packages/server/dist/index.js",
     "packages/web/dist/turn-state.js",
   ];
   const missing = outputs.filter((o) => !existsSync(path.join(repoRoot, o)));

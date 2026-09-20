@@ -1,9 +1,10 @@
 # BLOCKED: `docker compose up --build` cannot work while the Dockerfile's build
-# guard fails. The server package has no boot entry point (docs/INSTALL.md, gap
-# G-02) and there is no bundler to produce one (gap G-03), so there is nothing
-# for the container to run. This file describes the intended topology — including
-# auth and remote-access behavior that is likewise not implemented yet — and is
-# kept so that intent is not lost. Do not advertise it as a supported path.
+# guard fails. The server boot entry point exists (docs/INSTALL.md, gap G-02 is
+# closed; `npm start` runs it from a checkout), but there is no bundler, so the
+# compiled dist/ is not self-contained and the image cannot carry it (gaps G-03,
+# G-04). This file describes the intended topology — including auth behavior
+# that is not implemented yet — and is kept so that intent is not lost. Do not
+# advertise it as a supported path.
 services:
   windows-runner:
     build: .
@@ -28,7 +29,12 @@ services:
       - PORT=7634
       # Acknowledges that the container binds all interfaces inside its own
       # network namespace; the published port above is still loopback-only.
+      # The entry point refuses a non-loopback bind without this.
       - WINDOWS_RUNNER_ALLOW_REMOTE=1
+      # Sessions may only be rooted inside the mounted workspace.
+      - WINDOWS_RUNNER_ALLOWED_ROOTS=/work
+      - WINDOWS_RUNNER_PERSISTENCE_MODE=file
+      - WINDOWS_RUNNER_DATA_DIR=/home/node/.windows-runner
     # `node` (uid 1000 in the image) needs write access to ${PWD}. If your host
     # uid differs, run with `user: "${UID}:${GID}"` or fix ownership; see
     # docs/INSTALL.md.

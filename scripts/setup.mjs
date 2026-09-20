@@ -7,9 +7,10 @@
  * afterwards. Called by install.sh and install.ps1, and documented in README as
  * the "clone + npm run setup" path.
  *
- * Honesty note: this does not start anything. The server package currently
- * exports `createApp()` but has no boot entry point, so there is no `npm start`
- * to hand the user. See docs/INSTALL.md, "Known packaging gaps".
+ * This does not start anything: it prepares the checkout so that `npm start`
+ * (packages/server/dist/index.js) runs immediately afterwards. The installers
+ * decide whether to start the server; see docs/INSTALL.md for what the server
+ * does and does not do in this checkout.
  */
 
 import { spawnSync } from "node:child_process";
@@ -71,12 +72,12 @@ function main() {
   if (!run("npm", ["run", "build"], { env })) return 1;
 
   console.log("\nSetup complete.");
+  console.log("  npm start         start the server on http://127.0.0.1:7634");
   console.log("  npm test          run the test suite");
   console.log("  npm run build     rebuild packages/*/dist");
   console.log("");
-  console.log("There is no runnable server entry point in this checkout yet, so");
-  console.log("`npm start` is not available. Read docs/INSTALL.md before relying on");
-  console.log("any install path.");
+  console.log("The server runs with the offline mock provider and no tools in this");
+  console.log("checkout. Read docs/INSTALL.md before relying on any install path.");
   return 0;
 }
 

@@ -11,10 +11,11 @@
  * ----------------------------------
  * It does not build. The historical version of this hook auto-built a bundled
  * server (`packages/server/dist/index.cjs`) and a Vite web bundle. Neither
- * bundler is a dependency of this repository any more, and the server package
- * has no boot entry point, so an auto-build here would either fail on a clean
- * clone or quietly produce artifacts nothing can run. Building is an explicit
- * step instead: `npm run build`. See docs/INSTALL.md, "Known packaging gaps".
+ * bundler is a dependency of this repository any more, so an auto-build here
+ * would fail on a clean clone of an installed package. Building is an explicit
+ * step instead: `npm run build`, or implicitly via `npm start`, whose
+ * `prestart` hook (scripts/ensure-built.mjs) builds when dist/ is missing or
+ * stale. See docs/INSTALL.md, "Known packaging gaps".
  *
  * Contract
  * --------
@@ -124,6 +125,7 @@ function main() {
   }
 
   console.log(`windows-runner: install verified (${workspaces.length} workspaces, Node ${process.version}).`);
+  console.log("  npm start           start the server on http://127.0.0.1:7634 (builds first if needed)");
   console.log("  npm run typecheck   typecheck all workspaces");
   console.log("  npm test            run the test suite");
   console.log("  npm run build       emit packages/*/dist");

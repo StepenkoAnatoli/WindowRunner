@@ -9,17 +9,18 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/StepenkoAnatoli/WindowsRunner.git"
+    "url": "git+https://github.com/StepenkoAnatoli/WindowRunner.git"
   },
-  "homepage": "https://github.com/StepenkoAnatoli/WindowsRunner#readme",
+  "homepage": "https://github.com/StepenkoAnatoli/WindowRunner#readme",
   "bugs": {
-    "url": "https://github.com/StepenkoAnatoli/WindowsRunner/issues"
+    "url": "https://github.com/StepenkoAnatoli/WindowRunner/issues"
   },
   "files": [
     "packages/shared/dist/",
     "packages/server/dist/",
     "packages/web/dist/",
     "scripts/postinstall.mjs",
+    "scripts/ensure-built.mjs",
     "docs/INSTALL.md",
     "README.md",
     "LICENSE",
@@ -35,8 +36,12 @@
     "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
     "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
     "setup": "node scripts/setup.mjs",
+    "prestart": "node scripts/ensure-built.mjs",
+    "start": "node packages/server/dist/index.js",
+    "dev": "npm run dev --workspace packages/server",
     "postinstall": "node scripts/postinstall.mjs",
     "prepack": "npm run build",
-    "smoke:packed": "node scripts/smoke-packed.mjs"
+    "smoke:packed": "node scripts/smoke-packed.mjs",
+    "smoke:start": "node scripts/smoke-start.mjs"
   }
 }

@@ -1,21 +1,22 @@
 # Windows Runner - installer for Windows (PowerShell).
 #
 # Usage:
-#   irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowsRunner/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex
 #   .\install.ps1 [-NoStart]
 #
 # Override the clone source for forks/local testing:
-#   $env:WINDOWS_RUNNER_REPO_URL = "https://github.com/you/WindowsRunner.git"
+#   $env:WINDOWS_RUNNER_REPO_URL = "https://github.com/you/WindowRunner.git"
 #
 # Status: EXPERIMENTAL and untested (see docs/INSTALL.md). No Windows machine was
 # available when this script was last changed, so it has no recorded smoke-test
 # result, and CI runs Linux only (gap G-06). The packed
 # `npm install -g windows-runner` / `npx windows-runner` alternative is NOT
 # available either: the package declares no bin and is not published (gaps G-01
-# and G-05). The clone + `npm run setup` flow below is the verified path.
+# and G-05). The clone + `npm run setup` flow below is the verified path (Linux).
 #
-# This installer sets up a source checkout. It cannot start a server: the server
-# package has no boot entry point yet (gap G-02), so there is no `npm start`.
+# This installer sets up a source checkout and then offers to run `npm start`
+# when a console is attached. -NoStart skips the offer; when no console is
+# available (or the prompt fails) it prints the command instead of blocking.
 
 param(
   [switch]$NoStart
@@ -24,7 +25,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoUrl = $env:WINDOWS_RUNNER_REPO_URL
-if (-not $RepoUrl) { $RepoUrl = "https://github.com/StepenkoAnatoli/WindowsRunner.git" }
+if (-not $RepoUrl) { $RepoUrl = "https://github.com/StepenkoAnatoli/WindowRunner.git" }
 
 Write-Host ""
 Write-Host "  ┌─────────────────────────────────────────┐"
@@ -108,18 +109,40 @@ Write-Host ""
 Write-Host "  ✓ Installed in $(Get-Location)"
 Write-Host ""
 Write-Host "  Available now:"
+Write-Host "    npm start             start the server on http://127.0.0.1:7634"
+Write-Host "                          (offline mock provider, no tools — see docs/INSTALL.md)"
 Write-Host "    npm test              run the test suite"
 Write-Host "    npm run build         emit packages/*/dist"
 Write-Host "    npm run smoke:packed  verify the packed artifact"
+Write-Host "    npm run smoke:start   boot the built server and run a turn against it"
 Write-Host ""
 Write-Host "  Not available yet (see docs/INSTALL.md):"
-Write-Host "    npm start             no server boot entry point (gap G-02)"
 Write-Host "    npx windows-runner    no bin, package unpublished (gaps G-01, G-05)"
+Write-Host "    docker compose up     dist/ is not self-contained (gaps G-03, G-04)"
 Write-Host ""
 
 if ($NoStart) { exit 0 }
 
-# -NoStart used to gate an interactive "start the server?" prompt that ran
-# `npm start`. That command does not exist in this checkout, so prompting would
-# have offered a failure. The switch is still accepted for compatibility.
-Write-Host "  Nothing to start: this checkout has no server entry point (gap G-02)."
+# Only prompt when someone can answer; under automation, print the command.
+$answer = $null
+if ([Environment]::UserInteractive) {
+  try {
+    $answer = Read-Host "  Start the server now? [Y/n]"
+  } catch {
+    $answer = $null
+  }
+}
+
+if ($null -eq $answer) {
+  Write-Host "  To start the server: cd '$(Get-Location)'; npm start"
+  exit 0
+}
+
+if ($answer -match '^(n|no)$') {
+  Write-Host "  Run 'npm start' when you are ready."
+  exit 0
+}
+
+Write-Host ""
+npm start
+exit $LASTEXITCODE

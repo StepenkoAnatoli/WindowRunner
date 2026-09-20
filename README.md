@@ -9,7 +9,7 @@ WindowsRunner is a **Windows-first, local-first coding agent**: parallel local s
 - **Project context auto-discovery** — Point the agent at a folder and it automatically reads `package.json`, `tsconfig.json`, `Makefile`, `Cargo.toml`, and other build config files to understand how to build, test, and run your project (inspired by Claude Code).
 - **Auto-build & Manual-build skills** — Two modes: autonomous implementation (agent does everything end-to-end) or teaching mode (agent coaches you through building it yourself).
 - **Premium dark UI** — glassmorphism, subtle gradients, Inter + JetBrains Mono, animated micro-interactions inspired by Linear/Raycast/Vercel.
-- **One-command source setup** — `npm run setup` installs, typechecks and builds a checkout. The no-build packed path (`npx windows-runner`, `npm i -g windows-runner`) is **not available yet**: see [docs/INSTALL.md](./docs/INSTALL.md) for what is verified and what is blocked.
+- **One-command source setup** — `npm run setup` installs, typechecks and builds a checkout, and `npm start` boots the server (building first if needed). The no-build packed path (`npx windows-runner`, `npm i -g windows-runner`) is **not available yet**: see [docs/INSTALL.md](./docs/INSTALL.md) for what is verified and what is blocked.
 
 ## 🚀 Installation
 
@@ -23,12 +23,13 @@ macOS or Docker job in this repository.
 | Path | Status |
 | --- | --- |
 | Clone + `npm ci` / `npm run setup` / `npm test` / `npm run build` | **Verified** (Linux) |
+| `npm start` (HTTP API on `127.0.0.1:7634`, offline mock provider, no tools, no UI) | **Verified** (Linux) |
 | `npm run smoke:packed` (tarball contents) | **Verified** (Linux) |
+| `npm run smoke:start` (boots the built server, runs a turn, restarts, clean SIGTERM) | **Verified** (Linux) |
 | Packed artifact: `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** — no `bin`, package unpublished |
-| `npm start` | **Not available** — no server boot entry point |
-| `npm run dev` | **Not available** — no web dev server or bundler |
-| Docker / `docker compose up` | **Blocked** — image has no runnable entry point; build fails loudly by design |
-| `install.sh` | Experimental — sets up a checkout on Linux; cannot start a server |
+| `npm run dev` | **Server only** — `tsx watch` on the server entry; no web dev server or bundler |
+| Docker / `docker compose up` | **Blocked** — `dist/` is not self-contained; build fails loudly by design |
+| `install.sh` | Experimental — sets up a checkout on Linux and offers `npm start` |
 | `install.ps1` | **Untested** — no Windows runner available |
 | Electron desktop shell | **Not available** — `packages/desktop` does not exist |
 
@@ -36,20 +37,25 @@ macOS or Docker job in this repository.
 
 ```bash
 git clone https://github.com/StepenkoAnatoli/WindowRunner.git
-cd WindowsRunner
+cd WindowRunner
 npm ci            # installs all three workspaces, runs the postinstall check
 npm run setup     # install -> typecheck -> build, in one step
 npm test          # full suite, no API keys required
 npm run build     # emit packages/*/dist
+npm start         # serve the API on http://127.0.0.1:7634
 ```
 
 `npm ci` runs a real `postinstall` hook that verifies the workspace tree and
 fails with an actionable message if it is broken. Set
 `WINDOWS_RUNNER_SKIP_POSTINSTALL=1` to bypass it.
 
-There is no `npm start`: `packages/server` exports `createApp()` but has no boot
-entry point, so nothing in this checkout serves HTTP yet
-([docs/INSTALL.md](./docs/INSTALL.md), gap G-02).
+`npm start` runs `packages/server/dist/index.js` (its `prestart` hook builds
+when `dist/` is missing or stale). What starts is the **HTTP API alone**: the
+offline `mock` provider is the only provider in this checkout, no tools are
+registered, there is no web UI, and the server binds loopback only because the
+API has no authentication yet. Configuration, endpoints and limits are in
+[docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
+`npm run smoke:start` boots the built server and runs a turn against it.
 
 ### Option 2 — Packed artifact (not available yet)
 
@@ -60,7 +66,8 @@ and G-05 in [docs/INSTALL.md](./docs/INSTALL.md).
 
 `npm run smoke:packed` *does* work: it packs the tarball and asserts it contains
 `dist/`, docs and licence, and no sources, tests or build config. It validates
-tarball **contents** only; it does not prove an installable CLI runs.
+tarball **contents** only; it does not prove an installable CLI runs (that is
+what `npm run smoke:start` does for a checkout).
 
 ### Option 3 — Curl installer (Unix, experimental)
 
@@ -69,8 +76,9 @@ curl -fsSL https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/i
 # options: --no-start; WINDOWS_RUNNER_HOME / WINDOWS_RUNNER_REPO_URL override the target and source
 ```
 
-Clones a checkout and runs `npm run setup`. It cannot start a server (gap G-02),
-so `--no-start` is accepted but changes nothing.
+Clones a checkout and runs `npm run setup`. On an interactive terminal it then
+offers to run `npm start`; when piped as above it prints the command instead
+and never blocks. `--no-start` skips the offer.
 
 ### Option 4 — PowerShell (Windows, untested)
 
@@ -88,9 +96,11 @@ script has no recorded smoke-test result (gap G-06).
 docker compose up --build   # fails during the image build, by design
 ```
 
-The image has no runnable entry point (gaps G-02 and G-03), so the Dockerfile
-fails the build with an explicit message instead of producing an image that dies
-at `docker run`. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
+The boot entry point exists, but the compiled `dist/` is not self-contained —
+it imports `express` and `@windows-runner/shared` through `node_modules` and a
+workspace symlink the image does not carry (gaps G-03 and G-04) — so the
+Dockerfile fails the build with an explicit message instead of producing an
+image that dies at `docker run`. See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
 ### Option 6 — Desktop app (Electron, not available)
 
@@ -101,9 +111,10 @@ simply absent from this checkout).
 ---
 
 The "paste an API key, click **New session**, ask for something" flow described
-elsewhere in this README requires a running server and UI. Neither exists in this
-checkout yet, so there is nothing to launch. For development there is likewise no
-hot-reload path: `npm run dev` was removed because there is no web dev server and
+elsewhere in this README requires a UI and a real provider. Neither exists in
+this checkout: `npm start` serves the API with the offline mock provider, and
+there is nothing to paste a key into. For development, `npm run dev` restarts
+the server on source changes (`tsx watch`); there is still no web dev server and
 no bundler (gap G-03).
 
 > Scope note: this section covers install, build and packaging claims only. The
@@ -307,19 +318,25 @@ not present in this checkout.)
 ```
 packages/
   shared/    turn-state reducer + types shared by server and UI
-  server/    Express app factory, agent loop, tools, providers, persistence, metrics
+  server/    src/index.ts   boot entry point (`npm start`): config -> runtime -> listen -> drain
+             src/config.ts  environment parsing, strict, safe defaults
+             src/boot.ts    composes createApp(), recovers persisted state, graceful shutdown
+             src/app.ts     Express app factory (REST + SSE), agent loop, executor, persistence, metrics
+             src/providers/ LLMProvider contract + the offline mock (the only provider here)
   web/       UI-side turn-state projection (no bundler, no React in this checkout)
 scripts/
   setup.mjs         install -> typecheck -> build
   postinstall.mjs   verifies the workspace tree on npm ci / npm install
+  ensure-built.mjs  `prestart`: builds when dist/ is missing or older than src/
   smoke-packed.mjs  validates the packed tarball against the manifest
-docs/INSTALL.md     install-path status and the known packaging gaps (G-01..G-06)
-install.sh / install.ps1   clone-and-setup installers
-Dockerfile / docker-compose.yml   blocked: no runnable entry point
+  smoke-start.mjs   boots the built server, runs a turn over SSE, restarts it, checks SIGTERM
+docs/INSTALL.md     install-path status, how to run the server, the known packaging gaps (G-01..G-06)
+install.sh / install.ps1   clone-and-setup installers (offer `npm start` at the end)
+Dockerfile / docker-compose.yml   blocked: dist/ is not self-contained (G-03/G-04)
 
 Not present, though earlier revisions of this README listed them: bin/ (no CLI),
-packages/desktop/ (no Electron shell), scripts/ensure-built.mjs and
-scripts/desktop.mjs. Each absence is recorded as a gap in docs/INSTALL.md.
+packages/desktop/ (no Electron shell) and scripts/desktop.mjs. Each absence is
+recorded as a gap in docs/INSTALL.md.
 ```
 
 ## Persistence
@@ -355,29 +372,41 @@ SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process writers UNSUPPORTED —
 Documented in `FileTurnLogStore` header, `CONTEXT.md`, `/api/health`, and deployment docs. For production, run single instance per dataDir or use external lock (future).
 
 **Configuration defaults (safe):**
-- `WINDOWS_RUNNER_DATA_DIR`: OS temp or `./data` if not set, absolute path.
+- `WINDOWS_RUNNER_DATA_DIR`: `~/.windows-runner` if not set; must be absolute. Only used and created in file mode.
 - `WINDOWS_RUNNER_PERSISTENCE_MODE`: `memory` default (safe for dev), `file` for prod.
 - `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY`: true default for file mode (correctness), false for memory (performance).
 - `WINDOWS_RUNNER_FSYNC`: false default (performance), true for durability.
-- `WINDOWS_RUNNER_ALLOWED_ROOTS`: comma-separated allowed project roots, default empty (allow any for tests, prod should set).
+- `WINDOWS_RUNNER_ALLOWED_ROOTS`: comma-separated absolute project roots. The server defaults to the home directory (`WINDOWS_RUNNER_HOME` overrides it); an empty list — "allow any" — is a test-only affordance of `ProjectRoot` that the boot path never uses.
 - `FileTurnLogStore`: fsync false default, maxLineBytes 1MB.
-- `TurnManager`: durableBeforeNotify false default for backward compat, true recommended for file.
+- `TurnManager`: durableBeforeNotify false default for backward compat; the boot path sets it true in file mode.
 
 See `docs/architecture/exploration-7-persistence/config-defaults.md` for complete defaults.
 
 ## Environment variables
 
+Read by the server entry point (`npm start`). Set-but-invalid values fail the
+boot with a message naming the variable; the full table with semantics is in
+[docs/INSTALL.md → "Configuration"](./docs/INSTALL.md#configuration).
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `7634` | Server port |
-| `HOST` | `127.0.0.1` | Bind address (`0.0.0.0` to expose on LAN) |
-| `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Where config and sessions are stored |
-| `WINDOWS_RUNNER_MAX_STEPS` | `120` | Tool-calling steps per turn (also `limits.maxSteps`) |
-| `WINDOWS_RUNNER_MAX_TOKENS` | model default | Max output tokens per model call (also `limits.maxOutputTokens`) |
-| `MOCK_ALLOW_WRITE` | `0` | Set to `1` to let the mock provider also demo a file write |
+| `PORT` | `7634` | Server port (`0` = ephemeral, printed in the ready line) |
+| `HOST` | `127.0.0.1` | Bind address. Non-loopback is refused unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
+| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the unauthenticated API is exposed beyond loopback |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists in this checkout |
+| `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |
+| `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Where sessions and turn logs are stored in file mode |
+| `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY` | `true` (file mode) | Persist before notifying SSE listeners |
+| `WINDOWS_RUNNER_FSYNC` | `false` | fsync each appended event |
+| `WINDOWS_RUNNER_ALLOWED_ROOTS` | home directory | Comma-separated absolute roots a session `cwd` must be inside |
 | `WINDOWS_RUNNER_HOME` | OS home | Overrides the default authorized project root (used by tests/containers) |
-| `WINDOWS_RUNNER_ALTERNATE_HOME` | — | An extra read-only root the folder picker may browse |
-| `LOG_LEVEL` | `info` | Structured log level: `debug`, `info`, `warn`, `error` |
+| `WINDOWS_RUNNER_SHUTDOWN_GRACE_MS` | `5000` | Drain timeout on SIGINT/SIGTERM/SIGHUP |
+
+Documented for the full product but **not read by anything in this checkout**
+(tracked with the other product-narrative claims under P2-01):
+`WINDOWS_RUNNER_MAX_STEPS`, `WINDOWS_RUNNER_MAX_TOKENS`, `MOCK_ALLOW_WRITE`,
+`WINDOWS_RUNNER_ALTERNATE_HOME`, `LOG_LEVEL`. Turn limits are currently fixed in
+`createApp()` (10 steps, 30 s model/tool timeouts, 5 min approval timeout).
 
 ## Context and spending limits
 

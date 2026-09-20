@@ -141,9 +141,30 @@ export function createApp(deps: AppDeps) {
       validationTimer = undefined;
     }
   };
+  // Shutdown hook used by the boot path (src/boot.ts): abort every in-flight
+  // turn the same way POST .../cancel does, so each one records a terminal
+  // turn_cancelled event before the process exits instead of being discovered
+  // as a RESTART on the next boot. Returns how many turns were aborted.
+  app.abortActiveTurns = (reason: string = "server shutting down"): number => {
+    let aborted = 0;
+    for (const [turnId, controller] of activeControllers) {
+      controller.abort(new Error(reason));
+      deps.approvals.cancelTurn(turnId);
+      aborted++;
+    }
+    return aborted;
+  };
   app._validationTimer = () => validationTimer;
   app._metrics = metrics;
   app._doValidation = doValidation;
+
+  // GET /healthz — liveness only: "the process is up and serving HTTP". It
+  // deliberately runs no validation and touches no store, so it stays cheap
+  // enough for container health checks. Readiness/diagnostics live at
+  // /api/health.
+  app.get("/healthz", (_req: any, res: any) => {
+    res.json({ status: "ok" });
+  });
 
   // POST /api/sessions/:sessionId — explicit session creation with pinned root
   app.post("/api/sessions/:sessionId", async (req: any, res: any) => {
@@ -328,9 +349,21 @@ export function createApp(deps: AppDeps) {
     });
 
     try {
+      const isTerminalEvent = (event: any) =>
+        event.type === "turn_completed" || event.type === "turn_cancelled" || event.type === "turn_failed";
+
       const { replay, state, unsubscribe } = deps.manager.subscribe(sessionId, turnId, afterSeq, (event: any) => {
         res.write(`id: ${event.seq}\n`);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // A turn emits nothing after its terminal event (TurnManager refuses
+        // further appends), so end the stream here — the same thing the replay
+        // path below already does for turns that were terminal at subscribe
+        // time. Without this, finished streams stay open until the client
+        // hangs up, which also holds a draining server open on shutdown.
+        if (isTerminalEvent(event)) {
+          unsubscribe();
+          res.end();
+        }
       });
 
       for (const event of replay) {

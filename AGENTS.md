@@ -10,6 +10,13 @@ shell. Users bring their own API keys; nothing phones home.
 
 ## Layout
 
+- `packages/server/src/index.ts` — the executable boot entry (`npm start`,
+  `npm run dev`). `config.ts` parses the environment (strict; safe defaults),
+  `boot.ts` composes `createApp()`, recovers persisted state and drains on
+  shutdown. Importing `index.ts` starts a server — import `boot.ts` for the API.
+- `packages/server/src/providers/index.ts` — provider registry. Only `mock`
+  (`providers/mock.ts`, offline) exists in this checkout; the adapters listed
+  below are not present yet.
 - `packages/shared/src/index.ts` — every type shared between server and UI.
   Stream events live here; add new ones to the `StreamEvent` union and handle
   them in `packages/web/src/App.tsx` (`applyEvent`).
@@ -48,7 +55,14 @@ npm test                                        # tests, no keys needed
 npx tsc -p packages/server/tsconfig.json --noEmit
 npx tsc -p packages/web/tsconfig.json --noEmit
 npm run build                                   # shared + server + web
+npm run smoke:start                             # boot the built server, run a turn, restart, SIGTERM
+npm start                                       # http://127.0.0.1:7634 (mock provider, no tools)
 ```
+
+`npm start` rebuilds automatically when `dist/` is missing or older than `src/`
+(`scripts/ensure-built.mjs`). Any new environment variable the server reads
+must be added to `ENV` in `config.ts` and to the tables in `docs/INSTALL.md`
+and `README.md`.
 
 ## Testing without API keys
 

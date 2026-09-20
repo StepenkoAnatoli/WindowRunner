@@ -53,6 +53,14 @@ jobs:
       - name: Packed-artifact smoke test
         run: npm run smoke:packed
 
+      # Boots the compiled server (packages/server/dist/index.js) as a child
+      # process in file-persistence mode against a temp data dir, runs a turn
+      # through the offline mock provider over SSE, restarts it to check
+      # recovery, and asserts a clean exit on SIGTERM. This is the runtime check
+      # `smoke:packed` deliberately is not.
+      - name: Startup smoke test
+        run: npm run smoke:start
+
       - name: Collect diagnostics
         if: failure()
         shell: bash

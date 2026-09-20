@@ -24,12 +24,13 @@ which platform checks exist and which do not.
 | Clone + `npm run build` | **Verified** (Linux) | Emits `packages/*/dist` (JS + `.d.ts`), no test files |
 | Clone + `npm run smoke:packed` | **Verified** (Linux) | Tarball contents match the manifest contract |
 | Clone + `npm run setup` | **Verified** (Linux) | install + typecheck + build, in that order |
-| `npm start` | **Not available** | No server boot entry point (gap G-02) |
-| `npm run dev` | **Not available** | No web dev server; no bundler dependency (gap G-03) |
+| Clone + `npm start` | **Verified** (Linux) | Boots `packages/server/dist/index.js` on `127.0.0.1:7634` (builds first when `dist/` is missing or stale); see "Running the server" |
+| Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
+| `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03) |
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **Not available** | Package declares no `bin` and is not published (gaps G-01, G-05) |
-| `install.sh` | **Experimental** | Reaches `npm run setup`; its "start the server" offer is disabled (gap G-02) |
+| `install.sh` | **Experimental** | Reaches `npm run setup`, then offers `npm start` on an interactive terminal (prints the command when piped) |
 | `install.ps1` | **Untested** | No Windows runner is available to this repository (gap G-06) |
-| `docker compose up --build` | **Blocked** | Image cannot start a server (gap G-02); build fails loudly by design |
+| `docker compose up --build` | **Blocked** | The entry point exists, but `dist/` is not self-contained (gaps G-03, G-04); build fails loudly by design |
 | `npm run desktop` | **Not available** | `packages/desktop` does not exist; Electron is not a dependency (gap G-04) |
 
 "Verified" means the command succeeded on the environment above. It is not a
@@ -62,17 +63,21 @@ npm run typecheck   # shared + server + web, --noEmit
 npm test            # full suite across all three workspaces
 npm run build       # emits packages/*/dist
 npm run smoke:packed
+npm run smoke:start # boots the built server and runs a turn against it
+npm start           # http://127.0.0.1:7634
 ```
 
 `npm run setup` performs install → typecheck → build in one step and is what
-`install.sh` / `install.ps1` call.
+`install.sh` / `install.ps1` call. `npm start` does not need it: its `prestart`
+hook (`scripts/ensure-built.mjs`) builds when `packages/*/dist` is missing or
+older than `src/`, and is silent otherwise.
 
 ### What the build produces
 
 | Workspace | Output | Contents |
 | --- | --- | --- |
 | `packages/shared` | `dist/index.js`, `dist/index.d.ts` | Turn-state reducer and shared types |
-| `packages/server` | `dist/**/*.js` + `.d.ts` | `createApp()` and the agent, provider, persistence and metrics modules |
+| `packages/server` | `dist/**/*.js` + `.d.ts` | `index.js` (boot entry point), `boot.js`, `config.js`, `createApp()` and the agent, provider, persistence and metrics modules |
 | `packages/web` | `dist/turn-state.js` + `.d.ts` | UI-side turn-state projection |
 
 Each workspace builds from `tsconfig.build.json`, which compiles `src/` only —
@@ -87,6 +92,94 @@ not require a prior build**. The build configs instead resolve that specifier to
 
 ---
 
+## Running the server
+
+`npm start` runs `packages/server/dist/index.js`, which reads its configuration
+from the environment, composes the runtime, recovers persisted state, listens,
+and prints a ready line:
+
+```
+windows-runner listening on http://127.0.0.1:7634
+```
+
+Ctrl+C (SIGINT), SIGTERM or SIGHUP drains the server: it stops accepting
+connections, cancels in-flight turns (each records a `turn_cancelled` event),
+waits up to `WINDOWS_RUNNER_SHUTDOWN_GRACE_MS` for them and for open connections
+to finish, then exits 0. A second signal exits immediately.
+
+### What the server is in this checkout
+
+Be precise about what starts, because the README's product narrative describes
+more than this repository contains (that reconciliation is P2-01):
+
+- **HTTP API only.** There is no web UI and no `packages/web` bundle; the
+  endpoints are the ones `createApp()` defines: `POST /api/sessions/:id`,
+  `POST /api/sessions/:id/turns`, `GET /api/sessions/:id/turns/:turnId/events`
+  (SSE), `POST …/cancel`, `POST /api/sessions/:id/approve`, `GET /api/health`,
+  `GET /api/metrics`, `GET /api/diagnostics/persistence`, and `GET /healthz`
+  (liveness only).
+- **One provider: `mock`.** It is offline, makes no model calls, and prefixes
+  every reply with `[mock]`. Naming any other provider in
+  `WINDOWS_RUNNER_PROVIDER` is a boot error that lists what is available. The
+  OpenAI-compatible and Anthropic adapters are not in this checkout.
+- **No tools.** `packages/server/src/agent/tools/` holds the executor and the
+  contract, not tool implementations, so the loop runs with an empty tool map
+  and the agent can only answer in text. The banner says so.
+- **No authentication** (P0-01 is open). Therefore the server refuses to bind
+  anything but a loopback address unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` is set
+  explicitly. Do not set it on a shared network.
+
+### Configuration
+
+All values come from environment variables; a value that is set but not
+understood fails the boot with a message naming the variable. Nothing falls
+back silently.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | Bind address. Non-loopback requires `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
+| `PORT` | `7634` | Port; `0` picks an ephemeral port and prints it in the ready line |
+| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Acknowledge that a non-loopback bind exposes an unauthenticated API |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists |
+| `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` (lost on restart) or `file` (JSONL + `meta.json` under the data dir) |
+| `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Absolute path; created on first file-mode boot. Unused in memory mode |
+| `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY` | `true` in file mode | Persist each event before it is sent over SSE |
+| `WINDOWS_RUNNER_FSYNC` | `false` | fsync every appended event |
+| `WINDOWS_RUNNER_ALLOWED_ROOTS` | `WINDOWS_RUNNER_HOME`, else the OS home directory | Comma-separated absolute directories a session's `cwd` must be inside |
+| `WINDOWS_RUNNER_HOME` | OS home | Overrides the default allowed root only |
+| `WINDOWS_RUNNER_SHUTDOWN_GRACE_MS` | `5000` | How long a drain waits before forcing sockets closed |
+
+Booleans accept `1/true/yes/on` and `0/false/no/off`.
+
+`WINDOWS_RUNNER_DATA_DIR` in file mode is a single-writer directory: run one
+server per data dir (see README, "Persistence").
+
+### Startup smoke test
+
+`npm run smoke:start` (`scripts/smoke-start.mjs`) is the runtime check that
+`npm run smoke:packed` deliberately is not. It builds if needed, then spawns the
+compiled entry with a clean environment, `PORT=0`, file persistence in a
+temporary data directory and a temporary allowed root, and asserts:
+
+1. the ready line appears and `/healthz` and `/api/health` answer;
+2. `POST /api/sessions/smoke/turns` runs to `turn_completed` over SSE, the
+   `[mock]` reply echoes the message, `seq` is contiguous, and the JSONL and
+   `meta.json` exist under the data dir;
+3. a session whose `cwd` is outside the allowed root is refused with
+   `403 PATH_ESCAPES_ROOT`;
+4. SIGTERM exits 0 within the grace period (on Windows, where SIGTERM does not
+   exist, only termination is asserted);
+5. a second boot on the same data dir reports the recovered session and turn and
+   replays it;
+6. `HOST=0.0.0.0` without the opt-in exits 1 naming `WINDOWS_RUNNER_ALLOW_REMOTE`.
+
+It never touches `~/.windows-runner`, needs no API key and makes no network
+requests. CI runs it after the build. The same contract is exercised in-process
+from sources by `packages/server/test/boot.test.ts`, so `npm test` still needs
+no prior build.
+
+---
+
 ## Known packaging gaps
 
 These are recorded so nobody re-derives them from a failing command. Each one is
@@ -97,13 +190,16 @@ a real blocker for the corresponding advertised path, not a stylistic note.
 nor that file exists, so `bin` was removed. Until a launcher is written,
 `npx windows-runner`, `npm i -g windows-runner` and `wr` cannot work.
 
-**G-02 — no server boot path.** `packages/server/src/app.ts` exports
-`createApp(deps)` and never calls `listen()`; there is no `src/index.ts`, and the
-server workspace declares no `start` script. Nothing in this checkout can serve
-HTTP, which is why `npm start`, `prestart`, the Dockerfile `CMD` and the
-installers' "start the server" step are all unavailable rather than broken.
-Wiring a boot path requires product decisions (config, API keys, auth, default
-roots) that are out of scope for packaging.
+**G-02 — no server boot path. Closed 2026-09-20.** `packages/server/src/index.ts`
+is the executable entry (`config.ts` parses the environment, `boot.ts` composes
+`createApp()`, recovers persisted state, listens and drains), the server
+workspace declares `start`, the root `npm start` runs the compiled entry behind
+an ensure-built `prestart`, and `npm run smoke:start` proves the built artifact
+boots. The product decisions were made conservatively and are recorded under
+"Running the server": loopback-only unless opted in, in-memory persistence,
+home directory as the only allowed root, the offline `mock` provider, no tools.
+What remains is not a boot gap: the Dockerfile `CMD` still cannot run because
+`dist/` is not self-contained (G-03/G-04).
 
 **G-03 — no bundler.** The Dockerfile and README described an esbuild bundle at
 `packages/server/dist/index.cjs` and a Vite build for `packages/web/dist`.
@@ -137,13 +233,19 @@ desktop path are untested rather than passing.
 
 ## Docker
 
-The Dockerfile is retained but **cannot produce a working image** while G-02 and
-G-03 stand: its runtime stage has no server entry point to execute. Rather than
-build an image that fails at `docker run` time, the builder stage verifies that
-the runtime entry it needs exists and fails the build with an explicit message
-when it does not.
+The Dockerfile is retained but **cannot produce a working image** while G-03 and
+G-04 stand. The runtime entry now exists (`packages/server/dist/index.js`,
+G-02), but its imports — `express` and the bare specifier
+`@windows-runner/shared` — resolve inside a checkout through `node_modules` and
+a workspace symlink that the runtime stage does not have. Rather than build an
+image that fails at `docker run` time, the builder stage asserts the
+self-contained bundle it needs and fails the build with an explicit message
+while it is absent.
 
-`docker-compose.yml` inherits the same blocker.
+`docker-compose.yml` inherits the same blocker. It already describes the
+configuration the entry point expects once the image can run: `HOST=0.0.0.0`
+with `WINDOWS_RUNNER_ALLOW_REMOTE=1` inside the container's own network
+namespace, and `WINDOWS_RUNNER_ALLOWED_ROOTS=/work` for the mounted workspace.
 
 No Docker daemon was available when this was written, so these statements come
 from reading the files and from the absent dependencies, not from an executed
@@ -169,6 +271,29 @@ installers do this).
 Each workspace in `package.json` → `workspaces` must declare `build`, `test` and
 `typecheck`, because the root scripts fan out to all of them.
 `packages/server/test/packaging.test.ts` fails when one is missing.
+
+**`npm start` says `configuration error (PORT): 127.0.0.1:7634 is already in use`**
+Another process (often a previous server) holds the port. Stop it, or run with
+`PORT=<free port> npm start`. `PORT=0` picks an ephemeral port and prints it.
+
+**`npm start` says `refusing to bind 0.0.0.0`**
+Intentional: the API has no authentication yet (P0-01). Bind a loopback address,
+or set `WINDOWS_RUNNER_ALLOW_REMOTE=1` if you have decided the network is
+trusted — the message spells out what that exposes.
+
+**`npm start` says `provider "…" is not available in this checkout`**
+Only the offline `mock` provider exists here. Unset `WINDOWS_RUNNER_PROVIDER` or
+set it to `mock`; there is no key or endpoint to configure.
+
+**A session request returns `403 PATH_ESCAPES_ROOT` or `400 PATH_NOT_FOUND`**
+The `cwd` must be an existing directory inside one of the allowed roots (your
+home directory by default). Add roots with `WINDOWS_RUNNER_ALLOWED_ROOTS`, which
+takes comma-separated absolute paths; the banner prints the roots in effect.
+
+**`npm start` rebuilds every time**
+`prestart` rebuilds when any `packages/{shared,server}/src/**/*.ts` is newer than
+the built entry. Check for a file with a clock-skewed mtime (`touch` it, or run
+`npm run build` once), and make sure the build actually succeeded.
 
 **`error TS6059: File '…/packages/shared/src/index.ts' is not under 'rootDir'`**
 A build config inherited the `paths` mapping that points at shared *source*.
