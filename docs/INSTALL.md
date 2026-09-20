@@ -128,13 +128,28 @@ more than this repository contains (that reconciliation is P2-01):
   (SSE), `POST …/cancel`, `POST /api/sessions/:id/approve`, `GET /api/health`,
   `GET /api/metrics`, `GET /api/diagnostics/persistence`, and `GET /healthz`
   (liveness only).
-- **One provider: `mock`.** It is offline, makes no model calls, and prefixes
-  every reply with `[mock]`. Naming any other provider in
-  `WINDOWS_RUNNER_PROVIDER` is a boot error that lists what is available. The
-  OpenAI-compatible and Anthropic adapters are not in this checkout.
-- **No tools.** `packages/server/src/agent/tools/` holds the executor and the
-  contract, not tool implementations, so the loop runs with an empty tool map
-  and the agent can only answer in text. The banner says so.
+- **Two providers.** `mock` (default) is offline, makes no model calls, and
+  prefixes every reply with `[mock]`. `openai-compatible` talks to any
+  `/chat/completions` endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM,
+  Groq, Gemini's OpenAI endpoint): set `WINDOWS_RUNNER_PROVIDER=openai-compatible`,
+  `WINDOWS_RUNNER_MODEL=<model>`, optionally `WINDOWS_RUNNER_MODEL_BASE_URL`
+  (default `https://api.openai.com/v1`) and `WINDOWS_RUNNER_MODEL_API_KEY`
+  (or `OPENAI_API_KEY`; local servers need none). The key is never printed and
+  is redacted from error messages. Naming any other provider is a boot error
+  that lists what is available; there is no Anthropic adapter yet.
+- **Five built-in tools, all confined to the session root** (`WINDOWS_RUNNER_TOOLS=0`
+  disables them): `read_file` and `list_dir` never ask; `write_file`,
+  `edit_file` and `run_terminal` ask for approval on every call. Paths are
+  relative to the project root and go through the same containment checks as
+  session roots (no `..`, no absolute paths, no encoded traversal, no symlinks
+  pointing outside — for reads *and* writes). `run_terminal` runs in the real
+  project root through the platform shell with the server's own secrets
+  stripped from the environment, output bounded to
+  `WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT` bytes (head + tail), a wall-clock limit
+  of `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS`, and is killed as a **process tree**
+  (process group on POSIX, `taskkill /T` on Windows) on Stop or timeout.
+  Unknown or malformed tool calls from the model are controlled tool errors
+  fed back to the model, never crashes.
 - **Bearer-token authentication on every `/api` route** (P0-01). Only
   `/healthz` is public. Requests must send `Authorization: Bearer <token>`;
   the token comes from `WINDOWS_RUNNER_AUTH_TOKEN`, else from
@@ -168,7 +183,13 @@ back silently.
 | `WINDOWS_RUNNER_AUTH_TOKEN` | generated | Bearer token, ≥16 characters, no whitespace. Unset: `<data dir>/auth-token` in file mode, else per-process |
 | `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values (comma-separated, no port) accepted besides loopback names and the bind address |
 | `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Comma-separated browser origins (`scheme://host[:port]`) allowed to call the API; replaces the loopback default. No `*`, no `null` |
-| `WINDOWS_RUNNER_PROVIDER` | `mock` | Provider name; only `mock` exists |
+| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline) or `openai-compatible` |
+| `WINDOWS_RUNNER_MODEL` | none | Model name; required with `openai-compatible` (e.g. `gpt-4o-mini`, `llama3.1`) |
+| `WINDOWS_RUNNER_MODEL_BASE_URL` | `https://api.openai.com/v1` | Base URL; `{base}/chat/completions` is called. `http://127.0.0.1:11434/v1` for Ollama |
+| `WINDOWS_RUNNER_MODEL_API_KEY` | `OPENAI_API_KEY`, else none | Bearer key for the model endpoint. Never printed; redacted from errors |
+| `WINDOWS_RUNNER_TOOLS` | `1` | Register the built-in tools (`0` = text-only agent) |
+| `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` | `60000` | Wall-clock limit for one `run_terminal` command (the 30 s tool timeout in `createApp()` still applies on top) |
+| `WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT` | `65536` | Bytes of command output kept (first and last half) |
 | `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` (lost on restart) or `file` (JSONL + `meta.json` under the data dir) |
 | `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Absolute path; created on first file-mode boot. Unused in memory mode |
 | `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY` | `true` in file mode | Persist each event before it is sent over SSE |
@@ -399,8 +420,16 @@ not been trusted for that configuration (or it changed). Inspect and grant with
 `GET`/`POST /api/sessions/:id/trust` using the `configHash` from the message.
 
 **`npm start` says `provider "…" is not available in this checkout`**
-Only the offline `mock` provider exists here. Unset `WINDOWS_RUNNER_PROVIDER` or
-set it to `mock`; there is no key or endpoint to configure.
+Two providers exist: `mock` (offline) and `openai-compatible`. There is no
+`openai`, `anthropic` or `ollama` name — Ollama and friends are
+`openai-compatible` with `WINDOWS_RUNNER_MODEL_BASE_URL` pointed at them.
+
+**A turn fails with `MODEL_AUTH`, `MODEL_RATE_LIMITED`, `MODEL_UNAVAILABLE`, `MODEL_BAD_REQUEST`, `MODEL_CONTEXT_EXHAUSTED` or `MODEL_STREAM_BROKEN`**
+These are the `openai-compatible` adapter's mappings of the upstream response:
+401/403, 429, connection failure or 5xx, other 4xx (404 usually means a wrong
+model name or base URL), a context-length error, or a stream that ended
+before the model finished. Rate-limit, unavailable and broken-stream failures
+are marked retryable; send the turn again.
 
 **A session request returns `403 PATH_ESCAPES_ROOT` or `400 PATH_NOT_FOUND`**
 The `cwd` must be an existing directory inside one of the allowed roots (your

@@ -27,6 +27,26 @@ export interface PersistenceConfig {
 
 export type AuthMode = "token" | "off";
 
+/** Settings for the openai-compatible provider; ignored by `mock`. */
+export interface ModelConfig {
+  /** `{baseUrl}/chat/completions` is called. Default: https://api.openai.com/v1 */
+  baseUrl: string;
+  /** Required when provider=openai-compatible. */
+  model?: string;
+  /** From WINDOWS_RUNNER_MODEL_API_KEY (or OPENAI_API_KEY). Optional for local servers. Never printed. */
+  apiKey?: string;
+}
+
+/** Tool sandbox settings (Phase 3 minimal tool set). */
+export interface ToolsConfig {
+  /** Register the built-in file/terminal tools. Default true. */
+  enabled: boolean;
+  /** Wall-clock limit for one terminal command. Default 60_000. */
+  terminalTimeoutMs: number;
+  /** Max bytes of combined stdout/stderr kept per command. Default 64 KiB. */
+  terminalOutputLimit: number;
+}
+
 export interface AuthConfig {
   /**
    * "token": every /api route requires `Authorization: Bearer <token>` (default).
@@ -64,6 +84,8 @@ export interface ServerConfig {
   auth: AuthConfig;
   /** Provider name; resolved against the registry in providers/index.ts at boot. */
   provider: string;
+  model: ModelConfig;
+  tools: ToolsConfig;
   persistence: PersistenceConfig;
   /** Absolute project roots a session may be pinned to. Never empty. */
   allowedRoots: string[];
@@ -74,6 +96,9 @@ export interface ServerConfig {
 export const DEFAULT_PORT = 7634;
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PROVIDER = "mock";
+export const DEFAULT_MODEL_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_TERMINAL_TIMEOUT_MS = 60_000;
+export const DEFAULT_TERMINAL_OUTPUT_LIMIT = 64 * 1024;
 export const DEFAULT_SHUTDOWN_GRACE_MS = 5_000;
 /** Shorter tokens are refused: they must survive an online guess. */
 export const MIN_AUTH_TOKEN_LENGTH = 16;
@@ -84,6 +109,13 @@ export const ENV = {
   port: "PORT",
   allowRemote: "WINDOWS_RUNNER_ALLOW_REMOTE",
   provider: "WINDOWS_RUNNER_PROVIDER",
+  modelBaseUrl: "WINDOWS_RUNNER_MODEL_BASE_URL",
+  modelName: "WINDOWS_RUNNER_MODEL",
+  modelApiKey: "WINDOWS_RUNNER_MODEL_API_KEY",
+  modelApiKeyFallback: "OPENAI_API_KEY",
+  toolsEnabled: "WINDOWS_RUNNER_TOOLS",
+  terminalTimeoutMs: "WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS",
+  terminalOutputLimit: "WINDOWS_RUNNER_TERMINAL_OUTPUT_LIMIT",
   persistenceMode: "WINDOWS_RUNNER_PERSISTENCE_MODE",
   dataDir: "WINDOWS_RUNNER_DATA_DIR",
   durableBeforeNotify: "WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY",
@@ -119,6 +151,19 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
   const port = parsePort(env[ENV.port]);
   const allowRemote = parseBoolean(ENV.allowRemote, env[ENV.allowRemote], false);
   const provider = parseProviderName(env[ENV.provider]);
+  const model: ModelConfig = {
+    baseUrl: parseBaseUrl(env[ENV.modelBaseUrl]),
+    model: isBlank(env[ENV.modelName]) ? undefined : env[ENV.modelName]!.trim(),
+    apiKey: parseSecret(ENV.modelApiKey, env[ENV.modelApiKey]) ?? parseSecret(ENV.modelApiKeyFallback, env[ENV.modelApiKeyFallback]),
+  };
+  if (provider === "openai-compatible" && model.model === undefined) {
+    throw new ConfigError(`${ENV.modelName} is required when ${ENV.provider}=openai-compatible (e.g. gpt-4o-mini, llama3.1).`, ENV.modelName);
+  }
+  const tools: ToolsConfig = {
+    enabled: parseBoolean(ENV.toolsEnabled, env[ENV.toolsEnabled], true),
+    terminalTimeoutMs: parsePositiveInteger(ENV.terminalTimeoutMs, env[ENV.terminalTimeoutMs], DEFAULT_TERMINAL_TIMEOUT_MS),
+    terminalOutputLimit: parsePositiveInteger(ENV.terminalOutputLimit, env[ENV.terminalOutputLimit], DEFAULT_TERMINAL_OUTPUT_LIMIT),
+  };
 
   const mode = parsePersistenceMode(env[ENV.persistenceMode]);
   const dataDir = parseDataDir(env[ENV.dataDir], homedir);
@@ -151,6 +196,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, options: 
     allowRemote,
     auth,
     provider,
+    model,
+    tools,
     persistence: { mode, dataDir, durableBeforeNotify, fsync },
     allowedRoots,
     shutdownGraceMs,
@@ -176,7 +223,7 @@ export function describeConfig(config: ServerConfig): string[] {
   // The auth line is printed by boot.ts once the token source is known.
   const lines = [
     `bind:        ${config.host}:${config.port}${bindNote}`,
-    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ""}`,
+    `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"}`}`,
     `persistence: ${config.persistence.mode}${config.persistence.mode === "memory" ? " (sessions and turns are lost on restart)" : ""}`,
   ];
   if (config.persistence.mode === "file") {
@@ -237,6 +284,34 @@ function parseNonNegativeInteger(variable: string, raw: string | undefined, fall
     throw new ConfigError(`${variable} must be a non-negative integer (milliseconds), got "${raw}".`, variable);
   }
   return Number(value);
+}
+
+function parseBaseUrl(raw: string | undefined): string {
+  if (isBlank(raw)) return DEFAULT_MODEL_BASE_URL;
+  const value = raw.trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ConfigError(`${ENV.modelBaseUrl} must be an absolute http(s) URL, got "${raw}".`, ENV.modelBaseUrl);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigError(`${ENV.modelBaseUrl} must use http or https, got "${raw}".`, ENV.modelBaseUrl);
+  }
+  return value;
+}
+
+function parseSecret(variable: string, raw: string | undefined): string | undefined {
+  if (isBlank(raw)) return undefined;
+  const value = raw.trim();
+  if (/\s/.test(value)) throw new ConfigError(`${variable} must not contain whitespace.`, variable);
+  return value;
+}
+
+function parsePositiveInteger(variable: string, raw: string | undefined, fallback: number): number {
+  const value = parseNonNegativeInteger(variable, raw, fallback);
+  if (value === 0) throw new ConfigError(`${variable} must be a positive integer, got "${raw}".`, variable);
+  return value;
 }
 
 function parseProviderName(raw: string | undefined): string {

@@ -67,7 +67,10 @@ async function main(): Promise<void> {
     console.log(`               (generated for this run; send it as "Authorization: Bearer <token>". Set ${"WINDOWS_RUNNER_AUTH_TOKEN"} or use file persistence for a stable one)`);
   }
   if (ready.tools.size === 0) {
-    console.log("  tools:       none registered in this checkout (the agent can only answer in text)");
+    console.log("  tools:       none registered (WINDOWS_RUNNER_TOOLS=0; the agent can only answer in text)");
+  } else {
+    const names = [...ready.tools.values()].map((t) => `${t.name}${t.requiresApproval(undefined) ? "*" : ""}`);
+    console.log(`  tools:       ${names.join(", ")}  (* = asks for approval every call; all paths confined to the session root)`);
   }
   if (ready.config.provider === "mock") {
     console.log(`  note:        replies come from the offline mock provider and are prefixed "[mock]"`);

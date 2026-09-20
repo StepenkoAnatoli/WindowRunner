@@ -1,0 +1,6 @@
+{
+  "id": "refactor",
+  "category": "refactor",
+  "prompt": "src/config.js repeats the same environment-variable parsing three times. Refactor it so a single helper `readEnv(name, fallback)` is used by all three getters. Behaviour must not change and the module must keep exporting getPort, getHost and getLogLevel.",
+  "check": "node check.js"
+}

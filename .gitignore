@@ -19,3 +19,6 @@ crash-reports/
 # Playwright output (packages/web)
 test-results/
 playwright-report/
+
+# Eval reports from CI runs (committed reports live in eval/results/)
+eval-scripted.json

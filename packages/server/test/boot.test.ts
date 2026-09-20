@@ -51,6 +51,8 @@ function baseConfig(overrides: ConfigOverrides = {}): ServerConfig {
     port: 0,
     allowRemote: false,
     provider: "mock",
+    model: { baseUrl: "https://api.openai.com/v1" },
+    tools: { enabled: false, terminalTimeoutMs: 60_000, terminalOutputLimit: 65_536 },
     allowedRoots: [os.tmpdir()],
     shutdownGraceMs: 2_000,
     ...overrides,
@@ -161,10 +163,10 @@ describe("MockProvider", () => {
     await assert.rejects(stream.next(), /stop/);
   });
 
-  it("is the only registered provider; others are rejected with the available list", () => {
-    assert.deepEqual([...AVAILABLE_PROVIDERS], ["mock"]);
+  it("is the default provider; unknown names are rejected with the available list", () => {
+    assert.deepEqual([...AVAILABLE_PROVIDERS], ["mock", "openai-compatible"]);
     assert.ok(createProvider("mock") instanceof MockProvider);
-    assert.throws(() => createProvider("openai"), (err: unknown) => err instanceof UnknownProviderError && /available: mock/.test(err.message));
+    assert.throws(() => createProvider("openai"), (err: unknown) => err instanceof UnknownProviderError && /available: mock, openai-compatible/.test(err.message));
   });
 });
 
@@ -208,8 +210,8 @@ describe("startServer — memory mode", () => {
     const { status, body } = await postTurn(handle.url, "s1", project, "ping");
     assert.equal(status, 202);
     const events = await readSseToEnd(`${handle.url}/api/sessions/s1/turns/${body.turnId}/events`);
-    assert.deepEqual(events.map((e) => e.type), ["turn_started", "text_delta", "turn_completed"]);
-    assert.match(events[1].delta, /^\[mock\] .*You said: "ping"/);
+    assert.deepEqual(events.map((e) => e.type), ["turn_started", "model_call", "text_delta", "turn_completed"]);
+    assert.match(events[2].delta, /^\[mock\] .*You said: "ping"/);
     assert.equal(events[0].root, project);
   });
 
@@ -495,7 +497,7 @@ describe("src/index.ts executable", () => {
       assert.match(stdout, /provider: +mock \(offline/);
       assert.match(stdout, /persistence: +memory/);
       assert.match(stdout, new RegExp(`roots: +${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-      assert.match(stdout, /tools: +none registered/);
+      assert.match(stdout, /tools: +read_file, write_file\*, edit_file\*, list_dir, run_terminal\*/);
     } finally {
       proc.child.kill("SIGTERM");
     }

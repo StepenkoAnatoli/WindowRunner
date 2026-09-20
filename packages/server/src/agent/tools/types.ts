@@ -24,6 +24,8 @@ export interface ToolTrustRequirement {
 export interface ToolDefinition {
   name: string;
   description: string;
+  /** JSON Schema describing `input`; sent to providers that support tool schemas. */
+  inputSchema?: Record<string, unknown>;
   requiresApproval: (input: unknown) => boolean;
   reason?: (input: unknown) => string;
   /** Present when the tool runs project-supplied configuration; may depend on the input. */

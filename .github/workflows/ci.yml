@@ -65,6 +65,14 @@ jobs:
       - name: Startup smoke test
         run: npm run smoke:start
 
+      # Evaluation harness in scripted mode: real server + openai-compatible
+      # adapter + built-in tools + approvals, driven by scripted "model"
+      # solutions against a fake OpenAI endpoint. No key, no network. Proves
+      # the harness and the tool path end to end; real-model runs are manual
+      # (eval/README.md) and never part of CI.
+      - name: Evaluation harness (scripted, no keys)
+        run: npm run eval -- --expect-pass --out eval-scripted.json
+
       - name: Collect diagnostics
         if: failure()
         shell: bash

@@ -40,6 +40,7 @@ web UI against the real server with a scripted offline provider.
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
+| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; five tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
 | Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
@@ -57,7 +58,7 @@ this checklist tracks.
 | `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
-| Fake-provider failure suite (P1-07) | No context-exhaustion / 429-backoff / malformed-tool-call fixtures; there is no real provider adapter to fail yet. |
+| Real-model evaluation runs (P2-02) | Deliberately manual: they cost money and are not reproducible. `eval/README.md`. |
 | Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
 
 ### Merge gating is NOT configured
@@ -95,11 +96,11 @@ a pull request.
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
-| P1-05 | Claimed complete in Batch 6. **"Windows CI green" was not reproducible when claimed: there was no Windows job in this repository then** (a `Platform` matrix with a Windows leg exists now; see "CI enforcement status"). None of the referenced files (`process-tree.ts`, `tools/terminal.ts`) exist in this checkout. Residual as written: Electron quit on Windows does not reach the SIGTERM handler. |
+| P1-05 | **Largely landed 2026-09-20 (Phase 3).** `src/process-tree.ts` (process group on POSIX, `taskkill /T` on Windows) and `run_terminal` in `src/agent/tools/builtin.ts`; tree kill on timeout and Stop is tested with a grandchild pid on POSIX (`builtin-tools.test.ts`); Windows leg runs the same suite minus the pid checks. Malformed/unknown tool calls are controlled errors. Open: usage accounting across retries (no automatic retry exists), Electron quit on Windows (no Electron). |
 | P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
-| P1-07 | **Partial as of 2026-09-20 (Phase 2 of the UI plan).** A runnable web UI exists (`packages/web`, served at `/` by the server) and a Playwright suite (`packages/web/e2e`) runs in the `Browser E2E` CI job against the mock/scripted provider with no keys: auth flow, session creation, streaming, reconnect with `Last-Event-ID`, cancellation, approval/denial, project trust, error display. Not covered: settings, edit/diff review, reload-resume, the fake-provider failure suite; no job gates merges. |
+| P1-07 | **Partial as of 2026-09-20.** Browser E2E (Phase 2) as before. Phase 3 added the fake-provider failure suite: `test/openai-compatible.test.ts` against an OpenAI-shaped fake covers auth, 429, 5xx, context exhaustion, dropped/garbage streams, malformed tool arguments, cancellation mid-stream. Not covered: settings, edit/diff review, reload-resume; no job gates merges. |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
-| P2-02 | Open (Phase 5). |
+| P2-02 | **Partial as of 2026-09-20 (Phase 3).** `eval/` harness with five task categories and hidden checks; scripted mode runs in CI, real-model runs are manual and reported as JSON under `eval/results/`. Metrics recorded: completion, steps, tool calls/failures, approvals (interventions), tokens, elapsed. Not recorded: cost, regressions across releases (no real-model baseline committed yet). |
 
 ## P0 — Must fix before recommending installation
 
@@ -121,7 +122,7 @@ Acceptance criteria:
 - [x] Origin/Host validation rejects untrusted origins and DNS rebinding attempts. *(`403 HOST_NOT_ALLOWED` / `403 ORIGIN_NOT_ALLOWED`, also on `/healthz`.)*
 - [x] Missing or null Origin headers are handled safely and do not grant access. *(Absent Origin = no CORS grant, token still required; `Origin: null` always refused.)*
 - [x] Default bind remains loopback-only; remote access is explicit and documented. *(`WINDOWS_RUNNER_ALLOW_REMOTE=1` still required; `WINDOWS_RUNNER_AUTH=off` cannot be combined with a non-loopback bind.)*
-- [ ] Browser and Electron flows still work with valid credentials. *(No browser or Electron client exists in this checkout; the server side — bearer on SSE, CORS preflight, `Last-Event-ID` — is tested. Re-check when P1-07's UI lands.)*
+- [ ] Browser and Electron flows still work with valid credentials. *(Browser: yes — Playwright E2E sends the bearer on every request incl. SSE reconnects. Electron: no client exists.)*
 - [x] Unauthorized requests cannot read files, change settings, start turns, or approve actions. *(Verified: provider never invoked, no active turn after a 401.)*
 - [x] Regression tests cover auth failure, host rejection, and valid client access.
 
@@ -274,19 +275,19 @@ Title: Terminate process trees on cancel and keep retries/transcripts coherent
 
 Files to inspect:
 - `packages/server/src/process-tree.ts`
-- `packages/server/src/agent/tools/terminal.ts`
-- `packages/server/src/agent/loop.ts`
-- `packages/server/test/process-cleanup.test.ts`
-- `packages/server/test/`
+- `packages/server/src/agent/tools/builtin.ts` (`run_terminal`, `runCommand`)
+- `packages/server/src/agent/tools/executor.ts` (parent cancellation is never a tool result)
+- `packages/server/src/agent/loop.ts` (malformed tool input → controlled `TOOL_FAILED`)
+- `packages/server/test/builtin-tools.test.ts`, `packages/server/test/openai-compatible.test.ts`
 
 Acceptance criteria:
-- [ ] Long-running terminal commands are terminated with their full process tree on timeout or Stop.
-- [ ] Windows and POSIX process cleanup are both covered.
-- [ ] Cancellation while awaiting approval exits cleanly without hanging or leaking resources.
-- [ ] Partial-stream retries do not duplicate visible text or create stale errors.
-- [ ] Usage accounting remains consistent across retries.
-- [ ] Malformed or unknown tool calls are handled as controlled errors instead of uncaught failures.
-- [ ] Regression tests cover cancellation, retries, and malformed tool calls.
+- [x] Long-running terminal commands are terminated with their full process tree on timeout or Stop. *(POSIX: `detached` + `kill(-pgid)` TERM→KILL; verified by checking a grandchild pid is dead. Windows: `taskkill /T /F`.)*
+- [ ] Windows and POSIX process cleanup are both covered. *(Both implemented; only the POSIX path asserts on grandchild pids — the Windows CI leg runs the suite with those cases skipped.)*
+- [x] Cancellation while awaiting approval exits cleanly without hanging or leaking resources. *(`approvals.cancelTurn` on abort; covered in loop tests and browser E2E "Stop".)*
+- [ ] Partial-stream retries do not duplicate visible text or create stale errors. *(No automatic retry exists; partial text is emitted once and the failure code is retryable where appropriate.)*
+- [ ] Usage accounting remains consistent across retries. *(Same — no retries yet.)*
+- [x] Malformed or unknown tool calls are handled as controlled errors instead of uncaught failures. *(`UNKNOWN_TOOL`; unparsable JSON arguments → `TOOL_FAILED` with the raw input, never an approval prompt.)*
+- [x] Regression tests cover cancellation, retries, and malformed tool calls. *(Cancellation and malformed calls; retries n/a.)*
 
 ---
 
@@ -344,7 +345,7 @@ Files to inspect:
 Acceptance criteria:
 - [x] Browser E2E suite runs against the mock provider, no API keys required. *(`packages/web/e2e/ui.spec.ts`; scripted provider in `e2e/server.ts` reacts to the message text.)*
 - [ ] E2E covers settings, session creation, streaming, approval/denial, edit/diff review, cancellation, reload, and error display. *(Covered: auth, session creation + root refusal, streaming, reconnect, approval/denial, cancellation, provider failure, trust prompt, error banner. Not covered: settings, edit/diff review — no such UI yet; reload-resume of an in-flight turn.)*
-- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream. *(Needs a real provider adapter — Phase 3.)*
+- [ ] Fake-provider suite covers context exhaustion, rate limits (429 + backoff), broken/dropped streams, malformed tool calls, and cancellation mid-stream. *(All covered in `test/openai-compatible.test.ts` except backoff: 429 is surfaced as retryable `MODEL_RATE_LIMITED`; there is no automatic backoff/retry.)*
 - [ ] Both suites run in the normal Linux CI job and gate merges. *(E2E runs in its own `Browser E2E` job; merge gating is not configured.)*
 - [x] No real-provider keys are required by ordinary CI.
 
@@ -374,17 +375,16 @@ Acceptance criteria:
 Title: Add evaluation harness for representative coding tasks and operational metrics
 
 Files to inspect:
-- `docs/`
-- `packages/server/test/`
-- `README.md`
+- `eval/run.mts`, `eval/tasks/*/`, `eval/README.md`, `eval/results/`
+- `.github/workflows/ci.yml` (scripted run)
 
 Acceptance criteria:
-- [ ] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
-- [ ] Each task uses hidden or independent checks where practical.
-- [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior.
-- [ ] Evaluation results identify model version, task fixture, limits, and failure modes.
-- [ ] Real-provider evaluations are explicitly separated from ordinary CI and require spending authorization.
-- [ ] Results are documented for fair comparison across releases.
+- [x] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
+- [x] Each task uses hidden or independent checks where practical. *(`check.js` lives outside the project root the agent is confined to.)*
+- [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior. *(Completion, interventions, tokens, elapsed, steps, tool failures: yes. Cost and regressions: no — no committed real-model baseline yet.)*
+- [x] Evaluation results identify model version, task fixture, limits, and failure modes.
+- [x] Real-provider evaluations are explicitly separated from ordinary CI and require spending authorization. *(CI runs scripted mode only.)*
+- [ ] Results are documented for fair comparison across releases. *(Format exists; first real-model report still to be committed.)*
 
 ---
 

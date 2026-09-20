@@ -1,12 +1,12 @@
-import type { LLMProvider, LLMRequest } from "./types.js";
+import type { LLMProvider, LLMRequest, LLMToolCall } from "./types.js";
 import { runWithDeadline, DeadlineError } from "../deadline.js";
 
 export interface ModelCallResult {
   text: string;
-  toolCalls: Array<{ id: string; name: string; input: unknown }>;
+  toolCalls: LLMToolCall[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   partialText?: string;
-  partialToolCalls?: Array<{ id: string; name: string; input: unknown }>;
+  partialToolCalls?: LLMToolCall[];
   partialUsage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 }
 
@@ -19,14 +19,14 @@ export async function runModelCall(
   shutdownGraceMs = 1000
 ): Promise<ModelCallResult> {
   let partialText = "";
-  let partialToolCalls: Array<{ id: string; name: string; input: unknown }> = [];
+  let partialToolCalls: LLMToolCall[] = [];
   let partialUsage: ModelCallResult["usage"] | undefined;
 
   try {
     const result = await runWithDeadline(
       async (childSignal) => {
         let text = "";
-        const toolCalls: Array<{ id: string; name: string; input: unknown }> = [];
+        const toolCalls: LLMToolCall[] = [];
         let usage: ModelCallResult["usage"] | undefined;
 
         const stream = provider.stream(request, { signal: childSignal });

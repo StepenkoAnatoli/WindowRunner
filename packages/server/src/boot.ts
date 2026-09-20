@@ -18,6 +18,7 @@ import { SessionManager } from "./agent/session-manager.js";
 import { createProvider, UnknownProviderError } from "./providers/index.js";
 import type { LLMProvider } from "./providers/types.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
+import { createBuiltinTools } from "./agent/tools/builtin.js";
 
 /**
  * Server boot path.
@@ -196,13 +197,17 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   // Fail on an unknown provider before touching the filesystem.
   let provider: LLMProvider;
   try {
-    provider = overrides.provider ?? createProvider(config.provider);
+    provider = overrides.provider ?? createProvider(config.provider, config.model);
   } catch (err) {
     if (err instanceof UnknownProviderError) throw new ConfigError(err.message, ENV.provider);
     throw err;
   }
 
-  const tools = overrides.tools ?? new Map<string, ToolDefinition>();
+  const tools =
+    overrides.tools ??
+    (config.tools.enabled
+      ? createBuiltinTools({ terminalTimeoutMs: config.tools.terminalTimeoutMs, terminalOutputLimit: config.tools.terminalOutputLimit })
+      : new Map<string, ToolDefinition>());
   const approvals = new ApprovalRegistry({ now });
 
   let manager: TurnManager;

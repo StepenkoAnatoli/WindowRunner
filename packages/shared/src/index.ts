@@ -5,7 +5,19 @@ export type ToolCallId = string;
 
 export type TurnStatus = "running" | "waiting_for_approval" | "completed" | "cancelled" | "failed";
 export type ApprovalDecision = "approve" | "deny";
-export type TurnFailureCode = "MODEL_TIMEOUT" | "MODEL_FAILED" | "APPROVAL_TIMEOUT" | "TURN_LIMIT" | "RESTART";
+export type TurnFailureCode =
+  | "MODEL_TIMEOUT"
+  | "MODEL_FAILED"
+  | "APPROVAL_TIMEOUT"
+  | "TURN_LIMIT"
+  | "RESTART"
+  // Provider-reported failures (providers/types.ts ProviderError):
+  | "MODEL_AUTH"
+  | "MODEL_RATE_LIMITED"
+  | "MODEL_UNAVAILABLE"
+  | "MODEL_BAD_REQUEST"
+  | "MODEL_CONTEXT_EXHAUSTED"
+  | "MODEL_STREAM_BROKEN";
 export type ToolErrorCode =
   | "TOOL_FAILED"
   | "TOOL_TIMED_OUT"
@@ -76,6 +88,8 @@ export interface StreamEventBase {
 export type StreamEvent = StreamEventBase & (
   | { type: "turn_started"; limits: TurnLimits; message: string }
   | { type: "text_delta"; delta: string; accumulated?: string }
+  /** One model call is about to start (step is 1-based). Lets clients and the eval harness count real steps. */
+  | { type: "model_call"; step: number; maxSteps: number }
   | { type: "tool_call"; callId: ToolCallId; toolName: string; input: unknown }
   | { type: "turn_waiting_for_approval"; request: ApprovalRequest }
   | { type: "approval_resolved"; requestId: ApprovalId; decision: ApprovalDecision | string; resolvedAt: number; resolution?: ApprovalResolution }
@@ -179,9 +193,14 @@ export function reduceTurnState(state: TurnState, event: StreamEvent): TurnState
       break;
     }
 
+    case "model_call": {
+      next.status = "running";
+      next.stepsCompleted = event.step;
+      break;
+    }
+
     case "tool_call": {
       next.status = "running";
-      next.stepsCompleted += 1;
       break;
     }
 

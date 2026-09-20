@@ -1,0 +1,1 @@
+{ "name": "bf", "version": "1.0.0", "private": true, "scripts": { "build": "node --check src/app.js && node src/app.js" } }

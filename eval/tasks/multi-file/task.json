@@ -1,0 +1,6 @@
+{
+  "id": "multi-file",
+  "category": "multi-file change",
+  "prompt": "Rename the function `fetchUser` to `loadUser` across the project: it is defined in src/api.js and used in src/app.js and src/report.js. Update the definition, the export, and every call site. Nothing else should change.",
+  "check": "node check.js"
+}

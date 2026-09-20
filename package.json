@@ -61,6 +61,7 @@
     "smoke:packed": "node scripts/smoke-packed.mjs",
     "smoke:packed:start": "node scripts/smoke-packed-start.mjs",
     "smoke:start": "node scripts/smoke-start.mjs",
+    "eval": "tsx eval/run.mts",
     "e2e": "npm run e2e --workspace packages/web",
     "e2e:install": "npm run e2e:install --workspace packages/web"
   }

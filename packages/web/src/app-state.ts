@@ -168,12 +168,20 @@ export function describeTurn(view: TurnView): string {
   switch (s.status) {
     case "idle":
       return view.connection === "reconnecting" ? `reconnecting (attempt ${view.reconnectAttempt})…` : "starting…";
-    case "running":
-      return view.connection === "reconnecting" ? `running — reconnecting (attempt ${view.reconnectAttempt})…` : s.activeTools.size > 0 ? `running ${[...s.activeTools.values()].map((t) => t.toolName).join(", ")}…` : "running…";
+    case "running": {
+      const step = s.stepsCompleted > 0 ? `step ${s.stepsCompleted}/${s.limits.maxSteps} · ` : "";
+      return view.connection === "reconnecting"
+        ? `${step}running — reconnecting (attempt ${view.reconnectAttempt})…`
+        : s.activeTools.size > 0
+          ? `${step}running ${[...s.activeTools.values()].map((t) => t.toolName).join(", ")}…`
+          : `${step}running…`;
+    }
     case "waiting_for_approval":
       return `waiting for approval (${s.pendingApprovals.size})`;
-    case "completed":
-      return s.usage?.totalTokens !== undefined ? `completed · ${s.usage.totalTokens} tokens` : "completed";
+    case "completed": {
+      const steps = s.stepsCompleted > 1 ? ` · ${s.stepsCompleted} steps` : "";
+      return s.usage?.totalTokens !== undefined ? `completed · ${s.usage.totalTokens} tokens${steps}` : `completed${steps}`;
+    }
     case "cancelled":
       return "cancelled";
     case "failed":

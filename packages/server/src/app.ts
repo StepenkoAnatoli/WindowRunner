@@ -410,7 +410,7 @@ export function createApp(deps: AppDeps) {
 
     const request = {
       messages: [{ role: "user" as const, content: message }],
-      tools: [...deps.tools.values()].map((t) => ({ name: t.name, description: t.description })),
+      tools: [...deps.tools.values()].map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema })),
     };
 
     const limits = {

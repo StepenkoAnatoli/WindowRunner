@@ -1,5 +1,5 @@
 import type { SessionId, TurnId, TurnLimits, TurnUsage } from "@windows-runner/shared";
-import type { LLMProvider, LLMRequest } from "../providers/types.js";
+import { ProviderError, type LLMProvider, type LLMRequest } from "../providers/types.js";
 import type { ToolDefinition } from "./tools/types.js";
 import { ApprovalRegistry, type ApprovalResolution } from "./approval-registry.js";
 import { TurnManager } from "./turn-manager.js";
@@ -130,6 +130,7 @@ export class TurnRunner {
         if (signal.aborted) {
           throw new DeadlineError("cancelled", "model", "Stop pressed");
         }
+        await append({ type: "model_call", step: step + 1, maxSteps: limits.maxSteps });
 
         let modelResult;
         try {
@@ -179,11 +180,12 @@ export class TurnRunner {
             return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
           }
 
+          const providerError = err instanceof ProviderError ? err : err?.cause instanceof ProviderError ? err.cause : undefined;
           await append({
             type: "turn_failed",
-            code: "MODEL_FAILED",
+            code: providerError?.code ?? "MODEL_FAILED",
             message: err.message ?? "model call failed",
-            retryable: false,
+            retryable: providerError?.retryable ?? false,
           });
           if (this.metrics) { try { this.metrics.observeDuration("turnCompletion", this.now() - turnStartedAt); } catch {} }
           return { status: "failed", message: err.message, usage: err.partialUsage ?? usage };
@@ -207,8 +209,10 @@ export class TurnRunner {
         const nextMessages = [...request.messages];
         if (modelResult.text) {
           await append({ type: "text_delta", delta: modelResult.text });
-          nextMessages.push({ role: "assistant", content: modelResult.text });
         }
+        // The assistant turn carries its tool calls so wire formats that require
+        // the calls to be echoed back (OpenAI) can rebuild the transcript.
+        nextMessages.push({ role: "assistant", content: modelResult.text, toolCalls: modelResult.toolCalls });
 
         for (const toolCall of modelResult.toolCalls) {
           if (signal.aborted) {
@@ -218,6 +222,21 @@ export class TurnRunner {
           await append({ type: "tool_call", callId: toolCall.id, toolName: toolCall.name, input: toolCall.input });
 
           const tool = this.tools.get(toolCall.name);
+
+          // Malformed arguments (unparsable JSON from the model) are a
+          // controlled tool failure the model can correct, never a crash.
+          if (tool && toolCall.inputError !== undefined) {
+            const result = {
+              ok: false as const,
+              code: "TOOL_FAILED" as const,
+              message: `malformed tool input for ${toolCall.name}: ${toolCall.inputError}`,
+              retryable: true,
+              details: { rawInput: (toolCall.rawInput ?? "").slice(0, 2000) },
+            };
+            await append({ type: "tool_completed", callId: toolCall.id, toolName: toolCall.name, result });
+            nextMessages.push({ role: "tool", content: `${result.code}: ${result.message}`, toolCallId: toolCall.id, toolName: toolCall.name });
+            continue;
+          }
 
           if (!tool) {
             const result = {
