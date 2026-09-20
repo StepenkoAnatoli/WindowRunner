@@ -231,6 +231,64 @@ export class TurnManager {
     return this.logs.get(turnId);
   }
 
+  // ---- Public snapshot API for long-running validation (avoids direct log access) ----
+  getActiveTurnCount(): number {
+    let count = 0;
+    for (const log of this.logs.values()) {
+      if (!log.state.isTerminal) count++;
+    }
+    return count;
+  }
+
+  getAllTurnStates(): Array<{
+    turnId: TurnId;
+    sessionId: SessionId;
+    startedAt?: number;
+    updatedAt: number;
+    isTerminal: boolean;
+    status: TurnState["status"];
+  }> {
+    const out: Array<{
+      turnId: TurnId;
+      sessionId: SessionId;
+      startedAt?: number;
+      updatedAt: number;
+      isTerminal: boolean;
+      status: TurnState["status"];
+    }> = [];
+    for (const [turnId, log] of this.logs.entries()) {
+      out.push({
+        turnId,
+        sessionId: log.state.sessionId,
+        startedAt: log.state.startedAt,
+        updatedAt: log.state.updatedAt,
+        isTerminal: log.state.isTerminal,
+        status: log.state.status,
+      });
+    }
+    return out;
+  }
+
+  getStuckTurns(now: number, thresholdMs: number): Array<{ turnId: TurnId; sessionId: SessionId; durationMs: number; startedAt: number }> {
+    const stuck: Array<{ turnId: TurnId; sessionId: SessionId; durationMs: number; startedAt: number }> = [];
+    for (const [turnId, log] of this.logs.entries()) {
+      if (log.state.isTerminal) continue;
+      const startedAt = log.state.startedAt ?? log.state.updatedAt ?? now;
+      const duration = now - startedAt;
+      if (duration > thresholdMs) {
+        stuck.push({ turnId, sessionId: log.state.sessionId, durationMs: duration, startedAt });
+      }
+    }
+    return stuck;
+  }
+
+  // Expose store diagnostics if available for metrics integration
+  getStoreDiagnostics(): any {
+    const s: any = this.store as any;
+    if (typeof s.getDiagnostics === "function") return s.getDiagnostics();
+    return undefined;
+  }
+
   // For restart recovery — handles FileTurnLogStore corruption cases via readAll
   async boot(): Promise<{ turnsLoaded: number; turnsWithRestart: number; diagnostics?: any }> {
     const turnIds = await this.store.list();

@@ -234,6 +234,31 @@ export class ApprovalRegistry {
     return this.entries.has(requestId);
   }
 
+  // Public snapshot API for long-running validation (avoids direct map access)
+  getAllPending(): ApprovalRequest[] {
+    const out: ApprovalRequest[] = [];
+    for (const entry of this.entries.values()) {
+      out.push(entry.request);
+    }
+    return out;
+  }
+
+  getPendingCount(): number {
+    return this.entries.size;
+  }
+
+  getLongWaitingApprovals(now: number, thresholdMs: number): Array<{ requestId: string; turnId: string; waitMs: number; createdAt: number }> {
+    const out: Array<{ requestId: string; turnId: string; waitMs: number; createdAt: number }> = [];
+    for (const [id, entry] of this.entries.entries()) {
+      const createdAt = (entry.request as any).createdAt ?? now;
+      const waitMs = now - createdAt;
+      if (waitMs > thresholdMs) {
+        out.push({ requestId: id, turnId: entry.request.turnId, waitMs, createdAt });
+      }
+    }
+    return out;
+  }
+
   // For leak assertions in tests
   get _entries() {
     return this.entries;
