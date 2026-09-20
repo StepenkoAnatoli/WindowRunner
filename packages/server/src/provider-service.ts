@@ -200,12 +200,26 @@ export class ProviderService {
     if (errors.length > 0) throw new ProfileError("PROFILE_INVALID", 400, "profile is invalid", errors);
 
     let updated!: RedactedProfile;
-    await this.store.mutate((data) => {
-      const i = data.profiles.findIndex((p) => p.id === id);
-      if (i === -1) throw new ProfileError("PROFILE_NOT_FOUND", 404, `profile "${id}" not found`);
-      data.profiles[i] = merged;
-      updated = redactProfile(merged);
-    });
+    try {
+      await this.store.mutate((data) => {
+        const i = data.profiles.findIndex((p) => p.id === id);
+        if (i === -1) throw new ProfileError("PROFILE_NOT_FOUND", 404, `profile "${id}" not found`);
+        data.profiles[i] = merged;
+        updated = redactProfile(merged);
+      });
+    } catch (err: any) {
+      // A ProfileError came from the mutation callback itself (the profile
+      // vanished): nothing was written, so it propagates unchanged.
+      if (err instanceof ProfileError) throw err;
+      // mutate() applies `fn` to the in-memory copy BEFORE it writes the file,
+      // so a failed write leaves memory ahead of disk. Put the old profile
+      // back so the two agree, and report the failure instead of pretending
+      // the edit landed (the live provider is deliberately NOT rebuilt here —
+      // this process keeps serving what is actually persisted).
+      this.store.data.profiles = this.store.data.profiles.map((p) => (p.id === id ? existing : p));
+      this.log(`providers:   edit to "${id}" NOT persisted (${err?.message ?? err}); keeping the saved values`);
+      throw persistError("save the edit", err);
+    }
 
     // Hot-reload: an edit to the ACTIVE profile must take effect for the next
     // turn without a restart (plan constraint). Rebuilding is cheap.
@@ -229,13 +243,39 @@ export class ProviderService {
     this.log(`providers:   deleted profile "${id}"`);
   }
 
+  /**
+   * Activate a profile: persist the choice FIRST, then move the live provider.
+   *
+   * Order is the point. `store.mutate` applies the change to the in-memory
+   * copy before it writes the file, so a failed write (read-only data dir,
+   * full disk) leaves memory ahead of disk. Swapping the live box first —
+   * the previous behaviour — meant a failed persist left THIS process on the
+   * new provider while the next boot silently reverted to the old one, a
+   * divergence no happy-path test can observe. Now the only fallible step
+   * runs first: build the provider (throws on a broken profile, nothing
+   * mutated yet), persist, and only then swap the box. On a persist failure
+   * the in-memory activeProfileId is rolled back to what is really on disk
+   * and the caller gets 500 PROFILE_PERSIST_FAILED with the live provider
+   * untouched.
+   */
   async activate(id: string): Promise<RedactedProfile> {
     const profile = this.find(id);
     const provider = this.build(profile); // throws ProfileError/ConfigError on a broken profile
+    const previous = this.store.data.activeProfileId;
+    try {
+      await this.store.mutate((data) => {
+        data.activeProfileId = id;
+      });
+    } catch (err: any) {
+      // Roll the in-memory copy back so memory and disk agree again. The
+      // store is single-writer by contract (see provider-profiles.ts), and
+      // this assignment is synchronous, so no mutation can interleave.
+      this.store.data.activeProfileId = previous;
+      this.log(`providers:   activation of "${id}" NOT persisted (${err?.message ?? err}); still using "${previous ?? "none"}"`);
+      throw persistError("activate the profile", err);
+    }
+    // Persistence succeeded: the swap is now safe, and in-memory cannot fail.
     this.active.set(provider, id);
-    await this.store.mutate((data) => {
-      data.activeProfileId = id;
-    });
     this.log(`providers:   active profile -> "${id}" (${profile.label}, model=${profile.model})`);
     return redactProfile(profile);
   }
@@ -311,6 +351,19 @@ export class ProviderService {
       this.log(`providers:   test result for "${id}" not persisted: ${err?.message ?? err}`);
     }
   }
+}
+
+/**
+ * A profile change that could not be written to `<dataDir>/provider-profiles.json`.
+ * Reported as 500 PROFILE_PERSIST_FAILED so the dashboard can say "not saved"
+ * rather than showing a success state the next restart will contradict. The
+ * underlying message (EACCES/ENOSPC/…) is included because it is what the
+ * operator has to fix; it never contains a key — ProviderStore builds it from
+ * the path and the errno only.
+ */
+function persistError(what: string, err: unknown): ProfileError {
+  const detail = err instanceof Error ? err.message : String(err);
+  return new ProfileError("PROFILE_PERSIST_FAILED", 500, `could not ${what}: ${detail}`);
 }
 
 function cleanUrl(v: unknown): string | undefined {

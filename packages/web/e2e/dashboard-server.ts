@@ -15,6 +15,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { startServer } from "../../server/src/boot.js";
+import { MockProvider } from "../../server/src/providers/mock.js";
 import { DASH_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
 
 async function main() {
@@ -31,6 +32,13 @@ async function main() {
     persistence: { mode: "file", dataDir, durableBeforeNotify: false, fsync: false },
     allowedRoots: [E2E_PROJECT],
     shutdownGraceMs: 2000,
+  }, {
+    // The same offline mock the server would build, but with a per-chunk delay
+    // so a turn streams for a few seconds. The quick chat's Stop button only
+    // exists while a turn is in flight, and without this the turn is over
+    // before a click can land. Replies are unchanged ("[mock] …"), so the
+    // other assertions in dashboard.spec.ts are unaffected.
+    provider: new MockProvider({ delayMs: 120 }),
   });
   if (!handle.dashboardDir) {
     console.error("e2e dashboard server: the dashboard is not built (packages/web/dist/dashboard missing) — run npm run build first");

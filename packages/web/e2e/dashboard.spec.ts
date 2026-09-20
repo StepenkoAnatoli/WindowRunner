@@ -75,3 +75,40 @@ test.describe("provider dashboard", () => {
     await expect(row).toHaveAttribute("data-provider", "dash-mock");
   });
 });
+
+test.describe("provider dashboard quick chat", () => {
+  test.use({ baseURL: `http://127.0.0.1:${DASH_PORT}` });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(([token, key]) => window.sessionStorage.setItem(key, token), [E2E_TOKEN, "windows-runner.token"]);
+  });
+
+  // The fixture's mock provider streams with a per-chunk delay (see
+  // dashboard-server.ts), so the turn is still running when Stop is clicked.
+  test("Stop cancels an in-flight quick chat turn and records it as cancelled", async ({ page }) => {
+    await page.goto("/dashboard");
+    await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
+
+    await page.locator('[data-testid="dash-cwd"]').fill(E2E_PROJECT);
+    await page.locator('[data-testid="dash-message"]').fill("please stop");
+    await page.locator('[data-testid="dash-send"]').click();
+
+    // Stop appears once there is a turn id to cancel, and Send is disabled
+    // while the turn runs.
+    const stop = page.locator('[data-testid="dash-chat-stop"]');
+    await expect(stop).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="dash-send"]')).toBeDisabled();
+
+    await stop.click();
+
+    // The cancellation is confirmed by the server's own turn_cancelled event,
+    // not by the client giving up: the stream stays open to receive it.
+    await expect(page.locator('[data-testid="dash-chat-status"]')).toContainText("cancelled", { timeout: 20_000 });
+    await expect(page.locator('[data-testid="dash-chat-stop"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="dash-send"]')).toBeEnabled();
+
+    // The cancelled turn still lands in the usage table (newest first).
+    const row = page.locator('[data-testid="dash-usage-row"]').first();
+    await expect(row).toHaveAttribute("data-status", "cancelled", { timeout: 15_000 });
+  });
+});

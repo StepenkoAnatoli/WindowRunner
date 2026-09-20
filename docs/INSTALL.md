@@ -293,7 +293,13 @@ Storage:
   memory; profiles do not).
 - Usage history lives in `<data dir>/usage.jsonl` (mode 0600, one line per
   terminal turn). It contains turn metadata (provider, model, tokens,
-  status) — no keys, no message content.
+  status) — no keys, no message content. It is **bounded**, so it cannot grow
+  without limit on a machine that runs for months: once the file would exceed
+  8 MiB it is rotated to `usage.jsonl.1` (one older generation is kept, so
+  disk use stays around 16 MiB), and a restart only reads the newest tail of
+  the file to rebuild the dashboard's table. The dashboard says so when the
+  table is partial rather than implying it is the whole history. Copy the file
+  away if you want to keep the records; nothing archives them for you.
 - **The API key is stored in that file in plaintext at rest.** It is never
   logged, echoed in an API response, or included in error/diagnostic output
   (responses show only `****last4`), and the 0600 mode keeps other local users
