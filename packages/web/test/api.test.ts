@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ApiClient, ApiConfigError, ApiRequestError, invalidHeaderCharacter, readSse } from "../src/api.js";
+import { ApiClient, ApiConfigError, ApiRequestError, invalidHeaderCharacter, readSse, loadToken, saveToken, clearToken, getApiClientBootstrap } from "../src/api.js";
 
 function sseBody(frames: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -42,6 +42,55 @@ describe("readSse", () => {
     });
     assert.equal(outcome, "ended");
     assert.deepEqual(seen, [1]);
+  });
+});
+
+describe("host bootstrap token flow (desktop shell)", () => {
+  function fakeWindow(fragment = "#token=from-fragment") {
+    const storage = new Map<string, string>();
+    const win = {
+      location: { hash: fragment, pathname: "/", search: "" },
+      history: { replaceState() {} },
+      sessionStorage: {
+        getItem: (k: string) => storage.get(k) ?? null,
+        setItem: (k: string, v: string) => void storage.set(k, v),
+        removeItem: (k: string) => void storage.delete(k),
+      },
+    };
+    return { win, storage };
+  }
+
+  it("prefers the in-memory bootstrap and never touches the URL or storage", () => {
+    const { win, storage } = fakeWindow();
+    (globalThis as Record<string, unknown>).window = win;
+    (globalThis as Record<string, unknown>).__WINDOWS_RUNNER_BOOTSTRAP__ = {
+      baseUrl: "http://127.0.0.1:9",
+      token: "bootstrap-token-1234567890",
+    };
+    try {
+      assert.deepEqual(getApiClientBootstrap(), { baseUrl: "http://127.0.0.1:9", token: "bootstrap-token-1234567890" });
+      assert.equal(loadToken(), "bootstrap-token-1234567890");
+      assert.equal(win.location.hash, "#token=from-fragment"); // never consumed/rewritten
+      assert.equal(storage.size, 0, "bootstrap mode must not write sessionStorage");
+      saveToken("other-token");
+      clearToken();
+      assert.equal(storage.size, 0);
+    } finally {
+      delete (globalThis as Record<string, unknown>).window;
+      delete (globalThis as Record<string, unknown>).__WINDOWS_RUNNER_BOOTSTRAP__;
+    }
+  });
+
+  it("falls back to the fragment/sessionStorage flow without a bootstrap", () => {
+    const { win, storage } = fakeWindow("#token=fragment-token-123");
+    (globalThis as Record<string, unknown>).window = win;
+    try {
+      assert.equal(getApiClientBootstrap(), undefined);
+      assert.equal(loadToken(), "fragment-token-123");
+      assert.equal(storage.get("windows-runner.token"), "fragment-token-123");
+    } finally {
+      delete (globalThis as Record<string, unknown>).window;
+    }
   });
 });
 
