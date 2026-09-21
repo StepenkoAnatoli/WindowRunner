@@ -63,22 +63,42 @@ before(async () => {
   const args = [mainCjs];
   // Ozone is the Linux windowing layer. Windows/macOS runners have no DISPLAY
   // variable but DO have a desktop — the flags are meaningless (and risky)
-  // there, so gate on the platform as well.
+  // there, so gate on the platform as well. CI's Linux leg runs this suite
+  // under `xvfb-run` (a real virtual display) instead: ozone headless hung the
+  // Electron launch handshake on ubuntu-latest (2026-09-21), while the same
+  // build passed on windows-latest.
   if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    // Headless Chromium ozone: no X server required.
+    // Headless Chromium ozone: no X server required (may not work on all
+    // Electron builds — prefer xvfb-run where available).
     args.unshift("--ozone-platform=headless", "--disable-gpu");
   }
   args.unshift("--no-sandbox");
 
-  app = await electron.launch({
-    executablePath: electronPath,
-    args,
-    env: {
-      ...process.env,
-      ELECTRON_DISABLE_SANDBOX: "1",
-      WINDOWS_RUNNER_DESKTOP_DATA_DIR: dataDir,
-    },
-  });
+  // electron.launch() has no timeout of its own: if the handshake hangs (seen
+  // with ozone headless), an unbounded await would wedge the whole suite.
+  // Fail loudly and specifically instead.
+  app = await Promise.race([
+    electron.launch({
+      executablePath: electronPath,
+      args,
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SANDBOX: "1",
+        WINDOWS_RUNNER_DESKTOP_DATA_DIR: dataDir,
+      },
+    }),
+    new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            `electron.launch() did not connect within 60s (args: ${args.join(" ")}). ` +
+              "On headless Linux prefer `xvfb-run -a npm run smoke:electron`."
+          )
+        );
+      }, 60_000);
+      timer.unref();
+    }),
+  ]);
   page = await app.firstWindow({ timeout: 60_000 });
   // Wait for the shell to mount the web application (bootstrap auto-connect).
   await page.waitForSelector('[data-testid="session-form"]', { timeout: 60_000 });

@@ -474,17 +474,28 @@ jobs:
           set -o pipefail
           npm run smoke:page --workspace packages/desktop 2>&1 | tee smoke-page.log
 
+      # Electron opens windows; on Linux CI that needs a display. `xvfb-run -a`
+      # provides a virtual one (the ozone headless route hung the Electron
+      # launch handshake on ubuntu-latest; xvfb is the battle-tested path).
       - name: Electron smoke (real unpacked Electron)
         shell: bash
         run: |
           set -o pipefail
-          npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
+          else
+            npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
+          fi
 
       - name: "Desktop e2e (user journey - boot -> mock turn -> clean shutdown)"
         shell: bash
         run: |
           set -o pipefail
-          npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
+          else
+            npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
+          fi
         env:
           CI: "1"
 
