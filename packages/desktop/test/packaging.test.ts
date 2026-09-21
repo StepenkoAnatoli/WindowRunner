@@ -58,11 +58,19 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       main?: string;
       author?: string;
       scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
     assert.equal(pkg.main, "dist/main.cjs");
     assert.equal(pkg.author, "StepenkoAnatoli");
     assert.match(pkg.scripts?.["package:win"] ?? "", /electron-builder --win nsis --config electron-builder\.yml/);
     assert.equal(pkg.scripts?.["e2e"], "playwright test");
+    // electron-builder refuses semver ranges for electron ("Cannot compute
+    // electron version"): the devDependency must stay an exact pin.
+    assert.match(
+      pkg.devDependencies?.["electron"] ?? "",
+      /^\d+\.\d+\.\d+$/,
+      "electron must be pinned to an exact version (electron-builder requirement)"
+    );
   });
 
   it("ships the desktop e2e harness", () => {
