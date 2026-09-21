@@ -21,8 +21,8 @@ B2.1 PASS — d020434, run 35623562775
 B2.2 PASS — e77f1e2 / f036576 / c97b5c4, run 35626280132
 B2.3 PASS — 6e33e70 / 3b5fe20 / e6151ba, run 35629109152
             (run on the PR-head commit: all eight checks green on e6151ba)
-B2.4 PASS — fb0a83d, run 35631371793
-            (run on the commit carrying the phase change: 8/8 green on fb0a83d)
+B2.4 PASS — fb0a83d / 63f65a4, run 35632100275
+            (run on the PR-head commit: all eight checks green on 63f65a4)
 Current phase: B2.5 NOT STARTED
 ```
 
