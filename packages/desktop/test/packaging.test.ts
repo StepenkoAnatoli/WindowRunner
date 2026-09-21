@@ -34,6 +34,10 @@ describe("installer packaging contract (electron-builder.yml)", () => {
     assert.match(yml, /oneClick: true/);
     assert.match(yml, /perMachine: false/);
     assert.match(yml, /deleteAppDataOnUninstall: false/);
+    // No auto-launch after install: the CI gate launches the installed app
+    // explicitly, and an auto-started instance would still be alive during
+    // the uninstall assertion.
+    assert.match(yml, /runAfterFinish: false/);
   });
 
   it("packs only the compiled shell into the app archive", () => {

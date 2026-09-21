@@ -47,6 +47,10 @@ nsis:
   # User data in %APPDATA%\WindowRunner (sessions, provider profiles, logs)
   # survives uninstall — see docs/INSTALL.md, "Windows desktop app".
   deleteAppDataOnUninstall: false
+  # Do not auto-launch after install: the A2 gate launches the installed app
+  # explicitly (and an auto-started instance would still be running during the
+  # uninstall assertion). Humans launch from the Start Menu.
+  runAfterFinish: false
   artifactName: "WindowRunner-Setup-${version}.${ext}"
 
 # No icon and no code signing yet: default Electron icon, unsigned installer
