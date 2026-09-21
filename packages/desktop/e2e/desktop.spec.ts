@@ -101,12 +101,17 @@ test("opens a project and completes a mock turn", async () => {
     return `${electronApp.getPath("userData")}${sep}workspace-catalog.json`;
   });
   const catalogRaw = await fsp.readFile(catalogFile, "utf8");
-  expect(catalogRaw).toContain(PROJECT_DIR);
+  // Compare the parsed root value, not the raw JSON: JSON escapes Windows
+  // backslashes, so a raw substring match can never see `C:\Users\…`.
+  const catalog = JSON.parse(catalogRaw) as { projects: Array<{ root: string }> };
+  expect(catalog.projects.map((p) => p.root)).toContain(PROJECT_DIR);
   const token = await page.evaluate(() => {
     const bridge = (window as unknown as { windowRunnerDesktop?: { getBootstrap(): { token: string } } }).windowRunnerDesktop;
     return bridge?.getBootstrap().token ?? "";
   });
   expect(token).toBeTruthy();
+  // The negative check stays on the raw bytes: the token is hex, so JSON
+  // escaping cannot hide it — if it were ever written, this fails.
   expect(catalogRaw).not.toContain(token);
   await fsp.rm(catalogFile, { force: true });
 });
