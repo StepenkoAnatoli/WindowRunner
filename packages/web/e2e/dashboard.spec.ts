@@ -12,7 +12,7 @@
  * which the scripted-provider server cannot do.
  */
 import { test, expect } from "@playwright/test";
-import { DASH_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
+import { DASH_PORT, DASH_STOP_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
 
 test.describe("provider dashboard", () => {
   test.use({ baseURL: `http://127.0.0.1:${DASH_PORT}` });
@@ -77,14 +77,17 @@ test.describe("provider dashboard", () => {
 });
 
 test.describe("provider dashboard quick chat", () => {
-  test.use({ baseURL: `http://127.0.0.1:${DASH_PORT}` });
+  // A dedicated fixture server (e2e/dashboard-stop-server.ts) whose mock
+  // streams with a per-chunk delay, so the turn is still running when Stop is
+  // clicked. It must be a server of its own: an injected slow provider is
+  // replaced by a plain fast mock the moment any profile is activated, and the
+  // DASH_PORT fixture above activates one.
+  test.use({ baseURL: `http://127.0.0.1:${DASH_STOP_PORT}` });
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(([token, key]) => window.sessionStorage.setItem(key, token), [E2E_TOKEN, "windows-runner.token"]);
   });
 
-  // The fixture's mock provider streams with a per-chunk delay (see
-  // dashboard-server.ts), so the turn is still running when Stop is clicked.
   test("Stop cancels an in-flight quick chat turn and records it as cancelled", async ({ page }) => {
     await page.goto("/dashboard");
     await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
