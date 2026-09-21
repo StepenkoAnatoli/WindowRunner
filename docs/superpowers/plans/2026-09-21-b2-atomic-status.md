@@ -19,7 +19,8 @@ B2.0 PASS — baseline cleared by run 35621840761 (plan-only branch rerun of the
             Desktop (windows-latest) failure on the post-merge main run)
 B2.1 PASS — d020434, run 35623562775
 B2.2 PASS — e77f1e2 / f036576 / c97b5c4, run 35626280132
-B2.3 PASS — 6e33e70 / 3b5fe20, run 35628371479
+B2.3 PASS — 6e33e70 / 3b5fe20 / e6151ba, run 35629109152
+            (run on the PR-head commit: all eight checks green on e6151ba)
 Current phase: B2.4 NOT STARTED
 ```
 
