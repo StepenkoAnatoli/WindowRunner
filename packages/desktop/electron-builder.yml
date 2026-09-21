@@ -9,6 +9,19 @@
 appId: com.stepenkoanatoli.windowrunner
 productName: WindowRunner
 
+# The one-click per-user NSIS install directory is derived from the PACKAGED
+# app's `name` (app-builder-lib getWindowsInstallationDirName resolves to
+# appInfo.sanitizedName in this install mode), and the workspace package name
+# is the internal scoped `@windows-runner/desktop` — which would install to
+# %LOCALAPPDATA%\Programs\@windows-runnerdesktop. Override the packaged
+# metadata so the canonical install directory is
+# %LOCALAPPDATA%\Programs\WindowRunner and the runtime app name matches the
+# product identity. The workspace manifest itself is untouched. Pinned in
+# test/packaging.test.ts and asserted at the explicit path by the installer
+# CI gate.
+extraMetadata:
+  name: WindowRunner
+
 directories:
   output: release
   buildResources: build

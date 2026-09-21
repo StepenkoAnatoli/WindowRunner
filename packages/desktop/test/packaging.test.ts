@@ -57,6 +57,26 @@ describe("installer packaging contract (electron-builder.yml)", () => {
     );
   });
 
+  it("pins the canonical per-user install directory Programs/WindowRunner", () => {
+    // One-click per-user NSIS derives the install dir from the PACKAGED app
+    // name (getWindowsInstallationDirName -> appInfo.sanitizedName in this
+    // install mode), so the workspace name (@windows-runner/desktop) must be
+    // overridden via extraMetadata — that is the metadata-level fix that makes
+    // %LOCALAPPDATA%\Programs\WindowRunner canonical.
+    assert.match(yml, /extraMetadata:\n {2}name: WindowRunner\n/);
+    // The installer CI gate asserts the explicit product path. Search-based
+    // discovery was a diagnostic measure only and must not return.
+    const ci = read("../../.github/workflows/ci.yml");
+    assert.ok(
+      ci.includes(String.raw`Programs\WindowRunner\WindowRunner.exe`),
+      "ci.yml must assert the explicit product path %LOCALAPPDATA%\\Programs\\WindowRunner\\WindowRunner.exe"
+    );
+    assert.ok(
+      !ci.includes(String.raw`Filter "WindowRunner.exe" -Recurse`),
+      "the installer gate must use the explicit product path, not search-based discovery"
+    );
+  });
+
   it("package.json entry and scripts support the A2 flow", () => {
     const pkg = JSON.parse(read("package.json")) as {
       main?: string;
