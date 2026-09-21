@@ -21,7 +21,9 @@ B2.1 PASS — d020434, run 35623562775
 B2.2 PASS — e77f1e2 / f036576 / c97b5c4, run 35626280132
 B2.3 PASS — 6e33e70 / 3b5fe20 / e6151ba, run 35629109152
             (run on the PR-head commit: all eight checks green on e6151ba)
-Current phase: B2.4 NOT STARTED
+B2.4 PASS — fb0a83d, run 35631371793
+            (run on the commit carrying the phase change: 8/8 green on fb0a83d)
+Current phase: B2.5 NOT STARTED
 ```
 
 ## Historical note — permanently red run on main
@@ -46,4 +48,7 @@ c97b5c4 test(web): cover provider page composition
 7bb4e95 docs: record B2 atomic checklist progress through B2.2
 6e33e70 test(web): cover usage loading and bounded history
 3b5fe20 test(web): cover settings models and catalog reset isolation
+e6151ba docs: record B2 atomic checklist progress through B2.3
+cf66865 docs: pin B2.3 evidence to the PR-head CI run
+fb0a83d test(web): pin dashboard compatibility adapter behavior
 ```
