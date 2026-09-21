@@ -56,6 +56,17 @@ function doRender(): void {
     const id = el.getAttribute("data-testid");
     if (id) captured.set(id, el.value);
   });
+  // Keep keyboard focus and selection across the rebuild. Renders are
+  // coalesced to the next animation frame, and input tooling (Playwright's
+  // keyboard.insertText in particular) delivers text as a separate step after
+  // its prepare call: if this rebuild drops the focused field, that text lands
+  // on <body> and vanishes without an input event — a silently lost
+  // keystroke. Re-focusing the same field (by test id) closes that window.
+  const active = document.activeElement as HTMLInputElement | null;
+  const activeId = active && typeof active.getAttribute === "function" ? active.getAttribute("data-testid") : null;
+  const hasSelection = active != null && typeof active.selectionStart === "number";
+  const selStart = hasSelection ? (active as HTMLInputElement).selectionStart : null;
+  const selEnd = hasSelection ? (active as HTMLInputElement).selectionEnd : null;
 
   root.replaceChildren(...[header(), state.auth !== "ok" ? tokenPanel() : pageBody(), noticeElement()].filter((n): n is HTMLElement => n !== null));
 
@@ -66,6 +77,20 @@ function doRender(): void {
     // stale captured one would be wrong.
     if (el && input && !input.disabled && input.value === input.defaultValue) input.value = value;
   });
+
+  if (activeId) {
+    const el = root.querySelector<HTMLInputElement>(`[data-testid="${activeId}"]`);
+    if (el && !el.disabled && typeof el.focus === "function") {
+      el.focus();
+      if (selStart !== null && selEnd !== null && typeof el.setSelectionRange === "function") {
+        try {
+          el.setSelectionRange(selStart, selEnd);
+        } catch {
+          // Selection is unsupported on some input types (number, date…).
+        }
+      }
+    }
+  }
 }
 
 function header(): HTMLElement {
