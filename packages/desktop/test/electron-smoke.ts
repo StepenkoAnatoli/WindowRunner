@@ -61,7 +61,10 @@ before(async () => {
   dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-electron-smoke-"));
 
   const args = [mainCjs];
-  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+  // Ozone is the Linux windowing layer. Windows/macOS runners have no DISPLAY
+  // variable but DO have a desktop — the flags are meaningless (and risky)
+  // there, so gate on the platform as well.
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
     // Headless Chromium ozone: no X server required.
     args.unshift("--ozone-platform=headless", "--disable-gpu");
   }

@@ -57,6 +57,8 @@
     "typecheck:desktop": "npm run typecheck --workspace packages/desktop",
     "test:desktop": "npm run test --workspace packages/desktop",
     "smoke:desktop": "npm run smoke:page --workspace packages/desktop && npm run smoke:electron --workspace packages/desktop",
+    "e2e:desktop": "npm run e2e --workspace packages/desktop",
+    "package:desktop:win": "npm run package:win --workspace packages/desktop",
     "setup": "node scripts/setup.mjs",
     "prestart": "node scripts/ensure-built.mjs",
     "start": "node packages/server/dist/index.cjs",
