@@ -1,5 +1,12 @@
 # B2 atomic checklist — phase status
 
+> **CLOSING NOTE — 2026-09-21: the entire B2 atomic checklist is COMPLETE.**
+> All phases B2.0–B2.5 passed, were reported, and were reviewed and approved.
+> PR #27 merged into `main` as `0d0ae66` ("Merge pull request #27 from
+> StepenkoAnatoli/arena/01a0c48f-windowrunner"); the post-merge `main` run
+> `35646976541` verified all eight checks SUCCESS on that merge commit.
+> Roadmap next: B3 (`2026-09-21-b3-b4-roadmap.md`), then B4 model discovery.
+
 Durable progress record for the B2 atomic-commit checklist (gap-fill over merged
 PR #26). Chat history is not durable — this file is. **Update it after every
 phase.**
@@ -48,7 +55,9 @@ B2.5 PASS — 573190c / 6dd3564 / e106c41 / 34596b4 / bf6cdce
             ea83116 + docs. This final documentation commit's own CI result
             is recorded in the PR #27 body (no self-citing commit, per
             review direction).
-Current phase: B2.5 complete — awaiting final report review and merge approval
+Current phase: B2 COMPLETE — B2.0–B2.5 all PASS and approved; PR #27 merged
+            into main as 0d0ae66 (post-merge run 35646976541, eight checks
+            SUCCESS). B3 starts per 2026-09-21-b3-b4-roadmap.md.
 ```
 
 ## Historical note — permanently red run on main
