@@ -15,5 +15,8 @@
     "typescript": "^5.6.3",
     "@playwright/test": "^1.63.0",
     "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@windows-runner/shared": "*"
   }
 }

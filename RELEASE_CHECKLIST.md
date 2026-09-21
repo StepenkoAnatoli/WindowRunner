@@ -59,7 +59,7 @@ this checklist tracks.
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
 | Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
 | Real-model evaluation runs (P2-02) | Deliberately manual: they cost money and are not reproducible. `eval/README.md`. |
-| Matrix of supported Node versions | One exact version. `engines.node` still advertises `>=20.10`, and Node 20 is past its security-fix window — narrowing `engines` is an open support-matrix decision, not a packaging fix. |
+| Matrix of supported Node versions | One exact version. `engines.node` advertises `>=22.0.0` (narrowed from `>=20.10` since Node 20 is past its security-fix window). |
 
 ### Merge gating is NOT configured
 
@@ -490,7 +490,7 @@ Acceptance:
 ### [ ] Release artifacts are tested and verified before publication
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
 ### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action)
-### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
+### [x] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays (narrowed to >=22.0.0)
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 
 ---

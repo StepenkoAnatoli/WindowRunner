@@ -53,12 +53,12 @@ echo ""
 
 if ! command -v node >/dev/null 2>&1; then
   echo "  ✕ Node.js not found."
-  echo "    Install Node >= 20.10 from https://nodejs.org and re-run this script."
+  echo "    Install Node >= 22.0.0 from https://nodejs.org and re-run this script."
   exit 1
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
-  echo "  ✕ npm not found (it ships with Node >= 20.10)."
+  echo "  ✕ npm not found (it ships with Node >= 22.0.0)."
   echo "    Reinstall Node from https://nodejs.org and re-run this script."
   exit 1
 fi
@@ -67,8 +67,8 @@ NODE_VERSION="$(node -v | sed 's/v//')"
 NODE_MAJOR="$(echo "$NODE_VERSION" | cut -d. -f1)"
 NODE_MINOR="$(echo "$NODE_VERSION" | cut -d. -f2)"
 
-if [ "$NODE_MAJOR" -lt 20 ] || { [ "$NODE_MAJOR" -eq 20 ] && [ "$NODE_MINOR" -lt 10 ]; }; then
-  echo "  ✕ Node $NODE_VERSION is too old — windows-runner needs >= 20.10."
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "  ✕ Node $NODE_VERSION is too old — windows-runner needs >= 22.0.0."
   echo "    Install a current release from https://nodejs.org and re-run."
   exit 1
 fi
