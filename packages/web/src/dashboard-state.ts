@@ -25,6 +25,14 @@ export interface ChatState {
    * remembering the id the quick chat could only wait a request out.
    */
   turnId?: string;
+  /**
+   * True once a terminal event (completed / failed / cancelled) has been
+   * applied to this turn. It guards Stop's optimistic "cancelling…" write:
+   * the cancellation event travels down the already-open event stream and can
+   * reach the panel BEFORE the cancel POST's own response does, and without
+   * this flag the optimistic text overwrites the terminal status permanently.
+   */
+  terminal?: boolean;
 }
 
 export interface State {

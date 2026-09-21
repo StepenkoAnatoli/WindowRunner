@@ -72,6 +72,7 @@ async function sendChat(message: string, cwd: string): Promise<void> {
   state.chat.reply = "";
   state.chat.error = undefined;
   state.chat.status = "starting…";
+  state.chat.terminal = false;
   const sid = state.chat.sessionId ?? `dash-${Date.now().toString(36)}`;
   state.chat.sessionId = sid;
   storeSet(SESSION_KEY, sid);
@@ -90,13 +91,16 @@ async function sendChat(message: string, cwd: string): Promise<void> {
               render();
               break;
             case "turn_completed":
+              state.chat.terminal = true;
               state.chat.status = `completed (seq ${event.seq})`;
               break;
             case "turn_failed":
+              state.chat.terminal = true;
               state.chat.status = `failed (${event.code})`;
               state.chat.error = event.message;
               break;
             case "turn_cancelled":
+              state.chat.terminal = true;
               state.chat.status = `cancelled: ${event.reason}`;
               break;
             default:
@@ -139,8 +143,15 @@ export async function stopChat(): Promise<void> {
   if (!client || !sessionId || !turnId) return;
   try {
     await client.cancelTurn(sessionId, turnId, "stopped from the dashboard");
-    state.chat.status = "cancelling…";
-    render();
+    // The server's turn_cancelled event comes down the stream that is already
+    // open, so it can land before this response completes. Writing
+    // "cancelling…" unconditionally would then overwrite the terminal status
+    // for good, leaving the panel stuck on "cancelling…" (this is what the
+    // browser E2E caught and the Node-only probe did not).
+    if (!state.chat.terminal) {
+      state.chat.status = "cancelling…";
+      render();
+    }
   } catch (err) {
     reportError(err);
   }
