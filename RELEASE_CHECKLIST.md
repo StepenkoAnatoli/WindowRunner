@@ -66,16 +66,22 @@ this checklist tracks.
 Branch protection on `main` is not set. The automation token used to open and
 merge these PRs is refused read *and* write access to the protection rules
 (HTTP 403), so it could not enable them and could not verify whether they exist.
-Until a repository admin requires the `CI`, `Docker`, `Platform (windows-latest)`,
-and `Platform (macos-latest)` status checks and at least one approval on `main`,
-a green `CI` run is **informational**: it does not block a merge, and "failed CI
-gates block release" (P1-06) is not true.
+Until a repository admin requires the `CI`, `Browser E2E`, `Docker`,
+`Platform (windows-latest)`, and `Platform (macos-latest)` status checks and at
+least one approval on `main`, a green `CI` run is **informational**: it does not
+block a merge, and "failed CI gates block release" (P1-06) is not true.
 
-**Outstanding admin action:** on `main`, require the four status checks `CI`,
-`Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)`, plus >= 1
-approving review. All four are required so no merge can skip a platform leg or
-the Docker job. This is the only item in this section that cannot be done from
-a pull request.
+**Outstanding admin action:** on `main`, require the five status checks `CI`,
+`Browser E2E`, `Docker`, `Platform (windows-latest)`, and
+`Platform (macos-latest)`, plus >= 1 approving review. All five are required:
+`Browser E2E` is the only job that drives the shipped UI (including `/dashboard`)
+in a real browser, so omitting it would let a merge land that passes every unit
+and server test while breaking the page users actually open. This is the only
+item in this section that cannot be done from a pull request.
+
+The exact check names are the job `name:` values in `.github/workflows/ci.yml`
+(`CI`, `Browser E2E`, `Docker`, `Platform (${{ matrix.os }})`); the platform legs
+appear as `Platform (windows-latest)` and `Platform (macos-latest)`.
 
 ### Latent risk — not a defect today
 
@@ -120,12 +126,12 @@ them, so a check would be speculative and untestable against real input.
 | P1-02 | Open (Phase 4). |
 | P1-03 | Open (Phase 4). |
 | P1-04 | Largely complete in Batch 5 — verify-and-guard. Known risk: the price table is a snapshot and will drift. |
-| P1-05 | **Largely landed 2026-09-20 (Phase 3).** `src/process-tree.ts` (process group on POSIX, `taskkill /T` on Windows) and `run_terminal` in `src/agent/tools/builtin.ts`; tree kill on timeout and Stop is tested with a grandchild pid on POSIX (`builtin-tools.test.ts`); Windows leg runs the same suite minus the pid checks. Malformed/unknown tool calls are controlled errors. Open: usage accounting across retries (no automatic retry exists), Electron quit on Windows (no Electron). |
+| P1-05 | **Largely landed 2026-09-20 (Phase 3).** `src/process-tree.ts` (process group on POSIX, `taskkill /T` on Windows) and `run_terminal` in `src/agent/tools/builtin.ts`; tree kill on timeout and Stop is tested with a grandchild pid on POSIX (`builtin-tools.test.ts`); Windows leg runs the same suite minus the pid checks. Malformed/unknown tool calls are controlled errors. Automatic retry/backoff also landed (`src/providers/retry.ts`, `test/retry.test.ts`): retryable errors only, only before the first chunk of an attempt, `Retry-After` honoured, jittered exponential backoff, abort during the wait. Open: a test that asserts usage accounting across a retried step, Windows grandchild-pid coverage, Electron quit on Windows (no Electron). |
 | P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
 | P1-07 | **Partial as of 2026-09-20.** Browser E2E (Phase 2) as before. Phase 3 added the fake-provider failure suite: `test/openai-compatible.test.ts` against an OpenAI-shaped fake covers auth, 429 (+ Retry-After), 5xx, retry/backoff (`test/retry.test.ts`), context exhaustion, dropped/garbage streams, malformed tool arguments, cancellation mid-stream; `test/anthropic.test.ts` repeats the matrix against an Anthropic-shaped fake. Real-endpoint validation: `npm run validate:provider` (manual, ordered, stops at first failure, secret-free report) — **not yet run against a paid account**. Not covered: settings, edit/diff review, reload-resume; no job gates merges. |
 | P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
 | P2-02 | **Partial as of 2026-09-20 (Phase 3).** `eval/` harness with five task categories and hidden checks; scripted mode runs in CI, real-model runs are manual and reported as JSON under `eval/results/`. Metrics recorded: completion, steps, tool calls/failures, approvals (interventions), tokens, elapsed. Not recorded: cost, regressions across releases (no real-model baseline committed yet). |
-| P2-04 | **Landed 2026-09-20.** Multi-provider config + dashboard: profiles in `<dataDir>/provider-profiles.json` (0600, atomic), CRUD + activate + test routes behind the existing bearer auth, hot-swap of the active provider for the next turn, usage log (`usage.jsonl`, `GET /api/usage`), and the `/dashboard` page (vanilla DOM, same build pipeline). Known limitation, documented: **API keys are plaintext at rest** in the 0600 profile file — no keychain integration, no per-key spend limits. |
+| P2-04 | **Landed 2026-09-20; reliability pass 2026-09-20.** Multi-provider config + dashboard: profiles in `<dataDir>/provider-profiles.json` (0600, atomic), CRUD + activate + test routes behind the existing bearer auth, hot-swap of the active provider for the next turn, usage log (`usage.jsonl`, `GET /api/usage`), and the `/dashboard` page (vanilla DOM, same build pipeline). Known limitation, documented: **API keys are plaintext at rest** in the 0600 profile file — no keychain integration, no per-key spend limits. |
 
 ## P0 — Must fix before recommending installation
 
@@ -309,10 +315,10 @@ Acceptance criteria:
 - [x] Long-running terminal commands are terminated with their full process tree on timeout or Stop. *(POSIX: `detached` + `kill(-pgid)` TERM→KILL; verified by checking a grandchild pid is dead. Windows: `taskkill /T /F`.)*
 - [ ] Windows and POSIX process cleanup are both covered. *(Both implemented; only the POSIX path asserts on grandchild pids — the Windows CI leg runs the suite with those cases skipped.)*
 - [x] Cancellation while awaiting approval exits cleanly without hanging or leaking resources. *(`approvals.cancelTurn` on abort; covered in loop tests and browser E2E "Stop".)*
-- [ ] Partial-stream retries do not duplicate visible text or create stale errors. *(No automatic retry exists; partial text is emitted once and the failure code is retryable where appropriate.)*
-- [ ] Usage accounting remains consistent across retries. *(Same — no retries yet.)*
+- [x] Partial-stream retries do not duplicate visible text or create stale errors. *(`RetryingProvider` retries only when nothing has been yielded from the current attempt, so a partial answer is never replayed — asserted by `test/retry.test.ts` "does not retry once output has been yielded"; non-retryable codes surface immediately.)*
+- [ ] Usage accounting remains consistent across retries. *(Structurally consistent: because a retry can only happen before the first chunk of an attempt, a failed attempt can never have emitted its `usage` chunk, so the turn records exactly one attempt's usage. Left unchecked because no test asserts it — the invariant is implied by the retry gate rather than verified.)*
 - [x] Malformed or unknown tool calls are handled as controlled errors instead of uncaught failures. *(`UNKNOWN_TOOL`; unparsable JSON arguments → `TOOL_FAILED` with the raw input, never an approval prompt.)*
-- [x] Regression tests cover cancellation, retries, and malformed tool calls. *(Cancellation and malformed calls; retries n/a.)*
+- [x] Regression tests cover cancellation, retries, and malformed tool calls. *(Cancellation and malformed calls in the loop/tool suites; retry and backoff in `test/retry.test.ts`, including Retry-After parsing and abort during the wait.)*
 
 ---
 
@@ -455,17 +461,19 @@ Files:
 - `packages/server/src/provider-service.ts` — CRUD, activate (hot-swap), reachability test, last-test persistence
 - `packages/server/src/usage-log.ts` — per-turn usage records, `usage.jsonl`, `GET /api/usage?limit`
 - `packages/server/src/app.ts`, `packages/server/src/boot.ts` — routes, dashboard static serving, first-boot `default` profile bootstrap
-- `packages/web/src/dashboard.ts`, `packages/web/public/dashboard.html`, `packages/web/public/dashboard.css`, `packages/web/scripts/bundle.mjs` — the dashboard (vanilla DOM, esbuild-bundled to `dist/dashboard/`)
-- `packages/server/test/provider-profiles.test.ts`, `packages/server/test/providers-routes.test.ts`, `packages/web/e2e/dashboard.spec.ts`, `packages/web/e2e/dashboard-server.ts`
+- `packages/web/src/dashboard.ts` (entry point: panel assembly + DOM rebuild) with `dashboard-state.ts`, `dashboard-api.ts`, `dashboard-provider-cards.ts`, `dashboard-provider-form.ts`, `dashboard-usage.ts`, `dashboard-chat.ts`, plus the shared `dom.ts` / `describe-error.ts` used by the main UI too; `packages/web/public/dashboard.html`, `packages/web/public/dashboard.css`, `packages/web/scripts/bundle.mjs` — the dashboard (vanilla DOM, esbuild-bundled to `dist/dashboard/`)
+- `packages/server/test/provider-profiles.test.ts`, `packages/server/test/providers-routes.test.ts`, `packages/server/test/provider-service.test.ts`, `packages/server/test/usage-log.test.ts`, `packages/web/test/describe-error.test.ts`, `packages/web/e2e/dashboard.spec.ts`, `packages/web/e2e/dashboard-server.ts`
 
 Acceptance:
 - [x] Profiles: `<dataDir>/provider-profiles.json`, mode 0600, atomic tmp+rename write, same pattern as `auth-token`; corrupt file is a hard error (never silently discards keys)
 - [x] No API key in any response, log line, or error: every profile is redacted to `apiKeyMasked` (`****last4`); the `/test` reply is scrubbed of the profile's own key
 - [x] Routes `GET/POST /api/providers`, `PATCH/DELETE /api/providers/:id` (delete active → `409 PROVIDER_ACTIVE`), `POST …/activate` (unknown → `404`), `POST …/test` (minimal request, 5 s timeout, `{ok, latencyMs}` / `{ok:false, code, message}`) — all behind the existing bearer auth, no exceptions
 - [x] Hot-swap: activation and editing of the active profile rebuild the provider in a mutable box that `POST /turns` reads at turn start — the *next* turn runs on the new profile, no restart (tested: post-activation turn usage record carries the new profile id; edited active profile's next turn hits the new base URL)
+- [x] Activation is atomic with persistence: the profile file is written **before** the live provider is swapped, and a failed write rolls the in-memory `activeProfileId` back and returns `500 PROFILE_PERSIST_FAILED`, so a process can never run a provider the next restart would contradict (`provider-service.test.ts` asserts the build → persist → swap order and both rollback paths)
 - [x] First boot registers the env provider as `default`; later boots honour the persisted active profile over the environment; a stored id that no longer exists falls back to `default` and repersists
 - [x] Usage: one record per completed/failed turn (provider, model, tokens, status) to `usage.jsonl`; `GET /api/usage` newest-first with `limit` 1..500; `estCostUsd` is `null` unless a price-table entry matches the exact model id — the bundled table is empty, so the dashboard never fabricates a cost
-- [x] Dashboard at `/dashboard` (same bearer token, same CSP/no-store headers): active-provider banner, provider cards with status dot + Use this/Test/Edit/Delete, add/edit form with presets — OmniRoute base URL is a user-typed placeholder, never pre-filled or hardcoded; Anthropic base URL fixed; Spark = `http://127.0.0.1:11434/v1`; quick chat reuses `POST /turns` + SSE
+- [x] Usage storage is bounded on both sides: `loadInitial()` reads at most `tailBytes` off the **end** of `usage.jsonl` (boot cost follows the ring size, not the accumulated history) and an append past `maxFileBytes` rotates the file to `usage.jsonl.1`, keeping one generation; `GET /api/usage` reports `retained`/`bounded` and the dashboard says the table is recent turns rather than the full history
+- [x] Dashboard at `/dashboard` (same bearer token, same CSP/no-store headers): active-provider banner, provider cards with status dot + Use this/Test/Edit/Delete, add/edit form with presets — OmniRoute base URL is a user-typed placeholder, never pre-filled or hardcoded; Anthropic base URL fixed; Spark = `http://127.0.0.1:11434/v1`; quick chat reuses `POST /turns` + SSE and can Stop an in-flight turn (`dash-chat-stop` → the turn's cancel route, the same path the main UI's Stop uses, with the stream left open so the server's own `turn_cancelled` event confirms it)
 - [x] Tests: `provider-profiles.test.ts` (round trip, 0600, validation, redaction, serialised mutate), `providers-routes.test.ts` (auth 401s, 400 error lists, 409s, key never in responses, hot-swap via usage records, edit hot-reload via two fake OpenAI servers, boot integration), `e2e/dashboard.spec.ts` (add → test → activate → streamed chat → usage row; runs on a separate real-bootstrap fixture server)
 - [x] **Documented limitation: keys are plaintext at rest.** The profile file is mode 0600 and the key is never returned by any API, log, or error, but it is not OS-keychain-protected and a user who can read the file can read the key. No keychain integration and no per-key spend limits in this checkout (display only); both are deliberate non-goals for now (docs/INSTALL.md "Provider dashboard", README "Providers").
 
@@ -481,7 +489,7 @@ Acceptance:
 ### [ ] No open release-blocking security issues remain
 ### [ ] Release artifacts are tested and verified before publication
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
-### [ ] Branch protection on `main`: required `CI`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action)
+### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action)
 ### [ ] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 

@@ -332,6 +332,19 @@ describe("provider profile routes", () => {
     assert.equal(recB.status, "completed");
   });
 
+  it("GET /api/usage says how much history it retains and whether it is complete", async () => {
+    const { status, json } = await req("GET", "/api/usage?limit=5");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(json.records));
+    // `retained` counts the whole in-memory ring, so a paged response can
+    // report "showing 5 of N"; `bounded` tells the client that older records
+    // existed and are gone (ring trimmed, tail window, or a rotation).
+    assert.equal(typeof json.retained, "number", "retained is reported");
+    assert.ok(json.retained >= json.records.length, "retained covers every returned record");
+    assert.equal(typeof json.bounded, "boolean", "bounded is reported");
+    assert.equal(json.bounded, false, "a handful of turns has not been trimmed or rotated");
+  });
+
   it("PATCH on the ACTIVE profile hot-reloads: the next turn hits the new baseUrl", async () => {
     const [fakeA, fakeB] = await Promise.all([
       startFakeOpenAI([{ kind: "text", text: "from A" }, { kind: "text", text: "from A again" }]),

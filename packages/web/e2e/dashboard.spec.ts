@@ -12,7 +12,7 @@
  * which the scripted-provider server cannot do.
  */
 import { test, expect } from "@playwright/test";
-import { DASH_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
+import { DASH_PORT, DASH_STOP_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
 
 test.describe("provider dashboard", () => {
   test.use({ baseURL: `http://127.0.0.1:${DASH_PORT}` });
@@ -73,5 +73,69 @@ test.describe("provider dashboard", () => {
     await expect(row).toContainText("Dash Mock");
     await expect(row).toContainText("completed");
     await expect(row).toHaveAttribute("data-provider", "dash-mock");
+  });
+});
+
+test.describe("provider dashboard quick chat", () => {
+  // A dedicated fixture server (e2e/dashboard-stop-server.ts) whose mock
+  // streams with a per-chunk delay, so the turn is still running when Stop is
+  // clicked. It must be a server of its own: an injected slow provider is
+  // replaced by a plain fast mock the moment any profile is activated, and the
+  // DASH_PORT fixture above activates one.
+  test.use({ baseURL: `http://127.0.0.1:${DASH_STOP_PORT}` });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(([token, key]) => window.sessionStorage.setItem(key, token), [E2E_TOKEN, "windows-runner.token"]);
+  });
+
+  test("Stop cancels an in-flight quick chat turn and records it as cancelled", async ({ page }) => {
+    // Diagnostics for a failure: the job log and the html report are not
+    // retrievable from every environment, so the failure message itself carries
+    // the network trace and the panel's DOM (published as a check-run
+    // annotation by the github reporter).
+    const diag: string[] = [];
+    const t0 = Date.now();
+    page.on("console", (m) => diag.push(`+${Date.now() - t0}ms console.${m.type()}: ${m.text()}`));
+    page.on("pageerror", (e) => diag.push(`+${Date.now() - t0}ms pageerror: ${e.message}`));
+    page.on("requestfailed", (r) => diag.push(`+${Date.now() - t0}ms FAILED ${r.method()} ${new URL(r.url()).pathname}: ${r.failure()?.errorText}`));
+    page.on("response", (r) => {
+      const path = new URL(r.url()).pathname;
+      if (/\/(events|cancel|turns|providers|usage|health)/.test(path)) diag.push(`+${Date.now() - t0}ms ${r.request().method()} ${path} -> ${r.status()}`);
+    });
+
+    await page.goto("/dashboard");
+    await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
+
+    await page.locator('[data-testid="dash-cwd"]').fill(E2E_PROJECT);
+    await page.locator('[data-testid="dash-message"]').fill("please stop");
+    await page.locator('[data-testid="dash-send"]').click();
+
+    // Stop appears once there is a turn id to cancel, and Send is disabled
+    // while the turn runs.
+    const stop = page.locator('[data-testid="dash-chat-stop"]');
+    await expect(stop).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="dash-send"]')).toBeDisabled();
+
+    await stop.click();
+
+    // The cancellation is confirmed by the server's own turn_cancelled event,
+    // not by the client giving up: the stream stays open to receive it.
+    try {
+      await expect(page.locator('[data-testid="dash-chat-status"]')).toContainText("cancelled", { timeout: 20_000 });
+    } catch (err) {
+      const panel = await page.locator('[data-testid="dash-chat"]').innerText().catch(() => "(panel not found)");
+      throw new Error(
+        `quick chat never reached a cancelled state.\n` +
+          `--- network/console (${diag.length} entries) ---\n${diag.join("\n")}\n` +
+          `--- chat panel text ---\n${panel}\n` +
+          `--- playwright ---\n${(err as Error).message}`
+      );
+    }
+    await expect(page.locator('[data-testid="dash-chat-stop"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="dash-send"]')).toBeEnabled();
+
+    // The cancelled turn still lands in the usage table (newest first).
+    const row = page.locator('[data-testid="dash-usage-row"]').first();
+    await expect(row).toHaveAttribute("data-status", "cancelled", { timeout: 15_000 });
   });
 });

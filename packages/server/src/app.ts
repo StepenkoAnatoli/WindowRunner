@@ -77,7 +77,13 @@ export interface AppDeps {
   /** Appended once per turn at its terminal state (dashboard usage table). */
   recordTurnUsage?: (turnId: string, sessionId: string, result: TurnResult) => void;
   /** Usage history behind GET /api/usage. When unset the route is not registered. */
-  usageLog?: { recent(limit: number): TurnUsageRecord[] };
+  usageLog?: {
+    recent(limit: number): TurnUsageRecord[];
+    /** Records held in memory; the response reports it so the client can say "showing N of M". */
+    readonly length?: number;
+    /** True when older records are known to be missing (ring trimmed, tail window, or a rotation). */
+    readonly bounded?: boolean;
+  };
 }
 
 export interface ValidationResult {
@@ -925,7 +931,15 @@ export function createApp(deps: AppDeps) {
           return res.status(400).json({ error: "limit must be between 1 and 500", code: "LIMIT_INVALID" });
         }
       }
-      res.json({ records: deps.usageLog!.recent(limit) });
+      // `retained`/`bounded` let the dashboard state that the table is the
+      // newest turns only: the ring is capped, the boot read is a bounded
+      // tail, and usage.jsonl rotates — so "no more rows" is not "no more
+      // turns ever".
+      res.json({
+        records: deps.usageLog!.recent(limit),
+        retained: deps.usageLog!.length,
+        bounded: deps.usageLog!.bounded ?? false,
+      });
     });
   }
 

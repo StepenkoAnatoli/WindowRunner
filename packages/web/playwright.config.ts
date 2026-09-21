@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { DASH_PORT } from "./e2e/fixture.js";
+import { DASH_PORT, DASH_STOP_PORT } from "./e2e/fixture.js";
 
 const port = Number(process.env.E2E_PORT ?? 7699);
 
@@ -17,7 +17,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // The `github` reporter publishes each failure as a check-run annotation,
+  // which is what makes a red Browser E2E job diagnosable from the Checks API
+  // alone (the raw job log and the html artifact both live on blob storage).
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["github"]] : "list",
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
@@ -33,9 +36,11 @@ export default defineConfig({
       : {}),
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  // Two fixture servers: the scripted-provider UI server (with its proxy on
-  // E2E_PORT) and the real-bootstrap dashboard server on DASH_PORT. Playwright
-  // starts both, waits on both health endpoints, and stops both after the run.
+  // Three fixture servers: the scripted-provider UI server (with its proxy on
+  // E2E_PORT), the real-bootstrap dashboard server on DASH_PORT, and a second
+  // dashboard server on DASH_STOP_PORT whose mock streams slowly and never has
+  // a profile activated (see e2e/dashboard-stop-server.ts). Playwright starts
+  // all three, waits on all three health endpoints, and stops them after.
   webServer: [
     {
       command: "npx tsx e2e/server.ts",
@@ -48,6 +53,14 @@ export default defineConfig({
     {
       command: "npx tsx e2e/dashboard-server.ts",
       url: `http://127.0.0.1:${DASH_PORT}/healthz`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+    {
+      command: "npx tsx e2e/dashboard-stop-server.ts",
+      url: `http://127.0.0.1:${DASH_STOP_PORT}/healthz`,
       reuseExistingServer: false,
       timeout: 30_000,
       stdout: "pipe",

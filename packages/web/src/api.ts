@@ -288,8 +288,15 @@ export class ApiClient {
     return (await this.request<ProviderTestResult>("POST", `/api/providers/${encodeURIComponent(id)}/test`)).body;
   }
 
-  async usage(limit = 50): Promise<{ records: TurnUsageView[] }> {
-    return (await this.request<{ records: TurnUsageView[] }>("GET", `/api/usage?limit=${limit}`)).body;
+  /**
+   * Recent turns, newest first. `retained` is how many records the server
+   * holds and `bounded` is its flag for "older records existed and are no
+   * longer available" — the ring is capped, the boot read is a bounded tail of
+   * usage.jsonl, and the file rotates. Both optional, so a server that answers
+   * with `records` only still parses.
+   */
+  async usage(limit = 50): Promise<{ records: TurnUsageView[]; retained?: number; bounded?: boolean }> {
+    return (await this.request<{ records: TurnUsageView[]; retained?: number; bounded?: boolean }>("GET", `/api/usage?limit=${limit}`)).body;
   }
 
   /**

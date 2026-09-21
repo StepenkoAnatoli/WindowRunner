@@ -1,5 +1,7 @@
 import { ApiClient, ApiRequestError, clearToken, loadToken, saveToken } from "./api.js";
 import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, type AppAction, type AppState, type TurnView, previewApproval, type ApprovalPreview } from "./app-state.js";
+import { describeError } from "./describe-error.js";
+import { button, el } from "./dom.js";
 
 /**
  * Windows Runner web UI — the smallest client that drives the whole lifecycle:
@@ -190,16 +192,6 @@ function reportError(err: unknown): void {
   }
   const code = err instanceof ApiRequestError ? err.code : "CLIENT_ERROR";
   dispatch({ type: "error", code, message: describeError(err) });
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    if (err.status === 401) return err.code === "AUTH_INVALID" ? "token rejected (401 AUTH_INVALID)" : "token required (401)";
-    if (err.status === 403 && err.code === "PATH_ESCAPES_ROOT") return `folder is outside the allowed roots (403 PATH_ESCAPES_ROOT): ${err.message}`;
-    return `${err.message} (${err.status} ${err.code})`;
-  }
-  if (err instanceof TypeError) return `cannot reach the server: ${err.message}`;
-  return err instanceof Error ? err.message : String(err);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,31 +389,6 @@ function renderPreview(p: ApprovalPreview): HTMLElement {
 function errorBanner(): HTMLElement {
   return el("div", { class: "banner error", role: "alert", "data-testid": "error-banner" }, el("strong", {}, state.error!.code), " ", state.error!.message, " ", button("dismiss-error", "Dismiss", () => dispatch({ type: "error_cleared" }), "link"));
 }
-
-// ---------------------------------------------------------------------------
-// Tiny DOM helpers
-
-type Child = Node | string | null | undefined;
-
-function el(tag: string, attrs: Record<string, string> = {}, ...children: Child[]): HTMLElement {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "disabled" && v !== "true") continue;
-    node.setAttribute(k, v);
-  }
-  for (const child of children) {
-    if (child === null || child === undefined) continue;
-    node.append(typeof child === "string" ? document.createTextNode(child) : child);
-  }
-  return node;
-}
-
-function button(testId: string, label: string, onClick: (() => void) | undefined, kind: "primary" | "secondary" | "danger" | "link", disabled = false): HTMLElement {
-  const b = el("button", { type: onClick ? "button" : "submit", class: `btn ${kind}`, "data-testid": testId, ...(disabled ? { disabled: "true" } : {}) }, label);
-  if (onClick) b.addEventListener("click", onClick);
-  return b;
-}
-
 
 // ---------------------------------------------------------------------------
 
