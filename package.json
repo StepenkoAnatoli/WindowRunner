@@ -46,12 +46,17 @@
   "workspaces": [
     "packages/shared",
     "packages/server",
-    "packages/web"
+    "packages/web",
+    "packages/desktop"
   ],
   "scripts": {
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/server && npm run build --workspace packages/web",
     "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
     "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
+    "build:desktop": "npm run build --workspace packages/desktop",
+    "typecheck:desktop": "npm run typecheck --workspace packages/desktop",
+    "test:desktop": "npm run test --workspace packages/desktop",
+    "smoke:desktop": "npm run smoke:page --workspace packages/desktop && npm run smoke:electron --workspace packages/desktop",
     "setup": "node scripts/setup.mjs",
     "prestart": "node scripts/ensure-built.mjs",
     "start": "node packages/server/dist/index.cjs",
