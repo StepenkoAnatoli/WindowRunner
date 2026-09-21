@@ -64,7 +64,7 @@ export function renderUsagePage(props: UsagePageProps): HTMLElement {
         )
       : null,
     state.status === "ready" && state.records.length === 0
-      ? el("p", { class: "hint", "data-testid": "usage-empty" }, "No turns recorded yet. Send a message in the workspace.")
+      ? el("p", { class: "hint", "data-testid": "usage-empty" }, "No turns recorded yet.")
       : el(
           "table",
           { class: "usage", "data-testid": "usage-table" },

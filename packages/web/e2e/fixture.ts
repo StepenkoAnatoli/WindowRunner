@@ -21,6 +21,15 @@ export const DASH_PORT = Number(process.env.DASH_PORT ?? 7701);
  * DASH_PORT server cannot promise (dashboard.spec.ts activates one there).
  */
 export const DASH_STOP_PORT = Number(process.env.DASH_STOP_PORT ?? 7702);
+/**
+ * B2 fixture (e2e/providers-server.ts): the workspace provider/usage/settings
+ * flows on their own port. Like DASH_PORT it runs the real provider bootstrap
+ * (its own provider-profiles.json in a per-run temp data dir) — but it must be
+ * a SEPARATE server from E2E_PORT because the B2 flow activates a profile,
+ * which hot-swaps the active provider; the scripted-provider specs (ui.spec,
+ * workspace.spec) share E2E_PORT and would lose their scripted replies.
+ */
+export const PROVIDERS_PORT = Number(process.env.PROVIDERS_PORT ?? 7703);
 export const E2E_TOKEN = "e2e-fixed-token-0123456789abcdef";
 export const MCP_CONFIG = { command: "npx", args: ["-y", "example-mcp"], env: { EXAMPLE: "1" } };
 export const MCP_CONFIG_HASH = computeConfigHash(MCP_CONFIG);

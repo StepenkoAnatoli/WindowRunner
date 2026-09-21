@@ -1,11 +1,16 @@
 /**
- * The dashboard's server connection: connect with a token, sign out, refresh
- * the provider + usage views, and the one place its request failures are
- * turned into a message.
+ * The compatibility page's server connection: connect with a token, sign out,
+ * refresh the provider + usage views, and the one place its request failures
+ * are turned into a message.
  *
  * `client` is a live ES-module binding: the view modules import it and read
  * the current value, which is what keeps `if (!client) return;` guards working
  * across a Sign out without passing the client through every function.
+ *
+ * B2: the provider list/CRUD itself runs through the shared provider
+ * controller (provider-controller.ts); `refresh()` only refills both slices
+ * from the server (used after a quick-chat turn lands and by the usage
+ * Refresh button), preserving the transient form/notice fields.
  */
 import { ApiClient, ApiRequestError, clearToken, saveToken } from "./api.js";
 import { describeError } from "./describe-error.js";
@@ -53,12 +58,23 @@ export async function refresh(): Promise<void> {
   if (!client) return;
   try {
     const [providers, usage] = await Promise.all([client.listProviders(), client.usage(50)]);
-    state.activeProfileId = providers.activeProfileId;
-    state.profiles = providers.profiles;
-    state.usage = usage.records;
-    // Remembered so the usage panel can say the table is recent turns, not the
-    // whole history, when the server reports records it no longer retains.
-    state.usageMeta = { retained: usage.retained, bounded: usage.bounded ?? false };
+    // Spread-first: the transient form, notice, and pending-action fields are
+    // UI state and must survive a data refresh untouched.
+    state.providers = {
+      ...state.providers,
+      status: "ready",
+      activeProfileId: providers.activeProfileId,
+      profiles: providers.profiles,
+      error: undefined,
+    };
+    state.usage = {
+      ...state.usage,
+      status: "ready",
+      records: usage.records,
+      retained: usage.retained,
+      bounded: usage.bounded,
+      error: undefined,
+    };
   } catch (err) {
     if (err instanceof ApiRequestError && err.isAuth) {
       signOut();
