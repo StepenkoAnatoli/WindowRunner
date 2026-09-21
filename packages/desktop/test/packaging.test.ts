@@ -14,7 +14,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const read = (rel: string): string => fs.readFileSync(path.join(desktopRoot, rel), "utf8");
+// Normalize CRLF: Windows checkouts can materialize LF files as CRLF, and the
+// shape assertions below are newline-sensitive. What we pin is content shape,
+// not the checkout's line-ending policy.
+const read = (rel: string): string =>
+  fs.readFileSync(path.join(desktopRoot, rel), "utf8").replace(/\r\n/g, "\n");
 
 describe("installer packaging contract (electron-builder.yml)", () => {
   const yml = read("electron-builder.yml");
