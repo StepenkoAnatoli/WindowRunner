@@ -57,3 +57,50 @@ describe("describeError", () => {
     assert.equal(describeError("boom"), "boom");
   });
 });
+
+/**
+ * The pre-split implementation, copied verbatim from `main.ts` at 4a6b282 (the
+ * commit before `describeError` moved to src/describe-error.ts). It is the
+ * oracle for the "no wording changed" tests below: the extraction was supposed
+ * to be behaviour-preserving for the main UI, and these strings are
+ * user-facing — `ui.spec.ts` asserts on one of them — so a future edit to the
+ * shared function must not silently move them.
+ */
+function preSplitMainUiDescribeError(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    if (err.status === 401) return err.code === "AUTH_INVALID" ? "token rejected (401 AUTH_INVALID)" : "token required (401)";
+    if (err.status === 403 && err.code === "PATH_ESCAPES_ROOT") return `folder is outside the allowed roots (403 PATH_ESCAPES_ROOT): ${err.message}`;
+    return `${err.message} (${err.status} ${err.code})`;
+  }
+  if (err instanceof TypeError) return `cannot reach the server: ${err.message}`;
+  return err instanceof Error ? err.message : String(err);
+}
+
+describe("describeError is byte-identical to the pre-split main.ts version", () => {
+  // Every shape the main UI can hit, including the two the E2E suite depends
+  // on. `describeError(e)` with no options is what main.ts calls.
+  const cases: Array<[string, unknown]> = [
+    ["403 PATH_ESCAPES_ROOT (asserted by e2e/ui.spec.ts)", err(403, "PATH_ESCAPES_ROOT", "/etc is not inside an allowed root")],
+    ["403 PATH_ESCAPES_ROOT with an empty message", err(403, "PATH_ESCAPES_ROOT", "")],
+    ["401 AUTH_REQUIRED", err(401, "AUTH_REQUIRED", "token required")],
+    ["401 AUTH_INVALID", err(401, "AUTH_INVALID", "token rejected")],
+    ["400 with a field list the old version ignored", err(400, "PROFILE_INVALID", "profile is invalid", { errors: ["baseUrl required"] })],
+    ["404", err(404, "PROFILE_NOT_FOUND", "profile \"nope\" not found")],
+    ["500", err(500, "PROFILE_PERSIST_FAILED", "could not activate the profile: EACCES")],
+    ["transport failure", new TypeError("Failed to fetch")],
+    ["plain Error", new Error("boom")],
+    ["non-Error", "boom"],
+  ];
+
+  for (const [name, e] of cases) {
+    it(`matches for ${name}`, () => {
+      assert.equal(describeError(e), preSplitMainUiDescribeError(e));
+    });
+  }
+
+  it("pins the exact PATH_ESCAPES_ROOT sentence, not just equality with the oracle", () => {
+    // Equality with the oracle would survive both copies drifting together.
+    const out = describeError(err(403, "PATH_ESCAPES_ROOT", "/etc is not inside an allowed root"));
+    assert.equal(out, "folder is outside the allowed roots (403 PATH_ESCAPES_ROOT): /etc is not inside an allowed root");
+  });
+});
