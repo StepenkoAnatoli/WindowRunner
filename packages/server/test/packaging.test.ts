@@ -524,6 +524,16 @@ describe("Packaging contract", () => {
   });
 
   describe("standalone workspace builds", () => {
+    // Deletes packages/shared/dist on purpose, so each workspace build has to
+    // resolve @windows-runner/shared without it.
+    //
+    // This passes because the workspace link is the supported fallback when
+    // shared/dist is absent: node_modules/@windows-runner/shared is a link to
+    // packages/shared, whose "main" is src/index.ts, so tsc and esbuild resolve
+    // shared from source even though tsconfig.build.json maps the import to
+    // ../shared/dist/index.d.ts. Do not "fix" this test by adding a shared
+    // prebuild hook to the workspace scripts — the fallback is the contract
+    // being pinned here, and a redundant prebuild would hide its regressions.
     it("builds server and web packages independently from clean state without prior shared/dist", () => {
       const runWorkspaceBuild = (ws: string) =>
         spawnSync("npm", ["run", "build", "--workspace", ws], {
