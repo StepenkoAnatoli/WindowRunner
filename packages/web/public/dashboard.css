@@ -61,3 +61,22 @@ table.usage th { color: var(--muted); font-weight: 600; }
 
 /* Notices */
 .banner { position: sticky; bottom: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+
+/* ---- B2 compatibility: shared provider-component classes the dashboard now
+   renders through provider-page.ts (kept visually stable) ---- */
+.page-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.page-head h2 { margin: 0; flex: 1; }
+.page-head .row { margin-top: 0; }
+.provider-page { display: block; }
+.banner.success { border-color: var(--ok); }
+.banner.error { border-color: var(--danger); }
+.field-error { margin: 4px 0 0; }
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--danger); }
+input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-visible, a:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 1px;
+}
+.dot { flex: none; }
+@media (max-width: 700px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .banner-active { flex-wrap: wrap; }
+}

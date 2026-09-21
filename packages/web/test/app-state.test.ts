@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, previewApproval, type AppState } from "../src/app-state.js";
+import { activeTurn, describeTurn, initialAppState, initialProviderUiState, pendingApprovals, reduceApp, previewApproval, type AppState } from "../src/app-state.js";
 import { validateWorkspaceCatalog } from "../src/workspace-catalog.js";
 
 function ev(seq: number, type: string, extra: Record<string, unknown> = {}): any {
@@ -257,5 +257,72 @@ describe("workspace navigation (B1)", () => {
     assert.equal(s.workspace.inspectorOpen, false);
     s = reduceApp(s, { type: "inspector_tab_selected", tab: "changes" });
     assert.equal(s.workspace.inspectorTab, "changes");
+  });
+
+  // ---- B2 route host + provider/usage slices ----
+
+  it("route_changed moves only the route: catalog, session, turns, providers, usage untouched", () => {
+    let s = withTurn();
+    s = reduceApp(s, {
+      type: "providers_state",
+      providers: { status: "ready", activeProfileId: "p1", profiles: [{ id: "p1", label: "L", kind: "mock", model: "m", createdAt: 1, updatedAt: 2, active: true }], form: undefined },
+    });
+    s = reduceApp(s, { type: "usage_state", usage: { status: "ready", records: [] } });
+    s = reduceApp(s, { type: "route_changed", route: { kind: "providers" } });
+    assert.equal(s.route.kind, "providers");
+    assert.equal(s.turns.length, 1, "turns survive a route change");
+    assert.ok(s.session, "session survives a route change");
+    assert.equal(s.providers.status, "ready", "provider cache survives a route change");
+    assert.ok(s.providers.form === undefined || typeof s.providers.form === "object");
+    assert.equal(s.usage.status, "ready");
+  });
+
+  it("the provider form survives route changes (in-memory preservation), sign-out clears it", () => {
+    let s = reduceApp(initialAppState, { type: "auth_ok", securityMode: "token", persistenceMode: "memory" });
+    const formState = {
+      mode: "create" as const,
+      profileId: "x",
+      label: "X",
+      kind: "mock",
+      baseUrl: "",
+      model: "m",
+      apiKey: "",
+      apiKeyMode: "empty" as const,
+      validationErrors: {},
+      submitting: false,
+    };
+    s = reduceApp(s, { type: "providers_state", providers: { ...initialProviderUiState, form: formState } });
+    s = reduceApp(s, { type: "route_changed", route: { kind: "usage" } });
+    assert.equal(s.providers.form?.label, "X", "navigating away preserves the open form");
+    s = reduceApp(s, { type: "auth_cleared" });
+    assert.equal(s.providers.form, undefined, "sign-out drops the transient form");
+    assert.equal(s.providers.status, "idle", "sign-out drops cached provider data");
+    assert.equal(s.usage.status, "idle", "sign-out drops usage data");
+    assert.equal(s.health, undefined);
+  });
+
+  it("auth_invalid clears provider/usage state but keeps the workspace catalog", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "providers_state", providers: { status: "ready", activeProfileId: "p", profiles: [], form: undefined } });
+    s = reduceApp(s, { type: "usage_state", usage: { status: "ready", records: [], bounded: true, retained: 3 } });
+    s = reduceApp(s, { type: "route_changed", route: { kind: "providers" } });
+    s = reduceApp(s, { type: "auth_invalid", message: "nope" });
+    assert.equal(s.providers.status, "idle");
+    assert.equal(s.usage.status, "idle");
+    assert.equal(s.auth, "invalid");
+    assert.equal(s.authError, "nope");
+    assert.equal(s.route.kind, "providers", "the route itself is preserved");
+    assert.equal(s.workspace.catalog.projects.length, 2, "B1 navigation metadata survives");
+  });
+
+  it("workspace_catalog_reset clears only the local catalog and its selections", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "workspace_catalog_reset" });
+    assert.deepEqual(s.workspace.catalog, { version: 1, projects: [], sessions: [] });
+    assert.equal(s.workspace.selectedProjectId, undefined);
+    assert.equal(s.workspace.selectedSessionId, undefined);
+    assert.equal(s.providers.status, "idle", "providers (server state) untouched by the catalog reset");
+    assert.ok(s.session === undefined);
   });
 });

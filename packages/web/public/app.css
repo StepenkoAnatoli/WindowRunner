@@ -94,3 +94,73 @@ pre.diff .ctx { color: var(--muted); display: block; }
   .workspace-shell.sidebar-open [data-testid="project-sidebar"] { position: fixed; left: 8px; top: 8px; bottom: 8px; width: min(300px, 85vw); z-index: 20; max-height: none; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); }
   .workspace-shell.inspector-open [data-testid="context-inspector"] { position: fixed; right: 8px; top: 8px; bottom: 8px; width: min(320px, 85vw); z-index: 20; max-height: none; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); }
 }
+
+/* ---- B2 route host: top-level navigation, provider/usage/settings pages ---- */
+.top-nav { display: flex; gap: 2px; align-items: center; flex-wrap: wrap; }
+.nav-link { padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--fg); cursor: pointer; font: inherit; }
+.nav-link:hover { border-color: var(--border); }
+.nav-link.selected { background: var(--primary); border-color: var(--primary); color: #fff; }
+.route-page { padding: 0 16px 16px; max-width: 960px; margin: 0 auto; width: 100%; }
+.page-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.page-head h2 { margin: 0; flex: 1; }
+.page-head .row { margin-top: 0; }
+
+/* Active provider banner (shared component; same classes as dashboard.css) */
+.banner-active { display: flex; align-items: center; gap: 8px; font-size: 16px; border-width: 2px; border-color: var(--primary); position: static; }
+.banner-active strong { font-size: 16px; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+/* Provider cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.card.provider { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.card.provider.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.p-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.p-head .dot { flex: none; }
+.p-head span[title] { cursor: help; }
+.p-head > span:nth-child(2) { flex: 1; font-weight: 600; }
+.card.provider .base { word-break: break-all; }
+.card.provider .row { margin-top: 10px; }
+.card.provider .row .btn { padding: 5px 10px; font-size: 13px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.fail { background: var(--danger); }
+.small { font-size: 13px; }
+
+/* Provider form */
+.provider-form { max-width: 560px; }
+.field-error { margin: 4px 0 0; }
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--danger); }
+input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-visible, .nav-link:focus-visible,
+.project-name:focus-visible, .session-name:focus-visible, .inspector-tab:focus-visible, .settings-tab:focus-visible, a:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 1px;
+}
+
+/* Notices: the base .banner is a sticky bottom bar (errors); success/info
+   notices are quieter and non-sticky. */
+.banner.success { border-color: var(--ok); position: static; }
+.banner.info { position: static; }
+.banner.error { position: static; }
+#app > .banner.error, .app-root ~ .banner.error { position: sticky; bottom: 8px; }
+
+/* Usage page */
+.usage-page .page-head p { margin: 0; }
+table.usage { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+table.usage th, table.usage td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.usage th { color: var(--muted); font-weight: 600; }
+
+/* Settings shell */
+.settings-nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+.settings-tab { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; font: inherit; font-size: 14px; }
+.settings-tab.selected { background: var(--primary); border-color: var(--primary); color: #fff; }
+.settings-section h3 { font-size: 14px; margin: 14px 0 6px; }
+.about-links { margin: 4px 0; padding-left: 18px; }
+.about-links li { margin: 2px 0; }
+
+/* Narrow widths: provider/usage/settings pages keep a single column and the
+   top nav wraps; nothing scrolls horizontally. */
+@media (max-width: 700px) {
+  .route-page { padding: 0 10px 12px; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .banner-active { flex-wrap: wrap; }
+  header { row-gap: 4px; }
+}

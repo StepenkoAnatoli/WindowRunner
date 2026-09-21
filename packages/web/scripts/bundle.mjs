@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { cpSync, mkdirSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,9 @@ import { fileURLToPath } from "node:url";
 // @windows-runner/shared inlined from source.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "..");
+// App version for the About settings page (settings/about-page.ts reads the
+// __APP_VERSION__ define; tests and unbundled runs fall back to "development").
+const appVersion = JSON.parse(readFileSync(path.join(webRoot, "..", "..", "package.json"), "utf8")).version ?? "0.0.0";
 const buildOptions = (outfile) => ({
   bundle: true,
   format: "esm",
@@ -20,6 +23,7 @@ const buildOptions = (outfile) => ({
   sourcemap: true,
   minify: false,
   outfile,
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   alias: { "@windows-runner/shared": path.join(webRoot, "..", "shared", "src", "index.ts") },
 });
 

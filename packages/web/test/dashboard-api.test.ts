@@ -135,3 +135,49 @@ describe("ApiClient provider-dashboard methods", () => {
     });
   });
 });
+
+describe("ApiClient provider methods — B2 contract guards", () => {
+  it("create/update/activate/test/delete all carry the bearer token", async () => {
+    const auths: Array<string | undefined> = [];
+    const fetchImpl: typeof fetch = (async (_url: any, init: any) => {
+      auths.push((init.headers as any).authorization);
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ token: "tok-3", fetch: fetchImpl });
+    await client.createProfile({ id: "a", label: "A", kind: "mock", model: "m" });
+    await client.updateProfile("a", { label: "B" });
+    await client.activateProfile("a");
+    await client.testProfile("a");
+    await client.deleteProfile("a");
+    await client.listProviders();
+    assert.equal(auths.length, 6);
+    for (const auth of auths) assert.equal(auth, "Bearer tok-3");
+  });
+
+  it("updateProfile transmits the patch verbatim: an omitted apiKey is absent from the body", async () => {
+    let body: string | undefined;
+    const fetchImpl: typeof fetch = (async (_url: any, init: any) => {
+      body = init?.body as string | undefined;
+      return new Response(JSON.stringify({}), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ token: "tok", fetch: fetchImpl });
+    // The adapter (provider-types) drops the key; the client must not add one.
+    await client.updateProfile("a", { label: "Renamed", model: "m2" });
+    assert.deepEqual(JSON.parse(body!), { label: "Renamed", model: "m2" });
+    assert.equal(body!.includes("apiKey"), false);
+  });
+
+  it("usage parses `bounded`/`retained` and tolerates a server that omits them", async () => {
+    const record = { at: 1, providerId: "p", model: "m", turnId: "t", status: "completed" };
+    const fetchImpl: typeof fetch = (async () => new Response(JSON.stringify({ records: [record], retained: 7, bounded: true }), { status: 200 })) as unknown as typeof fetch;
+    const withMeta = new ApiClient({ token: "tok", fetch: fetchImpl });
+    assert.deepEqual(await withMeta.usage(10), { records: [record], retained: 7, bounded: true });
+
+    const bareFetch: typeof fetch = (async () => new Response(JSON.stringify({ records: [record] }), { status: 200 })) as unknown as typeof fetch;
+    const bare = new ApiClient({ token: "tok", fetch: bareFetch });
+    const result = await bare.usage();
+    assert.deepEqual(result.records, [record]);
+    assert.equal(result.retained, undefined);
+    assert.equal(result.bounded, undefined, "optional meta stays optional");
+  });
+});
