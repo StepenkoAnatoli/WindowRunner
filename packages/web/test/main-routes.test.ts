@@ -361,6 +361,40 @@ describe("main route host (B2.1 wiring)", () => {
     assert.equal(restored.value, "Draft Label", "the dirty form survives route changes");
   });
 
+  it("storage reset clears only the navigation catalog — no provider or session deletion", async () => {
+    confirmResult = true;
+    const providersBefore = callsTo("/api/providers");
+    const usageBefore = callsTo("/api/usage?limit=50");
+    const healthBefore = callsTo("/api/health");
+
+    // The dirty form from the previous journey step gates this nav too — the
+    // confirm stub answers for both it and the reset.
+    await clickAndWait('[data-testid="nav-settings"]');
+    await clickAndWait('[data-testid="settings-nav-storage"]');
+    assert.ok(el('[data-testid="storage-page"]'), "storage settings render");
+    await clickAndWait('[data-testid="reset-workspace-catalog"]');
+    assert.ok(
+      confirmMessages.some((m) => /Forget all remembered projects/.test(m)),
+      "reset asks for confirmation before forgetting anything"
+    );
+
+    await clickAndWait('[data-testid="nav-workspace"]');
+    assert.equal(root.querySelectorAll('[data-testid="project-item"]').length, 0, "the sidebar starts empty");
+    assert.ok(el('[data-testid="no-projects"]'));
+
+    const stored = JSON.parse(localStorageStub.getItem("windows-runner.workspace-catalog.v1") ?? "{}") as {
+      projects?: unknown[];
+      sessions?: unknown[];
+    };
+    assert.equal((stored.projects ?? []).length, 0, "the persisted catalog is cleared");
+    assert.equal((stored.sessions ?? []).length, 0);
+
+    assert.equal(callsTo("/api/providers"), providersBefore, "no provider deletion request");
+    assert.equal(callsTo("/api/usage?limit=50"), usageBefore, "no session/usage mutation");
+    assert.equal(callsTo("/api/health"), healthBefore, "no other server effects");
+    assert.equal(sessionStorageStub.getItem("windows-runner.token"), "boot-token-987", "the token is untouched");
+  });
+
   it("route history never carries tokens or provider secrets", () => {
     assert.ok(historyUrls.length > 0);
     for (const url of historyUrls) {
