@@ -21,9 +21,11 @@ B2.1 PASS — d020434, run 35623562775
 B2.2 PASS — e77f1e2 / f036576 / c97b5c4, run 35626280132
 B2.3 PASS — 6e33e70 / 3b5fe20 / e6151ba, run 35629109152
             (run on the PR-head commit: all eight checks green on e6151ba)
-B2.4 PASS — fb0a83d / 63f65a4, run 35632100275
-            (run on the PR-head commit: all eight checks green on 63f65a4)
-Current phase: B2.5 NOT STARTED
+B2.4 PASS — fb0a83d / 63f65a4 / 6ba81be
+            Evidence run: 35632800343
+            Head: 6ba81be
+            (all eight checks green on the PR-head commit)
+Current phase: B2.5
 ```
 
 ## Historical note — permanently red run on main
@@ -51,4 +53,6 @@ c97b5c4 test(web): cover provider page composition
 e6151ba docs: record B2 atomic checklist progress through B2.3
 cf66865 docs: pin B2.3 evidence to the PR-head CI run
 fb0a83d test(web): pin dashboard compatibility adapter behavior
+63f65a4 docs: record B2 atomic checklist progress through B2.4
+6ba81be docs: pin B2.4 evidence to the PR-head CI run
 ```
