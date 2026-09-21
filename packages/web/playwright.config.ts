@@ -17,7 +17,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // The `github` reporter publishes each failure as a check-run annotation,
+  // which is what makes a red Browser E2E job diagnosable from the Checks API
+  // alone (the raw job log and the html artifact both live on blob storage).
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["github"]] : "list",
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
