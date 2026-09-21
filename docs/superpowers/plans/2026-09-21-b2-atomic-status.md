@@ -25,7 +25,13 @@ B2.4 PASS — fb0a83d / 63f65a4 / 6ba81be
             Evidence run: 35632800343
             Head: 6ba81be
             (all eight checks green on the PR-head commit)
-Current phase: B2.5
+B2.5 PASS — 573190c / 6dd3564 / e106c41 / 34596b4
+            (accessibility spec; isolated desktop provider+settings journey;
+            web+desktop packaging contracts; CI B2 inventory enforcement)
+            Evidence run: 35637236325
+            Head: 34596b4
+            (all eight checks green on the PR-head commit)
+Current phase: B2.5 complete — awaiting final report review and merge approval
 ```
 
 ## Historical note — permanently red run on main
@@ -55,4 +61,9 @@ cf66865 docs: pin B2.3 evidence to the PR-head CI run
 fb0a83d test(web): pin dashboard compatibility adapter behavior
 63f65a4 docs: record B2 atomic checklist progress through B2.4
 6ba81be docs: pin B2.4 evidence to the PR-head CI run
+3dbdce0 docs: record B2.5 start and pin B2.4 evidence
+573190c test(web): add B2 accessibility coverage
+6dd3564 test(desktop): isolate provider and settings journey
+e106c41 test(packaging): pin B2 route and dashboard assets
+34596b4 ci: enforce B2 browser and desktop contracts
 ```

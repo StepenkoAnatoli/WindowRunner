@@ -143,7 +143,10 @@ loop — sessions, turns, SSE streaming, approvals — runs end to end without a
 API key, in `npm start` and in the desktop app alike. Real model calls need a
 provider profile (see the provider dashboard in
 [docs/INSTALL.md](./docs/INSTALL.md#provider-dashboard)); real-model runs are
-manual and never part of CI ([`eval/README.md`](./eval/README.md)). For
+manual and never part of CI ([`eval/README.md`](./eval/README.md)). Locally
+generated reports land in `eval/results/scripted-*.json`, which is
+**intentionally gitignored** (the tracked `scripted-2026-09-20.json` is a
+historical sample kept for reference). For
 development, `npm run dev` restarts the server on source changes (`tsx watch`).
 
 > Scope note: this section covers install, build and packaging claims only. The

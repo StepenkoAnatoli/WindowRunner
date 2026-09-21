@@ -11,6 +11,22 @@ on `windows-latest` and `macos-latest`. See
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md) → "CI enforcement status" for
 which platform checks exist and which do not.
 
+**PR checks (all eight required green before merge):** `CI`, `Browser E2E`,
+`Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop
+(ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
+(windows-latest)` — named in `.github/workflows/ci.yml`, whose two B2
+inventory steps fail the run if the browser or desktop E2E specs are deleted,
+renamed, or stop being discovered. Per-phase B2 evidence (run ids and commit
+index) lives in
+[`docs/superpowers/plans/2026-09-21-b2-atomic-status.md`](./superpowers/plans/2026-09-21-b2-atomic-status.md).
+
+**Historical note — one permanently red run on `main`:** the post-merge run
+**35618145045** failed at `Desktop (windows-latest)` → "Electron smoke (real
+unpacked Electron)" (a transient runner failure that also skipped the
+installer job), and GitHub **refused the rerun** ("its workflow file may be
+broken"). The plan-only rerun 35621840761 and every run since are green. Do
+not read that single red run as a broken `main`.
+
 ---
 
 ## Install-path status
@@ -36,7 +52,8 @@ which platform checks exist and which do not.
 | `npm run build:desktop` | **Verified** (Linux + `Desktop` CI jobs) | Compiles the Electron shell and stages the packaged payload under `packages/desktop/dist/` |
 | `npm run smoke:page` (desktop) | **Verified** (Linux) | Real headless Chromium against the served `/desktop` page: auto-auth, same-origin API |
 | `npm run smoke:electron` (desktop) | **Verified** (`Desktop` CI jobs, windows + ubuntu) | Real unpacked Electron via Playwright `_electron`: `/desktop` same-origin, in-memory token, clean shutdown |
-| `npm run e2e:desktop` | **Verified** (`Desktop` CI jobs) | Merge-gate journey: boot → auto-auth → mock turn → clean shutdown |
+| `npm run e2e` (web) | **Verified** (`Browser E2E` CI job) | Playwright/Chromium against fixture servers: auth flow, workspace, the B2 provider/usage/settings routes, `/dashboard` compatibility, and B2 accessibility semantics (`packages/web/e2e/`) |
+| `npm run e2e:desktop` | **Verified** (`Desktop` + `Desktop installer` CI jobs) | Two journeys against the real Electron shell — core (boot → auto-auth → mock turn → clean shutdown) and B2 providers/settings (create/mask/test/activate providers, settings sections, `/dashboard` token flow, no token or key leakage); the installer job repeats both against the installed app |
 | `npm run package:desktop:win` | **Verified** (`Desktop installer` CI job, windows-latest) | Builds `WindowRunner-Setup-<version>.exe`; the job installs silently, runs the journey against the installed app, then uninstalls |
 
 "Verified" means the command succeeded on the environment above. It is not a
@@ -351,6 +368,25 @@ The workspace catalog (separate from provider data):
   recreates it under the same id. There is no arbitrary filesystem deletion:
   the desktop path uses the same fixed preload method the app already uses
   for catalog persistence.
+
+### Sandboxed authoring environments (browser/Electron downloads)
+
+Two downloads are network-blocked in some sandboxes (CI is unaffected — it
+performs both downloads):
+
+- **Electron's binary** (`node_modules/electron/dist/`): `npm run
+  smoke:electron` and `npm run e2e:desktop` cannot run without it. Enable it
+  with `node node_modules/electron/install.js` where GitHub release downloads
+  are allowed; otherwise the `Desktop` / `Desktop installer` CI jobs are the
+  required evidence — report the local gap explicitly instead of claiming the
+  suites passed.
+- **Playwright's managed Chromium** (`npx playwright install chromium`): the
+  web e2e accepts any Chromium through the local-debug override —
+  `E2E_CHROMIUM_EXECUTABLE=/path/to/chromium E2E_CHROMIUM_LD_LIBRARY_PATH=/path/to/libs npm run e2e`
+  (see `packages/web/playwright.config.ts`). One self-contained binary source
+  is the desktop dev-dependency `@sparticuz/chromium`: its `executablePath()`
+  extracts a Chromium to `/tmp/chromium`, with its shared libraries in the
+  extracted `al2023` directory — point `E2E_CHROMIUM_LD_LIBRARY_PATH` there.
 
 ### Remote access
 
