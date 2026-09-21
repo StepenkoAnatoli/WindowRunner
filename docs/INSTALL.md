@@ -41,11 +41,10 @@ claim about Windows, macOS, or any packaged/distributed artifact.
 
 ## Prerequisites
 
-- **Node >= 20.10** (declared in `package.json` → `engines.node`).
+- **Node >= 22.0.0** (declared in `package.json` → `engines.node`).
   Note: CI pins **22.23.2** exactly, because Node 20 is past the end of its
   security-fix window (see the comment in `.github/workflows/ci.yml`). New work
-  should target Node 22; the `engines` range has not been narrowed because that
-  is a support-matrix decision, not a packaging fix.
+  targets Node 22; the `engines` range is set to `>=22.0.0`.
 - **npm** (ships with Node) and **git**.
 
 No global tools are required. `tsx` and `typescript` come from the lockfile; do

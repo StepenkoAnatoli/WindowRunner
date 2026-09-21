@@ -29,10 +29,27 @@ const OUTPUTS = [
   "packages/shared/dist/index.js",
   "packages/server/dist/index.js",
   "packages/server/dist/index.cjs",
+  "packages/web/dist/app/app.js",
+  "packages/web/dist/app/index.html",
+  "packages/web/dist/app/app.css",
+  "packages/web/dist/dashboard/dashboard.js",
+  "packages/web/dist/dashboard/dashboard.html",
+  "packages/web/dist/dashboard/dashboard.css",
 ];
 
 /** Source trees whose changes must invalidate the outputs above. */
-const SOURCES = ["packages/shared/src", "packages/server/src"];
+const SOURCES = [
+  "packages/shared/src",
+  "packages/server/src",
+  "packages/web/src",
+  "packages/web/public",
+];
+
+function isTrackedSource(filename) {
+  if (/\.[cm]?[jt]sx?$/.test(filename) && !/\.d\.ts$/.test(filename)) return true;
+  if (/\.(html|css)$/.test(filename)) return true;
+  return false;
+}
 
 function newestMtime(dir) {
   let newest = 0;
@@ -43,7 +60,7 @@ function newestMtime(dir) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);
-      } else if (/\.[cm]?ts$/.test(entry.name) && !/\.d\.ts$/.test(entry.name)) {
+      } else if (isTrackedSource(entry.name)) {
         const mtime = statSync(full).mtimeMs;
         if (mtime > newest) newest = mtime;
       }

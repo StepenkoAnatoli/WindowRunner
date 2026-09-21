@@ -67,7 +67,7 @@ function main() {
   const hasSourceCheckout = existsSync(path.join(repoRoot, "packages", "server", "src"));
   const isPackedRuntime = !hasSourceCheckout && existsSync(runtimeEntry);
 
-  // 1. Node version. The repo needs >=20.10; CI pins an exact LTS.
+  // 1. Node version. The repo needs >=22.0.0; CI pins an exact LTS.
   const range = manifest.engines?.node;
   if (range && !satisfiesEngines(range, process.version)) {
     problems.push(`Node ${process.version} does not satisfy engines.node "${range}".`);

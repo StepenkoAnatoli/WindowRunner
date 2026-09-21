@@ -37,13 +37,13 @@ Write-Host ""
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
   Write-Host "  ✕ Node.js not found."
-  Write-Host "    Install Node >= 20.10 (LTS) from https://nodejs.org, reopen the terminal, then re-run."
+  Write-Host "    Install Node >= 22.0.0 (LTS) from https://nodejs.org, reopen the terminal, then re-run."
   exit 1
 }
 
 $npm = Get-Command npm -ErrorAction SilentlyContinue
 if (-not $npm) {
-  Write-Host "  ✕ npm not found (it ships with Node >= 20.10)."
+  Write-Host "  ✕ npm not found (it ships with Node >= 22.0.0)."
   Write-Host "    Reinstall Node from https://nodejs.org and re-run."
   exit 1
 }
@@ -52,8 +52,8 @@ $nodeVersion = (node -v) -replace '^v',''
 $parts = $nodeVersion.Split('.')
 $major = [int]$parts[0]
 $minor = [int]$parts[1]
-if ($major -lt 20 -or ($major -eq 20 -and $minor -lt 10)) {
-  Write-Host "  ✕ Node $nodeVersion is too old — Windows Runner needs >= 20.10."
+if ($major -lt 22) {
+  Write-Host "  ✕ Node $nodeVersion is too old — Windows Runner needs >= 22.0.0."
   Write-Host "    Install a current release from https://nodejs.org and re-run."
   exit 1
 }

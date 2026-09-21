@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # Pinned exact version: Node 20 is EOL (security fixes ended 2026-04-30);
-          # Node 22 is Active LTS and satisfies the repo's engines (>=20.10).
+          # Node 22 is Active LTS and satisfies the repo's engines (>=22.0.0).
           node-version: "22.23.2"
           cache: npm
 

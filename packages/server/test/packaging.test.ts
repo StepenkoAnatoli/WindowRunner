@@ -409,4 +409,154 @@ describe("Packaging contract", () => {
       }
     });
   });
+
+  describe("ensure-built prestart hook", () => {
+    const script = path.join(repoRoot, "scripts", "ensure-built.mjs");
+
+    it("handles fresh/stale detection for web, dashboard, and public assets", async () => {
+      const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-ensure-built-"));
+      try {
+        await fsp.mkdir(path.join(tmp, "scripts"), { recursive: true });
+        await fsp.copyFile(script, path.join(tmp, "scripts", "ensure-built.mjs"));
+
+        // Symlink node_modules so canBuild() finds typescript and esbuild
+        await fsp.symlink(path.join(repoRoot, "node_modules"), path.join(tmp, "node_modules"), "dir");
+
+        await fsp.writeFile(
+          path.join(tmp, "package.json"),
+          JSON.stringify({
+            name: "mock-runner",
+            workspaces: ["packages/shared", "packages/server", "packages/web"],
+            scripts: {
+              build: "node -e 'process.stdout.write(\"mock-build-ran\\n\")'",
+            },
+          })
+        );
+
+        for (const dir of [
+          "packages/shared/src",
+          "packages/server/src",
+          "packages/web/src",
+          "packages/web/public",
+          "packages/shared/dist",
+          "packages/server/dist",
+          "packages/web/dist/app",
+          "packages/web/dist/dashboard",
+        ]) {
+          await fsp.mkdir(path.join(tmp, dir), { recursive: true });
+        }
+
+        const outputs = [
+          "packages/shared/dist/index.js",
+          "packages/server/dist/index.js",
+          "packages/server/dist/index.cjs",
+          "packages/web/dist/app/app.js",
+          "packages/web/dist/app/index.html",
+          "packages/web/dist/app/app.css",
+          "packages/web/dist/dashboard/dashboard.js",
+          "packages/web/dist/dashboard/dashboard.html",
+          "packages/web/dist/dashboard/dashboard.css",
+        ];
+        for (const out of outputs) {
+          await fsp.writeFile(path.join(tmp, out), "output-content");
+        }
+
+        const baseTime = Date.now();
+        const oldTime = new Date(baseTime - 10000);
+        const newTime = new Date(baseTime + 10000);
+
+        await fsp.writeFile(path.join(tmp, "packages/web/src/main.ts"), "main");
+        await fsp.writeFile(path.join(tmp, "packages/web/src/dashboard.ts"), "dash");
+        await fsp.writeFile(path.join(tmp, "packages/web/public/app.css"), "css");
+
+        fs.utimesSync(path.join(tmp, "packages/web/src/main.ts"), oldTime, oldTime);
+        fs.utimesSync(path.join(tmp, "packages/web/src/dashboard.ts"), oldTime, oldTime);
+        fs.utimesSync(path.join(tmp, "packages/web/public/app.css"), oldTime, oldTime);
+        for (const out of outputs) {
+          fs.utimesSync(path.join(tmp, out), new Date(baseTime), new Date(baseTime));
+        }
+
+        const runHook = () =>
+          spawnSync(process.execPath, [path.join(tmp, "scripts", "ensure-built.mjs")], {
+            cwd: tmp,
+            encoding: "utf8",
+          });
+
+        // 1. Fully current outputs -> no rebuild
+        const resCurrent = runHook();
+        assert.equal(resCurrent.status, 0);
+        assert.equal(resCurrent.stdout, "");
+
+        // 2. Changed main.ts -> rebuilds
+        fs.utimesSync(path.join(tmp, "packages/web/src/main.ts"), newTime, newTime);
+        const resMain = runHook();
+        assert.equal(resMain.status, 0);
+        assert.match(resMain.stdout, /sources changed since the last build/);
+        assert.match(resMain.stdout, /mock-build-ran/);
+        fs.utimesSync(path.join(tmp, "packages/web/src/main.ts"), oldTime, oldTime);
+
+        // 3. Changed dashboard.ts -> rebuilds
+        fs.utimesSync(path.join(tmp, "packages/web/src/dashboard.ts"), newTime, newTime);
+        const resDash = runHook();
+        assert.equal(resDash.status, 0);
+        assert.match(resDash.stdout, /sources changed since the last build/);
+        assert.match(resDash.stdout, /mock-build-ran/);
+        fs.utimesSync(path.join(tmp, "packages/web/src/dashboard.ts"), oldTime, oldTime);
+
+        // 4. Changed app.css -> rebuilds
+        fs.utimesSync(path.join(tmp, "packages/web/public/app.css"), newTime, newTime);
+        const resCss = runHook();
+        assert.equal(resCss.status, 0);
+        assert.match(resCss.stdout, /sources changed since the last build/);
+        assert.match(resCss.stdout, /mock-build-ran/);
+        fs.utimesSync(path.join(tmp, "packages/web/public/app.css"), oldTime, oldTime);
+
+        // 5. Missing dashboard bundle -> rebuilds
+        await fsp.rm(path.join(tmp, "packages/web/dist/dashboard/dashboard.js"));
+        const resMissing = runHook();
+        assert.equal(resMissing.status, 0);
+        assert.match(resMissing.stdout, /build output missing: packages\/web\/dist\/dashboard\/dashboard\.js/);
+        assert.match(resMissing.stdout, /mock-build-ran/);
+      } finally {
+        await fsp.rm(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("standalone workspace builds", () => {
+    it("builds server and web packages independently from clean state without prior shared/dist", () => {
+      const runWorkspaceBuild = (ws: string) =>
+        spawnSync("npm", ["run", "build", "--workspace", ws], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          shell: process.platform === "win32",
+        });
+
+      // 1. Build server when shared/dist is absent
+      const sharedDist = path.join(repoRoot, "packages", "shared", "dist");
+      fs.rmSync(sharedDist, { recursive: true, force: true });
+      assert.ok(!fs.existsSync(sharedDist), "packages/shared/dist should be deleted");
+
+      const resServer = runWorkspaceBuild("packages/server");
+      assert.equal(
+        resServer.status,
+        0,
+        `npm run build --workspace packages/server failed from clean state:\n${resServer.stdout}\n${resServer.stderr}`
+      );
+      assert.ok(fs.existsSync(path.join(repoRoot, "packages", "server", "dist", "index.cjs")));
+
+      // 2. Build web when shared/dist is absent
+      fs.rmSync(sharedDist, { recursive: true, force: true });
+      assert.ok(!fs.existsSync(sharedDist), "packages/shared/dist should be deleted");
+
+      const resWeb = runWorkspaceBuild("packages/web");
+      assert.equal(
+        resWeb.status,
+        0,
+        `npm run build --workspace packages/web failed from clean state:\n${resWeb.stdout}\n${resWeb.stderr}`
+      );
+      assert.ok(fs.existsSync(path.join(repoRoot, "packages", "web", "dist", "app", "app.js")));
+      assert.ok(fs.existsSync(path.join(repoRoot, "packages", "web", "dist", "dashboard", "dashboard.js")));
+    });
+  });
 });
