@@ -51,15 +51,17 @@ describe("preload bridge surface", () => {
     await bridge.chooseProjectFolder();
     await bridge.openExternalEditor("/tmp/x");
     await bridge.getAppInfo();
+    await bridge.loadWorkspaceCatalog();
+    await bridge.saveWorkspaceCatalog({ version: 1, projects: [], sessions: [] });
 
     const allowed = new Set<string>(Object.values(DESKTOP_CHANNELS));
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 6);
     for (const call of calls) {
       assert.ok(allowed.has(call.channel), `unexpected IPC channel ${call.channel}`);
     }
     assert.deepEqual(
       calls.map((c) => c.channel),
-      [DESKTOP_CHANNELS.bootstrap, DESKTOP_CHANNELS.chooseFolder, DESKTOP_CHANNELS.openExternal, DESKTOP_CHANNELS.appInfo]
+      [DESKTOP_CHANNELS.bootstrap, DESKTOP_CHANNELS.chooseFolder, DESKTOP_CHANNELS.openExternal, DESKTOP_CHANNELS.appInfo, DESKTOP_CHANNELS.catalogLoad, DESKTOP_CHANNELS.catalogSave]
     );
   });
 

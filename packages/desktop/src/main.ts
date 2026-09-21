@@ -20,8 +20,9 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import * as path from "node:path";
 import { DESKTOP_CHANNELS, type DesktopAppInfo, type DesktopBootstrap } from "./desktop-bridge.js";
-import { ensureDesktopPaths, resolveDesktopPaths } from "./paths.js";
+import { ensureDesktopPaths, resolveDesktopPaths, type DesktopPaths } from "./paths.js";
 import { defaultServerBundle, startServer, stopServer, waitForHealth, type DesktopServer } from "./server-process.js";
+import { loadWorkspaceCatalogFile, saveWorkspaceCatalogFile } from "./workspace-catalog.js";
 
 let server: DesktopServer | undefined;
 let shuttingDown: Promise<void> | undefined;
@@ -75,6 +76,30 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return { version: app.getVersion(), platform: process.platform };
   });
+
+  // B1 workspace catalog: fixed schema at a fixed path. The renderer passes
+  // only the catalog value — never a path — and the main process validates
+  // before every write (a malformed value rejects the invoke; nothing is
+  // written). Reads of a missing/corrupt file resolve to null.
+  ipcMain.handle(DESKTOP_CHANNELS.catalogLoad, async (event) => {
+    assertTrustedSender(event);
+    return loadWorkspaceCatalogFile(desktopPaths().workspaceCatalogFile);
+  });
+
+  ipcMain.handle(DESKTOP_CHANNELS.catalogSave, async (event, catalog: unknown) => {
+    assertTrustedSender(event);
+    await saveWorkspaceCatalogFile(desktopPaths().workspaceCatalogFile, catalog);
+  });
+}
+
+let cachedPaths: DesktopPaths | undefined;
+
+/** Per-user paths, resolved once the app module is ready to answer `getPath`. */
+function desktopPaths(): DesktopPaths {
+  if (!cachedPaths) {
+    cachedPaths = resolveDesktopPaths({ appDataDir: app.getPath("userData") });
+  }
+  return cachedPaths;
 }
 
 function createWindow(): BrowserWindow {

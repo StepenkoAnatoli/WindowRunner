@@ -40,6 +40,7 @@ describe("desktop paths", () => {
       assert.equal(a.appDataDir.startsWith(previousCwd), false);
       assert.equal(a.serverDataDir, a.appDataDir);
       assert.equal(a.logsDir, path.join(a.appDataDir, "logs"));
+      assert.equal(a.workspaceCatalogFile, path.join(a.appDataDir, "workspace-catalog.json"));
       assert.match(a.appDataDir, /WindowRunner$/);
     } finally {
       process.chdir(previousCwd);
@@ -52,6 +53,7 @@ describe("desktop paths", () => {
     assert.equal(paths.appDataDir, path.resolve(dir));
     assert.equal(paths.serverDataDir, path.resolve(dir));
     assert.equal(paths.logsDir, path.join(path.resolve(dir), "logs"));
+    assert.equal(paths.workspaceCatalogFile, path.join(path.resolve(dir), "workspace-catalog.json"));
   });
 
   it("redirects to a temporary directory via the environment", async () => {

@@ -34,6 +34,14 @@ export interface DesktopBridge {
   chooseProjectFolder(): Promise<string | null>;
   openExternalEditor(path: string): Promise<void>;
   getAppInfo(): Promise<DesktopAppInfo>;
+  /**
+   * B1 workspace catalog (navigation metadata only — no tokens, keys,
+   * transcripts, or file contents). Fixed schema, fixed location: the
+   * renderer can neither choose a path nor read arbitrary files. `null`
+   * when no catalog has been saved yet.
+   */
+  loadWorkspaceCatalog(): Promise<unknown>;
+  saveWorkspaceCatalog(catalog: unknown): Promise<void>;
 }
 
 /** The only IPC channel names main and preload may share. */
@@ -42,10 +50,19 @@ export const DESKTOP_CHANNELS = {
   chooseFolder: "window-runner:choose-folder",
   openExternal: "window-runner:open-external",
   appInfo: "window-runner:get-app-info",
+  catalogLoad: "window-runner:workspace-catalog:load",
+  catalogSave: "window-runner:workspace-catalog:save",
 } as const;
 
 /** Exact method allowlist exposed on `window.windowRunnerDesktop`. */
-export const BRIDGE_METHODS = ["getBootstrap", "chooseProjectFolder", "openExternalEditor", "getAppInfo"] as const;
+export const BRIDGE_METHODS = [
+  "getBootstrap",
+  "chooseProjectFolder",
+  "openExternalEditor",
+  "getAppInfo",
+  "loadWorkspaceCatalog",
+  "saveWorkspaceCatalog",
+] as const;
 
 /** Minimal IPC transport; the preload binds these to `ipcRenderer`. */
 export interface BridgeTransport {
@@ -81,6 +98,12 @@ export function createDesktopBridge(transport: BridgeTransport): DesktopBridge {
     },
     getAppInfo(): Promise<DesktopAppInfo> {
       return transport.invoke(DESKTOP_CHANNELS.appInfo) as Promise<DesktopAppInfo>;
+    },
+    loadWorkspaceCatalog(): Promise<unknown> {
+      return transport.invoke(DESKTOP_CHANNELS.catalogLoad);
+    },
+    saveWorkspaceCatalog(catalog: unknown): Promise<void> {
+      return transport.invoke(DESKTOP_CHANNELS.catalogSave, catalog) as Promise<void>;
     },
   };
 }

@@ -22,6 +22,11 @@ export interface DesktopPaths {
   serverDataDir: string;
   /** Directory for redacted server logs (`logs/server.log`). */
   logsDir: string;
+  /**
+   * Fixed B1 workspace-catalog file (`workspace-catalog.json` directly under
+   * the app data root). Navigation metadata only — no tokens or transcripts.
+   */
+  workspaceCatalogFile: string;
   /** Optional per-user projects directory. Not created in A1. */
   userProjectsDir?: string;
 }
@@ -68,6 +73,7 @@ export function resolveDesktopPaths(options: ResolveDesktopPathsOptions = {}): D
     // auth-token and sessions/ directly under the app data root.
     serverDataDir: appDataDir,
     logsDir: path.join(appDataDir, "logs"),
+    workspaceCatalogFile: path.join(appDataDir, "workspace-catalog.json"),
     userProjectsDir: undefined,
   };
 }
