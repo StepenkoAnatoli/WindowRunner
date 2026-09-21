@@ -89,6 +89,20 @@ test.describe("provider dashboard quick chat", () => {
   });
 
   test("Stop cancels an in-flight quick chat turn and records it as cancelled", async ({ page }) => {
+    // Diagnostics for a failure: the job log and the html report are not
+    // retrievable from every environment, so the failure message itself carries
+    // the network trace and the panel's DOM (published as a check-run
+    // annotation by the github reporter).
+    const diag: string[] = [];
+    const t0 = Date.now();
+    page.on("console", (m) => diag.push(`+${Date.now() - t0}ms console.${m.type()}: ${m.text()}`));
+    page.on("pageerror", (e) => diag.push(`+${Date.now() - t0}ms pageerror: ${e.message}`));
+    page.on("requestfailed", (r) => diag.push(`+${Date.now() - t0}ms FAILED ${r.method()} ${new URL(r.url()).pathname}: ${r.failure()?.errorText}`));
+    page.on("response", (r) => {
+      const path = new URL(r.url()).pathname;
+      if (/\/(events|cancel|turns|providers|usage|health)/.test(path)) diag.push(`+${Date.now() - t0}ms ${r.request().method()} ${path} -> ${r.status()}`);
+    });
+
     await page.goto("/dashboard");
     await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
 
@@ -106,7 +120,17 @@ test.describe("provider dashboard quick chat", () => {
 
     // The cancellation is confirmed by the server's own turn_cancelled event,
     // not by the client giving up: the stream stays open to receive it.
-    await expect(page.locator('[data-testid="dash-chat-status"]')).toContainText("cancelled", { timeout: 20_000 });
+    try {
+      await expect(page.locator('[data-testid="dash-chat-status"]')).toContainText("cancelled", { timeout: 20_000 });
+    } catch (err) {
+      const panel = await page.locator('[data-testid="dash-chat"]').innerText().catch(() => "(panel not found)");
+      throw new Error(
+        `quick chat never reached a cancelled state.\n` +
+          `--- network/console (${diag.length} entries) ---\n${diag.join("\n")}\n` +
+          `--- chat panel text ---\n${panel}\n` +
+          `--- playwright ---\n${(err as Error).message}`
+      );
+    }
     await expect(page.locator('[data-testid="dash-chat-stop"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="dash-send"]')).toBeEnabled();
 
