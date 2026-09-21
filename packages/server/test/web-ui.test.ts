@@ -16,7 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { startServer, resolveWebDir, type StartedServer } from "../src/boot.js";
+import { startServer, resolveWebDir, resolveDesktopDir, type StartedServer } from "../src/boot.js";
 import { loadServerConfig } from "../src/config.js";
 
 const TOKEN = "web-ui-test-token-0123456789abcdef";
@@ -38,11 +38,19 @@ async function fakeWebDir(): Promise<string> {
   return dir;
 }
 
-async function boot(webDir: string | null | undefined): Promise<StartedServer> {
+async function boot(webDir: string | null | undefined, desktopDir?: string | null): Promise<StartedServer> {
   const config = loadServerConfig({ HOST: "127.0.0.1", PORT: "0", WINDOWS_RUNNER_AUTH_TOKEN: TOKEN }, { homedir: os.tmpdir() });
-  const h = await startServer(config, { webDir });
+  const h = await startServer(config, { webDir, desktopDir });
   started.push(h);
   return h;
+}
+
+async function fakeDesktopDir(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wr-desktopui-"));
+  tmps.push(dir);
+  await fs.writeFile(path.join(dir, "index.html"), "<!doctype html><title>desktop</title><script type=module src=./renderer.js></script>");
+  await fs.writeFile(path.join(dir, "renderer.js"), "console.log('desktop')");
+  return dir;
 }
 
 describe("web UI static serving (P1-07)", () => {
@@ -98,6 +106,50 @@ describe("web UI static serving (P1-07)", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const expected = path.resolve(here, "..", "..", "web", "dist", "app");
     const resolved = resolveWebDir();
+    if (existsSync(path.join(expected, "index.html"))) {
+      assert.equal(resolved, expected);
+    } else {
+      assert.equal(resolved, undefined);
+    }
+  });
+});
+
+describe("desktop renderer shell serving (PR A)", () => {
+  it("serves the shell at /desktop and assets under /desktop/* with the UI security headers", async () => {
+    const h = await boot(null, await fakeDesktopDir());
+    const page = await fetch(`${h.url}/desktop`);
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get("content-type") ?? "", /text\/html/);
+    assert.equal(page.headers.get("cache-control"), "no-store");
+    assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+    const csp = page.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /connect-src 'self'/);
+    assert.doesNotMatch(csp, /unsafe-inline/);
+    assert.match(await page.text(), /renderer\.js/);
+
+    const js = await fetch(`${h.url}/desktop/renderer.js`);
+    assert.equal(js.status, 200);
+    assert.equal(js.headers.get("cache-control"), "no-store");
+  });
+
+  it("loading the shell does not weaken the API boundary", async () => {
+    const h = await boot(null, await fakeDesktopDir());
+    assert.equal((await fetch(`${h.url}/api/health`)).status, 401);
+    const ok = await fetch(`${h.url}/api/health`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(ok.status, 200);
+  });
+
+  it("without a built desktop shell, /desktop is a plain 404", async () => {
+    const h = await boot(await fakeWebDir(), null);
+    assert.equal((await fetch(`${h.url}/desktop`)).status, 404);
+    assert.equal((await fetch(`${h.url}/`)).status, 200);
+  });
+
+  it("resolveDesktopDir finds packages/desktop/dist/renderer relative to the server (when built) and never something else", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const expected = path.resolve(here, "..", "..", "desktop", "dist", "renderer");
+    const resolved = resolveDesktopDir();
     if (existsSync(path.join(expected, "index.html"))) {
       assert.equal(resolved, expected);
     } else {

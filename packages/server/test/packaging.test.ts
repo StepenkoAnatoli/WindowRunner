@@ -50,8 +50,12 @@ describe("Packaging contract", () => {
   const workspaces = root.workspaces ?? [];
 
   describe("workspaces", () => {
-    it("declares the three packages the root scripts fan out to", () => {
-      assert.deepEqual(workspaces, ["packages/shared", "packages/server", "packages/web"]);
+    it("declares the complete workspace list", () => {
+      // packages/desktop joins the workspaces in PR A. The root build/test/
+      // typecheck fan-out deliberately stays on the three server-side packages
+      // until the desktop suite is proven stable on Linux CI (plan item 11);
+      // every workspace must still declare those scripts (next test).
+      assert.deepEqual(workspaces, ["packages/shared", "packages/server", "packages/web", "packages/desktop"]);
     });
 
     it("every workspace exists and declares each fan-out script", () => {

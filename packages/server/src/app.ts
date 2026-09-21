@@ -63,6 +63,15 @@ export interface AppDeps {
    */
   dashboardDir?: string;
   /**
+   * Directory of the built desktop renderer shell
+   * (packages/desktop/dist/renderer). Served at `/desktop` (+ /desktop/*
+   * assets), same public-but-validated treatment as the other UIs. The
+   * Electron window loads this page from the server's own origin, so its API
+   * and SSE calls are same-origin and the Origin policy is unchanged. Unset
+   * when not built.
+   */
+  desktopDir?: string;
+  /**
    * Mutable active-provider box (provider-service.ts). When set, every new
    * turn reads the CURRENT provider from the box at turn start, so activating
    * or editing the active profile takes effect for the next turn without a
@@ -298,6 +307,30 @@ export function createApp(deps: AppDeps) {
     app.use(
       "/dashboard",
       express.static(dashDir, {
+        fallthrough: true,
+        setHeaders: (res: any) => {
+          for (const [k, v] of Object.entries(uiHeaders)) res.setHeader(k, v);
+        },
+      })
+    );
+  }
+
+  // Desktop renderer shell (packages/desktop/dist/renderer), served at
+  // /desktop. Same public-but-validated treatment as the dashboard — Host/Origin
+  // validation still applies and every API call the page makes carries the
+  // bearer token, but loading the shell itself needs no token. Registered
+  // before the main static handler so /desktop* can never be answered by the
+  // app bundle.
+  if (deps.desktopDir) {
+    const desktopAssets = deps.desktopDir;
+    app.get("/desktop", (_req: any, res: any, next: any) => {
+      res.sendFile(path.join(desktopAssets, "index.html"), { headers: uiHeaders }, (err: any) => {
+        if (err) next();
+      });
+    });
+    app.use(
+      "/desktop",
+      express.static(desktopAssets, {
         fallthrough: true,
         setHeaders: (res: any) => {
           for (const [k, v] of Object.entries(uiHeaders)) res.setHeader(k, v);
