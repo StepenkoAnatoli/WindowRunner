@@ -124,7 +124,7 @@ test("workspace → providers: add, mask, edit without key, test, activate, dele
   await expect(card("ws-key").locator(tid("dash-card-model"))).toContainText("keyed-model-2");
   expect(patches.length).toBeGreaterThanOrEqual(1);
   for (const patch of patches) {
-    expect(Object.prototype.hasOwnProperty.call(patch, "apiKey")).toBe(false, "an edit with a blank key must omit apiKey");
+    expect(Object.prototype.hasOwnProperty.call(patch, "apiKey")).toBe(false);
     expect(JSON.stringify(patch)).not.toContain(RAW_KEY);
     expect(JSON.stringify(patch)).not.toContain(RAW_KEY_MASK);
   }
@@ -152,7 +152,7 @@ test("workspace → providers: add, mask, edit without key, test, activate, dele
   });
   await card("ws-key").locator(tid("dash-delete")).click();
   await expect(card("ws-key")).toHaveCount(0, { timeout: 15_000 });
-  expect(confirmed).toBeGreaterThanOrEqual(1, "delete requires an explicit confirmation");
+  expect(confirmed).toBeGreaterThanOrEqual(1); // delete required the dialog
   // The active profile is untouched.
   await expect(card("ws-mock")).toHaveAttribute("data-active", "true");
 
