@@ -1,3 +1,17 @@
+# The eight required checks of the B2 merge gate (plan B2.5.4) — every PR run
+# must land all eight green before merge:
+#   1. CI
+#   2. Browser E2E
+#   3. Docker
+#   4. Platform (windows-latest)
+#   5. Platform (macos-latest)
+#   6. Desktop (ubuntu-latest)
+#   7. Desktop (windows-latest)
+#   8. Desktop installer (windows-latest)
+# The two inventory steps below ("Enforce B2 browser contract inventory",
+# "Enforce B2 desktop contract inventory") fail the run if the B2 spec files
+# are deleted, renamed, or stop being discovered — the coverage cannot shrink
+# silently while the checks stay green.
 name: CI
 
 on:
@@ -119,7 +133,10 @@ jobs:
   # Chromium. Covers the auth flow (wrong token, fragment token, bearer on
   # every request incl. SSE reconnects with Last-Event-ID), session creation
   # and root refusal, streamed turns, Stop, provider failure, approvals
-  # (approve/deny) and project trust (refuse → grant → run → revoke).
+  # (approve/deny) and project trust (refuse → grant → run → revoke); the B2
+  # specs add the provider workspace journey (providers-workspace), the
+  # /dashboard compatibility entry (dashboard), and accessibility semantics of
+  # the B2 routes (accessibility).
   e2e:
     name: Browser E2E
     runs-on: ubuntu-latest
@@ -148,6 +165,26 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
         working-directory: packages/web
+
+      # B2 browser contract: the specs the merge gate depends on must exist and
+      # stay discovered by the runner. Deleting or renaming one fails here
+      # instead of silently shrinking coverage to green.
+      - name: Enforce B2 browser contract inventory
+        working-directory: packages/web
+        shell: bash
+        run: |
+          for spec in ui workspace dashboard providers-workspace accessibility; do
+            test -f "e2e/${spec}.spec.ts" || { echo "::error::B2 browser contract: e2e/${spec}.spec.ts is missing"; exit 1; }
+          done
+          npx playwright test --list > spec-list.txt
+          # Lines look like `  [chromium] › dashboard.spec.ts:33:3 › …` (paths
+          # are testDir-relative); anchor on `› name.spec.ts:` so `workspace`
+          # cannot match `providers-workspace`.
+          for spec in dashboard providers-workspace accessibility; do
+            grep -qE "› ${spec}\.spec\.ts:" spec-list.txt || { echo "::error::B2 browser contract: playwright discovers no tests in ${spec}.spec.ts"; exit 1; }
+          done
+          echo "B2 browser contract inventory OK:"
+          cat spec-list.txt
 
       - name: Run browser E2E
         run: npm run e2e
@@ -486,6 +523,17 @@ jobs:
           else
             npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
           fi
+
+      # B2 desktop contract: the core journey and the provider/settings journey
+      # both ship — in this job against the unpacked app, and in the installer
+      # job against the installed one (`npm run e2e` runs every spec).
+      - name: Enforce B2 desktop contract inventory
+        shell: bash
+        run: |
+          for spec in desktop providers; do
+            test -f "packages/desktop/e2e/${spec}.spec.ts" || { echo "::error::B2 desktop contract: e2e/${spec}.spec.ts is missing"; exit 1; }
+          done
+          echo "B2 desktop contract inventory OK"
 
       - name: "Desktop e2e (user journey - boot -> mock turn -> clean shutdown)"
         shell: bash
