@@ -53,6 +53,8 @@ export interface RuntimeOverrides {
   webDir?: string | null;
   /** Built provider dashboard directory. Default: packages/web/dist/dashboard if it exists; `null` disables (with webDir). */
   dashboardDir?: string | null;
+  /** Built desktop renderer shell. Default: packages/desktop/dist/renderer if it exists; `null` disables (with webDir). */
+  desktopDir?: string | null;
 }
 
 /**
@@ -60,7 +62,7 @@ export interface RuntimeOverrides {
  * from the bundled dist/index.cjs: both are two levels below `packages/`, so
  * `../../web/dist/app` is the same directory either way.
  */
-function resolveSiblingWebDir(subdir: "app" | "dashboard", marker: string): string | undefined {
+function resolveSiblingDir(relative: string[], marker: string): string | undefined {
   let here: string | undefined;
   try {
     if (typeof __dirname === "string") here = __dirname;
@@ -72,16 +74,26 @@ function resolveSiblingWebDir(subdir: "app" | "dashboard", marker: string): stri
     } catch {}
   }
   if (!here) return undefined;
-  const candidate = path.resolve(here, "..", "..", "web", "dist", subdir);
+  const candidate = path.resolve(here, "..", "..", ...relative);
   return existsSync(path.join(candidate, marker)) ? candidate : undefined;
 }
 
 export function resolveWebDir(): string | undefined {
-  return resolveSiblingWebDir("app", "index.html");
+  return resolveSiblingDir(["web", "dist", "app"], "index.html");
 }
 
 export function resolveDashboardDir(): string | undefined {
-  return resolveSiblingWebDir("dashboard", "dashboard.html");
+  return resolveSiblingDir(["web", "dist", "dashboard"], "dashboard.html");
+}
+
+/**
+ * Locate the built desktop renderer shell (packages/desktop/dist/renderer),
+ * the same two-levels-below-`packages/` geometry as the web UIs. The Electron
+ * window loads this shell from the server's own origin at `/desktop`, so its
+ * API and SSE calls are same-origin and the Origin policy is unchanged.
+ */
+export function resolveDesktopDir(): string | undefined {
+  return resolveSiblingDir(["desktop", "dist", "renderer"], "index.html");
 }
 
 export interface TurnBootDiagnostics {
@@ -133,6 +145,8 @@ export interface Runtime {
   webDir?: string;
   /** Directory the provider dashboard is served from, if any. */
   dashboardDir?: string;
+  /** Directory the desktop renderer shell is served from, if any. */
+  desktopDir?: string;
   /**
    * The bearer token clients must present (undefined when auth is off). Held
    * on the runtime so the entry point can print it once and tests can use it;
@@ -363,10 +377,15 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     overrides.dashboardDir === null
       ? undefined
       : overrides.dashboardDir ?? (overrides.webDir === null ? undefined : resolveDashboardDir());
+  const desktopDir =
+    overrides.desktopDir === null
+      ? undefined
+      : overrides.desktopDir ?? (overrides.webDir === null ? undefined : resolveDesktopDir());
 
   const app = createApp({
     webDir,
     dashboardDir,
+    desktopDir,
     manager,
     provider,
     activeProvider: activeBox,
@@ -405,7 +424,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     },
   });
 
-  return { config, app, manager, approvals, sessionManager, provider, activeProvider: activeBox, providers: providerService, usageLog, tools, trust, boot, authToken, webDir, dashboardDir };
+  return { config, app, manager, approvals, sessionManager, provider, activeProvider: activeBox, providers: providerService, usageLog, tools, trust, boot, authToken, webDir, dashboardDir, desktopDir };
 }
 
 export async function startServer(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<StartedServer> {

@@ -422,12 +422,38 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 const TOKEN_KEY = "windows-runner.token";
 
 /**
- * Token comes from, in order: `#token=…` in the URL fragment (what the banner
- * prints in memory mode; stripped from the address bar immediately and never
- * sent to the server), then sessionStorage. It is kept in sessionStorage, not
- * localStorage, so it dies with the tab.
+ * Host-shell bootstrap for embedded deployments (the Electron desktop shell).
+ * When a shell publishes `{baseUrl, token}` on this global before the app
+ * loads, the token lives in memory only: `loadToken` returns it, `saveToken`/
+ * `clearToken` are no-ops, and nothing is ever written to the URL or web
+ * storage. Must match `BOOTSTRAP_GLOBAL` in packages/desktop/src/renderer.ts.
+ */
+const BOOTSTRAP_GLOBAL = "__WINDOWS_RUNNER_BOOTSTRAP__";
+
+export interface ApiClientBootstrap {
+  baseUrl: string;
+  token: string;
+}
+
+export function getApiClientBootstrap(): ApiClientBootstrap | undefined {
+  if (typeof globalThis === "undefined") return undefined;
+  const raw = (globalThis as Record<string, unknown>)[BOOTSTRAP_GLOBAL];
+  if (!raw || typeof raw !== "object") return undefined;
+  const b = raw as Partial<ApiClientBootstrap>;
+  if (typeof b.baseUrl !== "string" || typeof b.token !== "string" || b.token.length === 0) return undefined;
+  return { baseUrl: b.baseUrl, token: b.token };
+}
+
+/**
+ * Token comes from, in order: the in-memory host bootstrap (desktop shell),
+ * then `#token=…` in the URL fragment (what the banner prints in memory mode;
+ * stripped from the address bar immediately and never sent to the server),
+ * then sessionStorage. It is kept in sessionStorage, not localStorage, so it
+ * dies with the tab.
  */
 export function loadToken(): string | null {
+  const bootstrap = getApiClientBootstrap();
+  if (bootstrap) return bootstrap.token;
   if (typeof window === "undefined") return null;
   const hash = window.location.hash;
   const m = /[#&]token=([^&]+)/.exec(hash);
@@ -446,12 +472,14 @@ export function loadToken(): string | null {
 }
 
 export function saveToken(token: string): void {
+  if (getApiClientBootstrap()) return; // in-memory mode: never persist
   try {
     window.sessionStorage.setItem(TOKEN_KEY, token);
   } catch {}
 }
 
 export function clearToken(): void {
+  if (getApiClientBootstrap()) return; // in-memory mode: nothing to clear
   try {
     window.sessionStorage.removeItem(TOKEN_KEY);
   } catch {}

@@ -33,7 +33,7 @@ Windows/macOS (`Platform` matrix); the installers run in checkout mode only
 | Docker / `docker compose up` | **Verified** (Linux CI) — `Docker` job builds the image and runs a mock turn against the self-contained bundle `dist/index.cjs` |
 | `install.sh` | Experimental — executed on macOS CI in checkout mode (`--no-start`); fresh-clone and interactive modes untested |
 | `install.ps1` | Experimental — executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive modes untested |
-| Electron desktop shell | **Not available** — `packages/desktop` does not exist |
+| Electron desktop shell | **Available** — `packages/desktop`; `npm run package:desktop:win` builds the NSIS installer (built, installed, exercised and uninstalled by the `Desktop installer` CI job) |
 
 ### Option 1 — Clone and set up (the path that works)
 
@@ -109,20 +109,42 @@ the standalone bundle directly without requiring `node_modules` or workspace
 symlinks in the runtime container. CI verifies this on every push and pull
 request (the `Docker` job). See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
-### Option 6 — Desktop app (Electron, not available)
+### Option 6 — Windows desktop app (Electron)
 
-`npm run desktop` was removed: `packages/desktop` does not exist and Electron is
-not a dependency (gap G-04 covers the packaging side; the desktop shell itself is
-simply absent from this checkout).
+The desktop shell (`packages/desktop`) boots the bundled server as a child
+process (loopback, OS-assigned port, in-memory bearer token) and loads the web
+UI at `/desktop` from the server's own origin. No Node.js install is required at
+runtime: the server runs on Electron's own Node runtime. From a checkout:
+
+```bash
+npm run build            # server + web bundles
+npm run build:desktop    # desktop shell + packaged payload
+npm run e2e:desktop      # user journey against the unpacked app
+```
+
+Package the installer on Windows:
+
+```bash
+npm run package:desktop:win    # → packages/desktop/release/WindowRunner-Setup-<version>.exe
+```
+
+Run `WindowRunner-Setup-<version>.exe` for a per-user install (no admin/UAC;
+Start Menu entry under `%LOCALAPPDATA%\Programs\WindowRunner`). User data —
+sessions, provider profiles, logs — lives in `%APPDATA%\WindowRunner` and
+survives uninstall. Automation: silent install/uninstall with `/S`. The
+`Desktop installer (windows-latest)` CI job builds the installer, installs it
+silently, drives the installed app through a mock session, and uninstalls it on
+every push. See [docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app).
 
 ---
 
-The "paste an API key, click **New session**, ask for something" flow described
-elsewhere in this README requires a UI and a real provider. Neither exists in
-this checkout: `npm start` serves the API with the offline mock provider, and
-there is nothing to paste a key into. For development, `npm run dev` restarts
-the server on source changes (`tsx watch`); there is still no web dev server and
-no web bundler (gap G-03 web residual).
+The default provider is the offline **mock** (no key, no network): the whole
+loop — sessions, turns, SSE streaming, approvals — runs end to end without an
+API key, in `npm start` and in the desktop app alike. Real model calls need a
+provider profile (see the provider dashboard in
+[docs/INSTALL.md](./docs/INSTALL.md#provider-dashboard)); real-model runs are
+manual and never part of CI ([`eval/README.md`](./eval/README.md)). For
+development, `npm run dev` restarts the server on source changes (`tsx watch`).
 
 > Scope note: this section covers install, build and packaging claims only. The
 > product-feature claims elsewhere in this README are tracked separately as
@@ -339,6 +361,7 @@ packages/
              src/app.ts     Express app factory (REST + SSE), agent loop, executor, persistence, metrics
              src/providers/ LLMProvider contract, the offline mock, the openai-compatible and anthropic adapters, retry wrapper
   web/       UI-side turn-state projection (no bundler, no React in this checkout)
+desktop/   Electron desktop shell: main process, preload bridge, /desktop renderer, NSIS packaging
 scripts/
   setup.mjs         install -> typecheck -> build
   postinstall.mjs   verifies the workspace tree on npm ci / npm install
@@ -352,9 +375,11 @@ docs/INSTALL.md     install-path status, how to run the server, packaging gaps (
 install.sh / install.ps1   clone-and-setup installers (offer `npm start` at the end)
 Dockerfile / docker-compose.yml   container deployment with self-contained bundle
 
-Not present, though earlier revisions of this README listed them:
-packages/desktop/ (no Electron shell) and scripts/desktop.mjs. Each absence is
-recorded in docs/INSTALL.md.
+packages/desktop/ itself is present (Electron shell + electron-builder NSIS
+packaging, PR A). Still not present: scripts/desktop.mjs (the old
+`npm run desktop` shim). Use the desktop scripts instead (root aliases:
+build:desktop, smoke:desktop, e2e:desktop, package:desktop:win). Packaging
+gaps are recorded in docs/INSTALL.md.
 ```
 
 ## Persistence

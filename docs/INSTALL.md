@@ -32,7 +32,12 @@ which platform checks exist and which do not.
 | `install.sh` | **Experimental** | Executed on macOS CI in checkout mode (`--no-start`); fresh-clone and interactive-prompt modes untested |
 | `install.ps1` | **Experimental** | Executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive-prompt modes untested |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
-| `npm run desktop` | **Not available** | `packages/desktop` does not exist; Electron is not a dependency (gap G-04) |
+| `npm run desktop` | **Superseded** | Replaced by the `packages/desktop` workspace — see the desktop rows below (gap G-04 closed; G-07 for the installer) |
+| `npm run build:desktop` | **Verified** (Linux + `Desktop` CI jobs) | Compiles the Electron shell and stages the packaged payload under `packages/desktop/dist/` |
+| `npm run smoke:page` (desktop) | **Verified** (Linux) | Real headless Chromium against the served `/desktop` page: auto-auth, same-origin API |
+| `npm run smoke:electron` (desktop) | **Verified** (`Desktop` CI jobs, windows + ubuntu) | Real unpacked Electron via Playwright `_electron`: `/desktop` same-origin, in-memory token, clean shutdown |
+| `npm run e2e:desktop` | **Verified** (`Desktop` CI jobs) | Merge-gate journey: boot → auto-auth → mock turn → clean shutdown |
+| `npm run package:desktop:win` | **Verified** (`Desktop installer` CI job, windows-latest) | Builds `WindowRunner-Setup-<version>.exe`; the job installs silently, runs the journey against the installed app, then uninstalls |
 
 "Verified" means the command succeeded on the environment above. It is not a
 claim about Windows, macOS, or any packaged/distributed artifact.
@@ -406,6 +411,13 @@ prompt are untested on every OS.
 
 ---
 
+**G-07 — no packaged Windows desktop app. Closed 2026-09-21 (PR A).**
+`packages/desktop` (Electron shell) plus `electron-builder` NSIS packaging:
+`npm run package:desktop:win` builds `WindowRunner-Setup-<version>.exe`. The
+`Desktop installer (windows-latest)` CI job builds the installer, installs it
+silently, drives the installed app through a mock session, and uninstalls it.
+See "Windows desktop app" below.
+
 ## Docker
 
 The Dockerfile produces a working container image using the self-contained server
@@ -432,6 +444,49 @@ against a session rooted in the mounted `/work`, then stops the stack and
 asserts the container exited 0. Container logs are uploaded on failure.
 
 ---
+
+## Windows desktop app
+
+The Electron shell in `packages/desktop` boots the bundled server as a child
+process (loopback, OS-assigned port, in-memory bearer token) and loads the web
+UI at `/desktop` from the server's own origin. Installed users need no Node.js:
+the server runs on Electron's own runtime (`ELECTRON_RUN_AS_NODE`).
+
+### Build and run from a checkout
+
+```bash
+npm run build          # server + web bundles (prerequisite)
+npm run build:desktop  # desktop shell + staged payload
+npm run smoke:desktop  # page smoke (Linux) + Electron smoke
+npm run e2e:desktop    # the user journey against the unpacked app
+```
+
+### Build the installer (Windows)
+
+```bash
+npm run package:desktop:win
+# → packages/desktop/release/WindowRunner-Setup-<version>.exe
+```
+
+### Install / uninstall
+
+- Run `WindowRunner-Setup-<version>.exe`. Per-user install (no admin/UAC),
+  Start Menu entry; default location `%LOCALAPPDATA%\Programs\WindowRunner`.
+- **Silent install** (automation): `WindowRunner-Setup-<version>.exe /S`.
+- **Silent uninstall**:
+  `%LOCALAPPDATA%\Programs\WindowRunner\Uninstall WindowRunner.exe /S`.
+- **User data** (sessions, provider profiles, logs) lives in
+  `%APPDATA%\WindowRunner` and is intentionally kept across uninstall.
+
+CI enforces the whole story on every push: the `Desktop installer
+(windows-latest)` job builds the NSIS installer, installs silently, drives the
+installed app through boot → auto-auth → mock turn → clean shutdown, then
+uninstalls and asserts removal. The installer exe is uploaded as a workflow
+artifact (`windowrunner-installer`).
+
+**Known gaps:** the installer is not code-signed (SmartScreen warns on first
+run: "More info → Run anyway") and uses the default Electron icon. Signing and
+branding are separate milestones.
 
 ## Troubleshooting
 

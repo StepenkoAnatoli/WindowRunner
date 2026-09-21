@@ -1,0 +1,71 @@
+# electron-builder configuration — WindowRunner desktop shell (PR A / A2).
+#
+# Windows NSIS installer only (macOS/Linux targets are out of scope for A2).
+# Build it with `npm run package:win` from this workspace (root alias:
+# `npm run package:desktop:win`); CI proves the whole story on windows-latest:
+# build -> silent install -> user-journey e2e against the INSTALLED app ->
+# silent uninstall (see .github/workflows/ci.yml -> desktop-installer).
+
+appId: com.stepenkoanatoli.windowrunner
+productName: WindowRunner
+
+# The one-click per-user NSIS install directory is derived from the PACKAGED
+# app's `name` (app-builder-lib getWindowsInstallationDirName resolves to
+# appInfo.sanitizedName in this install mode), and the workspace package name
+# is the internal scoped `@windows-runner/desktop` — which would install to
+# %LOCALAPPDATA%\Programs\@windows-runnerdesktop. Override the packaged
+# metadata so the canonical install directory is
+# %LOCALAPPDATA%\Programs\WindowRunner and the runtime app name matches the
+# product identity. The workspace manifest itself is untouched. Pinned in
+# test/packaging.test.ts and asserted at the explicit path by the installer
+# CI gate.
+extraMetadata:
+  name: WindowRunner
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled shell travels inside the app archive (package.json `main`
+# points at dist/main.cjs). dist/resources/ is intentionally NOT listed here:
+# that staged payload ships once via extraResources, below.
+files:
+  - dist/main.cjs
+  - dist/preload.cjs
+
+# scripts/copy-assets.mjs stages dist/resources/ with the monorepo geometry the
+# bundled server resolves at runtime. It is copied VERBATIM onto
+# process.resourcesPath, so the packaged layout is
+#   <resources>/packages/server/dist/index.cjs
+#   <resources>/packages/web/dist/{app,dashboard}/
+#   <resources>/packages/desktop/dist/renderer/
+# which is exactly what src/main.ts's resolveServerBundle() expects — the
+# test/packaging.test.ts contract pins both sides together.
+extraResources:
+  - from: dist/resources
+    to: .
+
+# No runtime dependencies to rebuild: the packaged app is Electron plus our two
+# .cjs files plus the staged payload.
+npmRebuild: false
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: true
+  # Per-user install (no admin/UAC): %LOCALAPPDATA%\Programs\WindowRunner.
+  perMachine: false
+  # User data in %APPDATA%\WindowRunner (sessions, provider profiles, logs)
+  # survives uninstall — see docs/INSTALL.md, "Windows desktop app".
+  deleteAppDataOnUninstall: false
+  # Do not auto-launch after install: the A2 gate launches the installed app
+  # explicitly (and an auto-started instance would still be running during the
+  # uninstall assertion). Humans launch from the Start Menu.
+  runAfterFinish: false
+  artifactName: "WindowRunner-Setup-${version}.${ext}"
+
+# No icon and no code signing yet: default Electron icon, unsigned installer
+# (SmartScreen warns on first run). Branding and signing are separate
+# milestones.
