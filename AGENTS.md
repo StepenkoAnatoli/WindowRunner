@@ -5,7 +5,8 @@ the app itself as project instructions for sessions opened here).
 
 ## What this is
 
-A local-first coding agent: Express server + React UI + optional Electron
+A local-first coding agent: Express server + web UI (no framework) + Electron
+desktop shell (`packages/desktop`).
 shell. Users bring their own API keys; nothing phones home.
 
 ## Layout
@@ -37,8 +38,9 @@ shell. Users bring their own API keys; nothing phones home.
 - `packages/server/src/routes.ts` — REST + SSE surface.
 - `packages/server/src/skills.ts` — SKILL.md discovery, parsing, `includes:` resolution.
 - `.windows-runner/skills/` — skills shipped with this repo (project skills).
-- `packages/web/src/` — React UI. `App.tsx` owns all state; components are
-  presentational.
+- `packages/web/src/` — web UI (vanilla TypeScript, no framework). `main.ts`
+  wires the DOM; `app-state.ts` owns session/turn state; `dashboard*.ts` is the
+  provider dashboard. The desktop shell reuses this UI at `/desktop`.
 
 ## Conventions
 
@@ -61,6 +63,10 @@ npm run smoke:packed                            # tarball contents against manif
 npm run smoke:packed:start                      # unpack tarball and boot npm start outside repo
 npm run smoke:start                             # boot the built server, run a turn, restart, SIGTERM
 npm start                                       # http://127.0.0.1:7634 (mock provider, no tools)
+npm run typecheck:desktop                       # desktop workspace (3 tsconfigs)
+npm run test:desktop                            # desktop unit + contract tests
+npm run smoke:desktop                           # desktop page smoke + Electron smoke
+npm run e2e:desktop                             # desktop user journey (real Electron)
 ```
 
 `npm start` rebuilds automatically when `dist/` is missing or older than `src/`
