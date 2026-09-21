@@ -1,16 +1,19 @@
 /**
- * Dashboard state, its sessionStorage persistence, and the render scheduler —
- * the parts every other dashboard module touches. Split out of dashboard.ts so
- * a view module (cards, form, usage, chat) can be read and changed on its own
- * instead of inside one 700-line file.
+ * Dashboard state, its sessionStorage helpers, and the render scheduler —
+ * the parts every compatibility-page module touches.
  *
- * There is no framework here: `state` is a plain mutable object, `render()`
+ * B2: the provider/usage slices use the SAME shapes as the main workspace
+ * (`ProviderUiState` / `UsageUiState` from app-state.ts), and all provider
+ * behavior runs through the shared provider controller. What remains
+ * dashboard-specific is the quick-chat state and the plain mutable-state +
+ * coalesced-render loop (no framework): `state` is a plain object, `render()`
  * coalesces redraws to one per animation frame, and the entry point
- * (dashboard.ts) registers the function that actually rebuilds the DOM. That
- * keeps this module free of any view imports, which is what stops the split
- * turning into a cycle (views import state; state imports nothing from them).
+ * (providers/compatibility.ts) installs the function that rebuilds the DOM.
+ * View modules import state; this module imports nothing from them, which is
+ * what keeps the split cycle-free.
  */
-import type { ProviderProfileView, TurnUsageView } from "./api.js";
+import type { ProviderUiState, UsageUiState } from "./app-state.js";
+import { initialProviderUiState, initialUsageUiState } from "./app-state.js";
 
 export interface ChatState {
   sessionId?: string;
@@ -38,32 +41,15 @@ export interface ChatState {
 export interface State {
   auth: "none" | "checking" | "ok" | "invalid";
   authError?: string;
-  activeProfileId: string | null;
-  profiles: ProviderProfileView[] | null;
-  usage: TurnUsageView[] | null;
-  formOpen: boolean;
-  editingId?: string;
-  formError?: string;
-  formBusy: boolean;
-  testingId?: string;
-  activatingId?: string;
+  /** Provider slice — same shape as the workspace's (masked data + transient form). */
+  providers: ProviderUiState;
+  /** Usage slice for the recent-turns table. */
+  usage: UsageUiState;
   chat: ChatState;
+  /** Page-level notice (non-secret operation outcomes). */
   notice?: string;
-  /** What GET /api/usage reported about the completeness of `usage`. */
-  usageMeta?: UsageMeta;
 }
 
-/**
- * What GET /api/usage says about the completeness of the history it returned:
- * `retained` is how many records the server holds in memory, `bounded` is its
- * flag for "older records exist but are no longer available" (the ring trimmed
- * them, the boot tail window skipped them, or usage.jsonl rotated them away).
- * The usage panel shows this instead of implying the table is everything.
- */
-export interface UsageMeta {
-  retained?: number;
-  bounded: boolean;
-}
 export const CWD_KEY = "windows-runner.dash.cwd";
 export const SESSION_KEY = "windows-runner.dash.session";
 
@@ -95,11 +81,8 @@ export function storeDel(key: string): void {
  */
 export const state: State = {
   auth: "none",
-  activeProfileId: null,
-  profiles: null,
-  usage: null,
-  formOpen: false,
-  formBusy: false,
+  providers: initialProviderUiState,
+  usage: initialUsageUiState,
   chat: {
     sessionId: storeGet(SESSION_KEY) ?? undefined,
     cwd: storeGet(CWD_KEY) ?? "",
@@ -116,24 +99,18 @@ export const state: State = {
 export function resetForSignOut(): void {
   state.auth = "none";
   state.authError = undefined;
-  state.activeProfileId = null;
-  state.profiles = null;
-  state.usage = null;
-  state.usageMeta = undefined;
-  state.formOpen = false;
-  state.editingId = undefined;
-  state.formError = undefined;
-  state.testingId = undefined;
-  state.activatingId = undefined;
+  state.providers = initialProviderUiState;
+  state.usage = initialUsageUiState;
+  state.notice = undefined;
 }
 
 export const root: HTMLElement = document.getElementById("app")!;
 
 // ---------------------------------------------------------------------------
 // Rendering: coalesced to one redraw per animation frame, because a streaming
-// turn produces many text_delta events per second and each render rebuilds the
-// DOM. `setRenderer` is how dashboard.ts installs the rebuild without this
-// module importing any view code.
+// turn produces many text_delta events per second and each render rebuilds
+// the DOM. `setRenderer` is how the entry point installs the rebuild without
+// this module importing any view code.
 
 let renderer: () => void = () => {};
 

@@ -10,6 +10,13 @@
  * The dashboard runs on its own fixture server (DASH_PORT, see
  * dashboard-server.ts) because this flow hot-swaps the active provider,
  * which the scripted-provider server cannot do.
+ *
+ * B2: /dashboard composes the SAME shared provider components as the
+ * workspace's Providers route. The card-level ids (dash-card*, dash-test,
+ * dash-activate, dash-delete) and the usage rows (dash-usage-row) are
+ * unchanged; the form moved into the shared provider form, so its setup
+ * below uses the shared `provider-*` selectors (a deliberate adaptation —
+ * the mock preset is now the mock kind, and the model is typed explicitly).
  */
 import { test, expect } from "@playwright/test";
 import { DASH_PORT, DASH_STOP_PORT, E2E_PROJECT, E2E_TOKEN } from "./fixture.js";
@@ -29,22 +36,22 @@ test.describe("provider dashboard", () => {
 
     // Auto-connect with the shared token: the banner appears, and the
     // first-boot "default" profile card is listed (env bootstrap).
-    await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
+    await expect(page.locator('[data-testid="providers-active"]')).toBeVisible();
     await expect(card("default")).toBeVisible();
     await expect(page.locator('[data-testid="dash-token-input"]')).toHaveCount(0);
 
-    // Add the mock profile under test (the preset pre-fills model + label).
-    await page.locator('[data-testid="dash-add"]').click();
-    await page.locator('[data-testid="dash-preset"]').selectOption("mock");
-    await page.locator('[data-testid="dash-id"]').fill("dash-mock");
-    await page.locator('[data-testid="dash-label"]').fill("Dash Mock");
-    await expect(page.locator('[data-testid="dash-model"]')).toHaveValue("mock");
-    await page.locator('[data-testid="dash-save"]').click();
+    // Add the mock profile under test: the mock kind (no key, no network).
+    await page.locator('[data-testid="providers-add"]').click();
+    await page.locator('[data-testid="provider-kind"]').selectOption("mock");
+    await page.locator('[data-testid="provider-id"]').fill("dash-mock");
+    await page.locator('[data-testid="provider-label"]').fill("Dash Mock");
+    await page.locator('[data-testid="provider-model"]').fill("mock");
+    await page.locator('[data-testid="provider-submit"]').click();
 
     await expect(card("dash-mock")).toBeVisible();
     await expect(card("dash-mock").locator('[data-testid="dash-card-label"]')).toHaveText("Dash Mock");
     // The created card shows the masked key placeholder, never a raw key.
-    await expect(page.locator('[data-testid="dash-form"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="provider-form"]')).toHaveCount(0);
 
     // Test: the status dot on the card turns ok (lastTest persisted).
     await card("dash-mock").locator('[data-testid="dash-test"]').click();
@@ -53,7 +60,7 @@ test.describe("provider dashboard", () => {
     // Activate: the banner names the new profile and the card is flagged.
     await card("dash-mock").locator('[data-testid="dash-activate"]').click();
     await expect(card("dash-mock")).toHaveAttribute("data-active", "true");
-    await expect(page.locator('[data-testid="dash-banner"]')).toContainText("Dash Mock");
+    await expect(page.locator('[data-testid="providers-active"]')).toContainText("Dash Mock");
     await expect(card("default")).toHaveAttribute("data-active", "false");
 
     // Quick chat: one turn to the newly active profile, streamed.
@@ -104,7 +111,7 @@ test.describe("provider dashboard quick chat", () => {
     });
 
     await page.goto("/dashboard");
-    await expect(page.locator('[data-testid="dash-banner"]')).toBeVisible();
+    await expect(page.locator('[data-testid="providers-active"]')).toBeVisible();
 
     await page.locator('[data-testid="dash-cwd"]').fill(E2E_PROJECT);
     await page.locator('[data-testid="dash-message"]').fill("please stop");

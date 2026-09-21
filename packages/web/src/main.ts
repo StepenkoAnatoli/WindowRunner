@@ -1,4 +1,5 @@
 import { ApiClient, ApiRequestError, clearToken, loadToken, saveToken } from "./api.js";
+import type { HealthSummary } from "./api.js";
 import { activeTurn, initialAppState, reduceApp, type AppAction, type AppState, type TurnView } from "./app-state.js";
 import { renderAppShell } from "./app-shell.js";
 import { describeError } from "./describe-error.js";
@@ -7,6 +8,15 @@ import { button, el } from "./dom.js";
 import { renderInspector } from "./inspector.js";
 import { renderProjectSidebar } from "./project-sidebar.js";
 import { renderConversationWorkspace } from "./workspace.js";
+import { createProviderController, type ProviderController } from "./provider-controller.js";
+import type { ProviderFormField } from "./providers/provider-form.js";
+import { renderProviderPage } from "./providers/provider-page.js";
+import { renderUsagePage } from "./usage/usage-page.js";
+import { renderSettingsShell } from "./settings/settings-shell.js";
+import { renderSecurityPage } from "./settings/security-page.js";
+import { renderStoragePage } from "./settings/storage-page.js";
+import { renderAboutPage } from "./settings/about-page.js";
+import { parseUiRoute, routePath, type SettingsSection, type UiRoute } from "./ui-route.js";
 import {
   createInMemoryCatalogStore,
   createLocalStorageCatalogStore,
@@ -17,26 +27,37 @@ import {
 } from "./workspace-catalog.js";
 
 /**
- * Windows Runner web UI — coordinator for the B1 three-column workspace.
+ * Windows Runner web UI — coordinator for the B1 three-column workspace plus
+ * the B2 route host (Workspace | Providers | Usage | Settings).
  *
  * main.ts is the only module that owns side effects: connect/sign out,
  * workspace-catalog load/save, the desktop folder picker, session
  * create/reattach/delete, the turn stream lifecycle, cancel, approve/deny,
- * grant/revoke trust, and render scheduling. All rendering is delegated to
- * the pure view modules (`app-shell`, `project-sidebar`, `workspace`,
- * `inspector`, `tool-timeline`); all turn/tool/approval state stays in the
- * `app-state` reducer.
+ * grant/revoke trust, client-side route changes, provider mutations (through
+ * the shared provider controller), usage loading, and render scheduling. All
+ * rendering is delegated to the pure view modules; all turn/tool/approval
+ * state stays in the `app-state` reducer.
  *
  * B1 boundary: the sidebar is a persisted catalog of locally remembered
  * `{ project root, sessionId }` pairs, not a server-backed history browser.
  * There is exactly one visible/active stream (`streamAbort`); switching
  * projects/sessions while a turn is active is blocked, never silent.
+ *
+ * B2 boundary: routes are client-side (`history.pushState` + `popstate`,
+ * parsed by ui-route.ts — no router dependency, no server changes). Provider
+ * form state is transient UI memory: it is never persisted, never enters the
+ * workspace catalog, and the raw key exists only inside the open form while
+ * the user types. Route changes never clear the catalog, the current session,
+ * or the token; sign-out drops provider/usage state but keeps the catalog.
  */
 
 let state: AppState = initialAppState;
 let client: ApiClient | undefined;
 let streamAbort: AbortController | undefined;
 let catalogStore: WorkspaceCatalogStore = createInMemoryCatalogStore();
+
+const USAGE_LIMIT = 50;
+const DIRTY_FORM_CONFIRM = "You have unsaved changes in the provider form. Leave this page? The form stays in memory until you close it or sign out.";
 
 const root = document.getElementById("app")!;
 
@@ -56,6 +77,22 @@ function dispatch(action: AppAction): void {
 }
 
 // ---------------------------------------------------------------------------
+// B2 provider coordination: the same controller the /dashboard compatibility
+// page uses, wired to the app-state reducer.
+
+function providerAuthError(): void {
+  signOut();
+  dispatch({ type: "auth_invalid", message: "the server rejected the token; sign in again" });
+}
+
+const providersController: ProviderController = createProviderController({
+  getClient: () => client,
+  get: () => state.providers,
+  set: (providers) => dispatch({ type: "providers_state", providers }),
+  onAuthError: () => providerAuthError(),
+});
+
+// ---------------------------------------------------------------------------
 // Effects
 
 async function connect(token: string): Promise<void> {
@@ -66,6 +103,9 @@ async function connect(token: string): Promise<void> {
     client = candidate;
     saveToken(token);
     dispatch({ type: "auth_ok", securityMode: health.security?.mode ?? "unknown", persistenceMode: health.persistence?.mode ?? "unknown" });
+    // The boot route may need data (a reload lands on /providers once the
+    // bundle can parse it); fetch for whatever page is visible.
+    void loadRouteData(state.route);
   } catch (err) {
     client = undefined;
     clearToken();
@@ -88,6 +128,18 @@ async function persistCatalog(): Promise<void> {
     // successfully created/attached server session.
     dispatch({ type: "error", code: "CATALOG_SAVE_FAILED", message: `could not save recent projects: ${describeError(err)}` });
   }
+}
+
+/**
+ * Settings → Storage's reset: forgets the LOCAL navigation catalog only.
+ * Server sessions, provider profiles, and provider keys are untouched — this
+ * goes through the same catalog store (localStorage / desktop preload IPC),
+ * so the desktop path is the fixed bridge method, never arbitrary deletion.
+ */
+async function resetNavigationMetadata(): Promise<void> {
+  if (!window.confirm("Forget all remembered projects and sessions on this device? Server sessions and provider profiles are not touched.")) return;
+  dispatch({ type: "workspace_catalog_reset" });
+  await persistCatalog();
 }
 
 function basenameOf(root: string): string {
@@ -308,7 +360,103 @@ function reportError(err: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// Rendering: header + three-column shell. Rebuilds the DOM from state.
+// B2 routing: parse/apply locations, load per-route data with caching.
+
+function routesEqual(a: UiRoute, b: UiRoute): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "settings" && b.kind === "settings") return a.section === b.section;
+  return true;
+}
+
+/**
+ * Programmatic navigation (the plan's `navigateTo`): push the path, update
+ * state, load the route's data. A dirty provider form asks for confirmation
+ * first — the form itself stays in memory either way, so confirming loses
+ * nothing; declining simply keeps the user on the page.
+ */
+function navigateTo(route: UiRoute): void {
+  if (routesEqual(route, state.route)) {
+    // Same route: normalize the URL (e.g. "/" vs "/#token-stripped") but
+    // never reload data the user is already looking at.
+    history.replaceState({}, "", routePath(route));
+    return;
+  }
+  if (providersController.isDirty() && !window.confirm(DIRTY_FORM_CONFIRM)) return;
+  history.pushState({}, "", routePath(route));
+  dispatch({ type: "route_changed", route });
+  void loadRouteData(route);
+}
+
+/** Back/forward shares the exact same path as programmatic navigation. */
+function onPopState(): void {
+  const next = parseUiRoute(window.location.pathname, window.location.hash);
+  if (routesEqual(next, state.route)) return;
+  if (providersController.isDirty() && !window.confirm(DIRTY_FORM_CONFIRM)) {
+    // Undo the pop: restore the history entry the user stayed on.
+    history.pushState({}, "", routePath(state.route));
+    return;
+  }
+  dispatch({ type: "route_changed", route: next });
+  void loadRouteData(next);
+}
+
+/**
+ * Per-route data loading with duplicate-request guards: provider/usage data
+ * is cached while ready (explicit Refresh buttons force a reload; mutations
+ * reload through the controller), settings fetch health only once.
+ */
+async function loadRouteData(route: UiRoute): Promise<void> {
+  if (state.auth !== "ok") return;
+  switch (route.kind) {
+    case "workspace":
+      break; // B1 state loads at boot and on selection
+    case "providers":
+      if (state.providers.status === "idle" || state.providers.status === "error") await providersController.load();
+      break;
+    case "usage":
+      if (state.usage.status === "idle" || state.usage.status === "error") await loadUsage();
+      break;
+    case "settings":
+      if (!state.health) await refreshHealth();
+      break;
+  }
+}
+
+async function loadUsage(force = false): Promise<void> {
+  if (!client) return;
+  if (!force && (state.usage.status === "loading" || state.usage.status === "ready")) return;
+  dispatch({ type: "usage_state", usage: { ...state.usage, status: "loading", error: undefined } });
+  try {
+    const result = await client.usage(USAGE_LIMIT);
+    dispatch({ type: "usage_state", usage: { status: "ready", records: result.records, retained: result.retained, bounded: result.bounded } });
+  } catch (err) {
+    if (err instanceof ApiRequestError && err.isAuth) {
+      providerAuthError();
+      return;
+    }
+    dispatch({
+      type: "usage_state",
+      usage: { ...state.usage, status: "error", error: { code: err instanceof ApiRequestError ? err.code : "CLIENT_ERROR", message: describeError(err) } },
+    });
+  }
+}
+
+async function refreshHealth(): Promise<void> {
+  if (!client) return;
+  try {
+    const health: HealthSummary = await client.health();
+    dispatch({ type: "health_loaded", health });
+  } catch (err) {
+    if (err instanceof ApiRequestError && err.isAuth) {
+      providerAuthError();
+      return;
+    }
+    reportError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering: header + route host. Rebuilds the DOM from state.
 // Input values are preserved across renders by keeping the inputs' current
 // values when the same element is rebuilt.
 
@@ -333,7 +481,7 @@ function render(): void {
   const children: HTMLElement[] = [];
   if (state.auth !== "ok") {
     children.push(header(), tokenPanel());
-  } else {
+  } else if (state.route.kind === "workspace") {
     const turn = inspectorTurn();
     children.push(
       renderAppShell({
@@ -389,6 +537,8 @@ function render(): void {
         inspectorOpen: state.workspace.inspectorOpen,
       })
     );
+  } else {
+    children.push(el("div", { class: "app-root" }, header(), routeContent()));
   }
   if (state.error) children.push(errorBanner());
 
@@ -401,10 +551,92 @@ function render(): void {
   if (focusId) root.querySelector<HTMLElement>(`[data-testid="${focusId}"]`)?.focus();
 }
 
+function routeContent(): HTMLElement {
+  switch (state.route.kind) {
+    case "providers":
+      return el(
+        "main",
+        { class: "route-page" },
+        renderProviderPage({
+          state: state.providers,
+          onAdd: () => providersController.openCreateForm(),
+          onEdit: (profileId) => {
+            const profile = state.providers.profiles.find((p) => p.id === profileId);
+            if (profile) providersController.openEditForm(profile);
+          },
+          onTest: (profileId) => void providersController.test(profileId),
+          onActivate: (profileId) => void providersController.activate(profileId),
+          onDelete: (profileId) => void providersController.delete(profileId),
+          onSubmit: () => void providersController.submitForm(),
+          onCancelForm: () => providersController.closeForm(),
+          onFieldChange: (field: ProviderFormField, value: string) => providersController.handleFieldChange(field, value),
+          onDismissNotice: () => providersController.dismissNotice(),
+          onRefresh: () => void providersController.load(true),
+          onBackToWorkspace: () => navigateTo({ kind: "workspace" }),
+        })
+      );
+    case "usage":
+      return el(
+        "main",
+        { class: "route-page" },
+        renderUsagePage({
+          state: state.usage,
+          limit: USAGE_LIMIT,
+          onRefresh: () => void loadUsage(true),
+          resolveProviderLabel: (providerId) => state.providers.profiles.find((p) => p.id === providerId)?.label ?? providerId,
+        })
+      );
+    case "settings":
+      return el(
+        "main",
+        { class: "route-page" },
+        renderSettingsShell({
+          section: state.route.section,
+          onSelect: (section: SettingsSection) => navigateTo({ kind: "settings", section }),
+          content: settingsContent(),
+        })
+      );
+    case "workspace":
+      // Unreachable (render() composes the workspace shell directly); kept so
+      // the switch stays exhaustive.
+      return el("main", { class: "route-page" });
+  }
+}
+
+function settingsContent(): HTMLElement {
+  const section: SettingsSection = state.route.kind === "settings" ? state.route.section : "security";
+  switch (section) {
+    case "security":
+      return renderSecurityPage({ health: state.health, server: state.server });
+    case "storage":
+      return renderStoragePage({
+        health: state.health,
+        server: state.server,
+        desktopAvailable: isDesktopAvailable(),
+        onResetNavigationMetadata: () => void resetNavigationMetadata(),
+      });
+    case "about":
+      return renderAboutPage({ health: state.health, server: state.server, desktopAvailable: isDesktopAvailable() });
+  }
+}
+
+function navItem(testId: string, label: string, route: UiRoute): HTMLElement {
+  const active = routesEqual(state.route, route);
+  const b = el("button", { type: "button", class: `nav-link${active ? " selected" : ""}`, "data-testid": testId }, label);
+  if (active) b.setAttribute("aria-current", "page");
+  b.addEventListener("click", () => navigateTo(route));
+  return b;
+}
+
 function header(): HTMLElement {
   const server = state.server ? `auth ${state.server.securityMode} · persistence ${state.server.persistenceMode}` : "";
-  const sidebarToggle = state.auth === "ok" ? button("toggle-sidebar", state.workspace.sidebarOpen ? "Hide projects" : "Show projects", () => dispatch({ type: "sidebar_toggled" }), "secondary") : null;
-  const inspectorToggle = state.auth === "ok" ? button("toggle-inspector", state.workspace.inspectorOpen ? "Hide inspector" : "Show inspector", () => dispatch({ type: "inspector_toggled" }), "secondary") : null;
+  const onWorkspace = state.route.kind === "workspace";
+  const sidebarToggle = state.auth === "ok" && onWorkspace
+    ? button("toggle-sidebar", state.workspace.sidebarOpen ? "Hide projects" : "Show projects", () => dispatch({ type: "sidebar_toggled" }), "secondary")
+    : null;
+  const inspectorToggle = state.auth === "ok" && onWorkspace
+    ? button("toggle-inspector", state.workspace.inspectorOpen ? "Hide inspector" : "Show inspector", () => dispatch({ type: "inspector_toggled" }), "secondary")
+    : null;
   if (sidebarToggle) sidebarToggle.setAttribute("aria-pressed", String(state.workspace.sidebarOpen));
   if (inspectorToggle) inspectorToggle.setAttribute("aria-pressed", String(state.workspace.inspectorOpen));
   return el(
@@ -412,6 +644,16 @@ function header(): HTMLElement {
     {},
     el("h1", {}, "Windows Runner"),
     el("span", { class: "muted", "data-testid": "server-info" }, server),
+    state.auth === "ok"
+      ? el(
+          "nav",
+          { class: "top-nav", "data-testid": "top-nav", "aria-label": "Main" },
+          navItem("nav-workspace", "Workspace", { kind: "workspace" }),
+          navItem("nav-providers", "Providers", { kind: "providers" }),
+          navItem("nav-usage", "Usage", { kind: "usage" }),
+          navItem("nav-settings", "Settings", { kind: "settings", section: state.route.kind === "settings" ? state.route.section : "security" })
+        )
+      : null,
     sidebarToggle,
     inspectorToggle,
     state.auth === "ok" ? button("sign-out", "Sign out", signOut, "secondary") : null
@@ -459,9 +701,13 @@ function resolveCatalogStore(): WorkspaceCatalogStore {
 
 const initialToken = loadToken();
 catalogStore = resolveCatalogStore();
+// Apply the boot route before the first render (unknown paths and
+// `#token=…` fragments resolve to the workspace via parseUiRoute).
+dispatch({ type: "route_changed", route: parseUiRoute(window.location.pathname, window.location.hash) });
 render();
 void catalogStore.load().then(
   (catalog) => dispatch({ type: "workspace_catalog_loaded", catalog }),
   () => dispatch({ type: "workspace_catalog_loaded", catalog: emptyWorkspaceCatalog() })
 );
 if (initialToken) void connect(initialToken);
+window.addEventListener("popstate", onPopState);

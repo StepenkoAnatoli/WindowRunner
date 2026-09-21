@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { DASH_PORT, DASH_STOP_PORT } from "./e2e/fixture.js";
+import { DASH_PORT, DASH_STOP_PORT, PROVIDERS_PORT } from "./e2e/fixture.js";
 
 const port = Number(process.env.E2E_PORT ?? 7699);
 
@@ -36,11 +36,14 @@ export default defineConfig({
       : {}),
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  // Three fixture servers: the scripted-provider UI server (with its proxy on
-  // E2E_PORT), the real-bootstrap dashboard server on DASH_PORT, and a second
+  // Four fixture servers: the scripted-provider UI server (with its proxy on
+  // E2E_PORT), the real-bootstrap dashboard server on DASH_PORT, a second
   // dashboard server on DASH_STOP_PORT whose mock streams slowly and never has
-  // a profile activated (see e2e/dashboard-stop-server.ts). Playwright starts
-  // all three, waits on all three health endpoints, and stops them after.
+  // a profile activated (see e2e/dashboard-stop-server.ts), and the B2
+  // workspace provider server on PROVIDERS_PORT (real bootstrap, per-run temp
+  // data dir — separated so its profile activation cannot disturb the
+  // scripted-provider specs). Playwright starts all four, waits on all four
+  // health endpoints, and stops them after.
   webServer: [
     {
       command: "npx tsx e2e/server.ts",
@@ -61,6 +64,14 @@ export default defineConfig({
     {
       command: "npx tsx e2e/dashboard-stop-server.ts",
       url: `http://127.0.0.1:${DASH_STOP_PORT}/healthz`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+    {
+      command: "npx tsx e2e/providers-server.ts",
+      url: `http://127.0.0.1:${PROVIDERS_PORT}/healthz`,
       reuseExistingServer: false,
       timeout: 30_000,
       stdout: "pipe",

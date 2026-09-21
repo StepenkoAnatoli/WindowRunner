@@ -262,31 +262,53 @@ by kind `host` / `origin` / `auth`) and surface as a `securityRejection`
 alert on `/api/health`. Neither the token nor the presented credential is ever
 written to logs, metrics or health output.
 
-### Provider dashboard
+### Provider management (main UI routes + `/dashboard` compatibility)
 
 When the web package is built (`npm run build`), the same origin serves the
-provider dashboard at `/dashboard` (main UI at `/`). It uses the **same bearer
-token** as `/api` — the browser shares it with the main UI through
-`sessionStorage` — and is behind the same auth middleware; there is no
-unauthenticated path.
+main UI at `/` with a small client-side route host — **Workspace** (the
+three-column B1 workspace), **Providers**, **Usage**, and **Settings**
+(`/providers`, `/usage`, `/settings/security|storage|about`; navigation is
+`history.pushState` + `popstate`, no framework and no new server routes, so a
+hard reload of a deep route falls back to the workspace). The same origin also
+serves `/dashboard` — a **compatibility entry point** that renders the same
+provider components (plus the quick chat) at its old URL for existing
+bookmarks; it never redirects and stays independently loadable.
 
-What it does:
+Both use the **same bearer token** as `/api` — in a browser the token arrives
+via the `#token=…` fragment (stripped from the address bar immediately) or the
+token form, and is kept in `sessionStorage` only; in the **desktop app** the
+token is injected into the window's memory by the shell (never written to the
+URL, web storage, or disk). There is no unauthenticated path.
+
+Provider management (identical in the main UI's Providers page and on
+`/dashboard`):
 
 - **Active-provider banner** — the profile the next turn will run on.
 - **Provider cards** — every saved profile with a status dot (green = last
-  Test passed, red = failed, gray = never tested) and **Use this** (hot-swap:
-  the *next* turn runs on the new profile, no restart), **Test** (one minimal
-  request with a 5 s timeout), **Edit**, **Delete** (the active profile cannot
-  be deleted — switch first).
-- **Add-profile form** with presets: OmniRoute (OpenAI-compatible — the base
-  URL is per-account, so it is a placeholder you type, never pre-filled),
-  OpenAI, Anthropic (official base URL, fixed), Spark (local Ollama,
-  `http://127.0.0.1:11434/v1`, no key), and the offline mock.
-- **Recent turns** — the last 50 usage records (time, provider, model, tokens,
-  status). Cost shows `—` unless a price-table entry exists for the exact
-  model id; the bundled table is empty, so no cost is ever fabricated.
-- **Quick chat** — one streamed turn to the active provider, reusing the main
-  UI's `POST /turns` + SSE event stream.
+  Test passed, red = failed, gray = never tested), the masked key
+  (`****last4` only), and **Use this** (hot-swap: the *next* turn runs on the
+  new profile, no restart), **Test** (one minimal request with a 5 s timeout;
+  never activates), **Edit**, **Delete** (explicit confirmation; the active
+  profile cannot be deleted — the server refuses, so switch first).
+- **Add/edit form** — pick the kind (`mock` / `openai-compatible` /
+  `anthropic`; the kind and id are immutable on edit), label, model, and base
+  URL for OpenAI-compatible endpoints. The API key field is a password input
+  that is sent once to the server and never shown again: edits leave it blank
+  ("Leave blank to keep the existing key") and the UI never sends the mask or
+  an unchanged key back. The form lives in tab/desktop-window memory only —
+  it is never persisted to `localStorage`, the workspace catalog, or the URL.
+- **Usage** (main UI route; the same table on `/dashboard`) — the last 50
+  usage records (time, provider, model, tokens, status). Cost shows `—`
+  unless a price-table entry exists for the exact model id; the bundled table
+  is empty, so no cost is ever fabricated. When the server reports bounded
+  history, the page says the oldest records rotated out instead of implying
+  the table is complete.
+- **Quick chat** (dashboard only) — one streamed turn to the active provider,
+  reusing the main UI's `POST /turns` + SSE event stream.
+- **Settings** (main UI only) — read-only Security/Storage/About information
+  from `GET /api/health` (no settings mutate server configuration in this
+  release), plus **Settings → Storage → "Forget remembered projects &
+  sessions"**, which resets *only* the local workspace catalog (see below).
 
 Storage:
 
@@ -314,6 +336,21 @@ Storage:
   `default` profile and made active. On later boots the **persisted** active
   profile wins over the environment, so a dashboard "Use this" survives
   restarts.
+
+The workspace catalog (separate from provider data):
+
+- The main UI's sidebar remembers the `{ project root, sessionId }` pairs you
+  opened, **on this device only**: in a browser under one `localStorage` key
+  (`windows-runner.workspace-catalog.v1`), in the desktop app via the shell's
+  fixed IPC bridge in the per-user application-data directory. The catalog is
+  navigation metadata only — it never contains tokens, provider keys,
+  transcripts, tool input/output, or file contents.
+- **Reset navigation metadata** (Settings → Storage) clears exactly that
+  catalog. It does NOT delete server sessions, provider profiles, or provider
+  keys — the sidebar simply starts empty and re-attaching a server session
+  recreates it under the same id. There is no arbitrary filesystem deletion:
+  the desktop path uses the same fixed preload method the app already uses
+  for catalog persistence.
 
 ### Remote access
 

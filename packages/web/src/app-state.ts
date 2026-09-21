@@ -1,5 +1,7 @@
 import type { ApprovalRequest, StreamEvent, TurnState } from "@windows-runner/shared";
 import { createInitialTurnState, reduceTurnState } from "@windows-runner/shared";
+import type { HealthSummary, ProviderProfileView, TurnUsageView } from "./api.js";
+import { validateProviderForm } from "./provider-types.js";
 import {
   initialWorkspaceUiState,
   type InspectorSelection,
@@ -9,6 +11,7 @@ import {
   type WorkspaceCatalog,
   type WorkspaceUiState,
 } from "./workspace-catalog.js";
+import type { SettingsSection, UiRoute } from "./ui-route.js";
 
 /**
  * UI state: a pure reducer over UI actions, separate from the shared turn
@@ -45,6 +48,57 @@ export interface TrustPrompt {
   toolName: string;
 }
 
+// ---------------------------------------------------------------------------
+// B2 provider/usage UI state. The server stays the source of truth for
+// provider profiles: this slice holds the masked list plus *editable form
+// text* only. A raw API key exists in exactly one place — the in-memory
+// `apiKey` form field while the user types — and is never persisted anywhere.
+
+export interface ProviderNotice {
+  tone: "success" | "error" | "info";
+  text: string;
+}
+
+export interface ProviderFormState {
+  mode: "create" | "edit";
+  /** Create: the new profile's slug (server-required). Edit: the profile being edited. */
+  profileId?: string;
+  label: string;
+  kind: string;
+  baseUrl: string;
+  model: string;
+  /** Transient: the raw key only while typed. Never rendered back, never persisted. */
+  apiKey: string;
+  /** Distinguishes create-without-key / edit-keep-key / explicit replacement. */
+  apiKeyMode: "empty" | "unchanged" | "replace";
+  validationErrors: Record<string, string>;
+  submitting: boolean;
+}
+
+export interface ProviderUiState {
+  status: "idle" | "loading" | "ready" | "error";
+  /** Always taken from the server response, never guessed locally. */
+  activeProfileId: string | null;
+  profiles: ProviderProfileView[];
+  form?: ProviderFormState;
+  testingProfileId?: string;
+  deletingProfileId?: string;
+  activatingProfileId?: string;
+  notice?: ProviderNotice;
+  error?: { code: string; message: string };
+}
+
+export interface UsageUiState {
+  status: "idle" | "loading" | "ready" | "error";
+  records: TurnUsageView[];
+  retained?: number;
+  bounded?: boolean;
+  error?: { code: string; message: string };
+}
+
+export const initialProviderUiState: ProviderUiState = { status: "idle", activeProfileId: null, profiles: [] };
+export const initialUsageUiState: UsageUiState = { status: "idle", records: [] };
+
 export interface AppState {
   auth: "unknown" | "checking" | "ok" | "invalid";
   authError?: string;
@@ -64,9 +118,25 @@ export interface AppState {
    * inspector focuses. No DOM behavior lives here.
    */
   workspace: WorkspaceUiState;
+  /** B2 client-side route (which top-level page is visible). */
+  route: UiRoute;
+  /** B2 provider management state (masked server data + transient form). */
+  providers: ProviderUiState;
+  /** B2 recent-turn usage state for the usage page. */
+  usage: UsageUiState;
+  /** Full GET /api/health summary for the settings pages (read-only display). */
+  health?: HealthSummary;
 }
 
-export const initialAppState: AppState = { auth: "unknown", turns: [], busy: false, workspace: initialWorkspaceUiState };
+export const initialAppState: AppState = {
+  auth: "unknown",
+  turns: [],
+  busy: false,
+  workspace: initialWorkspaceUiState,
+  route: { kind: "workspace" },
+  providers: initialProviderUiState,
+  usage: initialUsageUiState,
+};
 
 export type AppAction =
   | { type: "auth_checking" }
@@ -93,7 +163,16 @@ export type AppAction =
   | { type: "inspector_tab_selected"; tab: InspectorTab }
   | { type: "inspector_selection_changed"; selection: InspectorSelection }
   | { type: "sidebar_toggled" }
-  | { type: "inspector_toggled" };
+  | { type: "inspector_toggled" }
+  // ---- B2 route host + provider/usage coordination ----
+  | { type: "route_changed"; route: UiRoute }
+  | { type: "health_loaded"; health: HealthSummary }
+  /** Whole-slice replace; the slice's contents are computed by the provider controller. */
+  | { type: "providers_state"; providers: ProviderUiState }
+  /** Whole-slice replace; contents computed by the usage loader in main.ts. */
+  | { type: "usage_state"; usage: UsageUiState }
+  /** Settings → Storage "reset navigation metadata": clears the local catalog only. */
+  | { type: "workspace_catalog_reset" };
 
 export function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -104,9 +183,21 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "auth_invalid":
       // The catalog is local navigation metadata, not server state: signing
       // out forgets the token/session but keeps the remembered projects.
-      return { ...initialAppState, auth: "invalid", authError: action.message, workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog } };
+      // Provider and usage slices ARE server state — they are dropped (and
+      // with them any transient provider form, invariants 8/9).
+      return {
+        ...initialAppState,
+        route: state.route,
+        auth: "invalid",
+        authError: action.message,
+        workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog },
+      };
     case "auth_cleared":
-      return { ...initialAppState, workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog } };
+      return {
+        ...initialAppState,
+        route: state.route,
+        workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog },
+      };
     case "session_created": {
       // Unchanged turn semantics (clear turns/prompt) plus workspace selection:
       // the attached session becomes the selected one, aligned to its project.
@@ -269,6 +360,32 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, workspace: { ...state.workspace, sidebarOpen: !state.workspace.sidebarOpen } };
     case "inspector_toggled":
       return { ...state, workspace: { ...state.workspace, inspectorOpen: !state.workspace.inspectorOpen } };
+    case "route_changed":
+      // Only the route moves. Invariant 7: the workspace catalog, the current
+      // session, turns, and the token are untouched — and the provider form
+      // (if open) is preserved in memory so nothing typed is lost.
+      return { ...state, route: action.route };
+    case "health_loaded":
+      return { ...state, health: action.health };
+    case "providers_state":
+      return { ...state, providers: action.providers };
+    case "usage_state":
+      return { ...state, usage: action.usage };
+    case "workspace_catalog_reset":
+      // Clears ONLY the local navigation catalog (and the selections that
+      // referenced it). Server sessions, provider profiles, and provider
+      // secrets are untouched — the coordinator saves the empty catalog
+      // through the same store the app already uses.
+      return {
+        ...state,
+        workspace: {
+          ...state.workspace,
+          catalog: { version: 1, projects: [], sessions: [] },
+          selectedProjectId: undefined,
+          selectedSessionId: undefined,
+          inspectorSelection: { kind: "none" },
+        },
+      };
     default:
       return state;
   }

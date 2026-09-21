@@ -1,4 +1,5 @@
 import type { StreamEvent } from "@windows-runner/shared";
+import type { CreateProviderInput, UpdateProviderInput } from "./provider-types.js";
 
 /**
  * Browser client for the Windows Runner HTTP API.
@@ -263,16 +264,19 @@ export class ApiClient {
   }
 
   // ---- Provider dashboard endpoints (all require the same bearer token) ----
+  // Create/update accept the typed input contracts from provider-types.ts (or
+  // a plain record for compatibility); the typed contracts are what the
+  // provider controller sends.
 
   async listProviders(): Promise<ProviderListResult> {
     return (await this.request<ProviderListResult>("GET", "/api/providers")).body;
   }
 
-  async createProfile(input: Record<string, unknown>): Promise<ProviderProfileView> {
+  async createProfile(input: CreateProviderInput | Record<string, unknown>): Promise<ProviderProfileView> {
     return (await this.request<ProviderProfileView>("POST", "/api/providers", input)).body;
   }
 
-  async updateProfile(id: string, patch: Record<string, unknown>): Promise<ProviderProfileView> {
+  async updateProfile(id: string, patch: UpdateProviderInput | Record<string, unknown>): Promise<ProviderProfileView> {
     return (await this.request<ProviderProfileView>("PATCH", `/api/providers/${encodeURIComponent(id)}`, patch)).body;
   }
 
