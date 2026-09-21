@@ -116,6 +116,76 @@ test("opens a project and completes a mock turn", async () => {
   await fsp.rm(catalogFile, { force: true });
 });
 
+test("the provider route works in the desktop window with the in-memory token", async () => {
+  test.setTimeout(120_000);
+  const RAW_KEY = "sk-desktop-e2e-0123456789abcdef";
+  const card = (id: string) => page.locator(`${tid("providers-list")} [data-testid="dash-card"][data-id="${id}"]`);
+
+  // The provider API must stay authenticated over the in-memory bootstrap:
+  // navigating to /providers reuses the same client, no second token transport.
+  await page.click(tid("nav-providers"));
+  await expect(page.locator(tid("providers-page"))).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/providers");
+
+  // The provider list loads through the same bearer token (env-bootstrap
+  // "default" profile).
+  await expect(card("default")).toBeVisible();
+
+  // Create a keyed profile: the key comes back masked and appears nowhere.
+  await page.click(tid("providers-add"));
+  await page.locator(tid("provider-kind")).selectOption("openai-compatible");
+  await page.locator(tid("provider-id")).fill("desktop-key");
+  await page.locator(tid("provider-label")).fill("Desktop Keyed");
+  await page.locator(tid("provider-base-url")).fill("http://127.0.0.1:9/v1");
+  await page.locator(tid("provider-model")).fill("keyed-model");
+  await page.locator(tid("provider-api-key")).fill(RAW_KEY);
+  await page.click(tid("provider-submit"));
+  await expect(page.locator(tid("provider-form"))).toHaveCount(0);
+  await expect(card("desktop-key").locator(tid("dash-card-key"))).toHaveText("key: ****cdef");
+
+  // Create + test + activate the offline mock provider.
+  await page.click(tid("providers-add"));
+  await page.locator(tid("provider-kind")).selectOption("mock");
+  await page.locator(tid("provider-id")).fill("desktop-mock");
+  await page.locator(tid("provider-label")).fill("Desktop Mock");
+  await page.locator(tid("provider-model")).fill("mock");
+  await page.click(tid("provider-submit"));
+  await expect(card("desktop-mock")).toBeVisible();
+  await card("desktop-mock").locator(tid("dash-test")).click();
+  await expect(card("desktop-mock").locator(tid("dash-card-status"))).toHaveAttribute("data-ok", "true", { timeout: 15_000 });
+  await card("desktop-mock").locator(tid("dash-activate")).click();
+  await expect(page.locator(tid("providers-active"))).toContainText("Desktop Mock");
+
+  // Back to Workspace: the B1 catalog and the attached session survive.
+  await page.click(tid("nav-workspace"));
+  await expect(page.locator(tid("workspace-shell"))).toBeVisible();
+  await expect(page.locator(tid("session-id"))).toBeVisible();
+  await expect(page.locator(tid("turn")).last()).toContainText("desktop e2e turn");
+  await page.click(tid("choose-project"));
+  await expect(page.locator(tid("project-item")).first()).toBeVisible();
+
+  // No token and no provider key in: the URL, the workspace catalog file, or
+  // the visible page text.
+  const token = (await page.evaluate(() => {
+    const bridge = (window as unknown as { windowRunnerDesktop?: { getBootstrap(): { token: string } } }).windowRunnerDesktop;
+    return bridge?.getBootstrap().token ?? "";
+  })) as string;
+  expect(token).toBeTruthy();
+  expect(page.url()).not.toContain(token);
+  expect(page.url()).not.toContain(RAW_KEY);
+  const bodyText = await page.locator("body").innerText();
+  expect(bodyText).not.toContain(token);
+  expect(bodyText).not.toContain(RAW_KEY);
+  expect(bodyText).toContain("****cdef"); // masked form is what the user sees
+  const catalogFile = await app!.evaluate(({ app: electronApp }) => {
+    const sep = process.platform === "win32" ? "\\" : "/";
+    return `${electronApp.getPath("userData")}${sep}workspace-catalog.json`;
+  });
+  const catalogRaw = await fsp.readFile(catalogFile, "utf8");
+  expect(catalogRaw).not.toContain(token);
+  expect(catalogRaw).not.toContain(RAW_KEY);
+});
+
 test("quits cleanly: exit 0 and the backend stops with it", async () => {
   const running = app!;
   const proc = running.process();

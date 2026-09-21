@@ -203,16 +203,30 @@ All styles live in `packages/web/src/styles.css` (Tailwind v4 + custom utilities
 Configure with `WINDOWS_RUNNER_MODEL` (required), `WINDOWS_RUNNER_MODEL_BASE_URL`
 (default `https://api.openai.com/v1`) and `WINDOWS_RUNNER_MODEL_API_KEY` (or
 `OPENAI_API_KEY`). The key is never printed and is redacted from error
-messages. Instead of editing env vars for every switch, use the **provider
-dashboard** at `/dashboard` (built with `npm run build`; same bearer token as
-the API): add profiles — OmniRoute (base URL typed by you, never
-pre-filled), OpenAI, Anthropic, local Spark via Ollama, or the offline mock —
-test them, and activate one; the next turn hot-swaps without a restart.
-On first boot the env provider becomes the `default` profile; after that the
-persisted choice wins. Keys managed by the dashboard are stored in
-`<data dir>/provider-profiles.json` (mode 0600, **plaintext at rest** —
-no keychain integration yet; the key is never returned by any API, log line,
-or error).
+messages. Instead of editing env vars for every switch, manage providers in
+the UI (same bearer token as the API):
+
+- **In the main UI** the top navigation is **Workspace | Providers | Usage |
+  Settings** (client-side routes `/providers`, `/usage`,
+  `/settings/security|storage|about` — no page reloads, the attached session
+  and catalog survive moving between pages). The Providers page has the
+  profile cards, the add/edit form, **Use this** (hot-swap: the *next* turn
+  runs on the new profile, no restart), **Test**, and **Delete**; Usage lists
+  the recent turns; Settings shows read-only security/storage/about
+  information and can reset the locally remembered projects & sessions.
+- **`/dashboard` stays a compatibility entry point** that renders the same
+  provider components (plus the quick chat) for older bookmarks — the URL is
+  unchanged, no redirect.
+- **Keys are masked everywhere in the UI.** The server returns only
+  `****last4`; an edit form leaves the key blank ("keep the existing key") and
+  sends a key only when you type a replacement. The browser never persists
+  provider data: the form lives in tab memory only — never `localStorage`,
+  never the workspace catalog, never the URL.
+- On first boot the env provider becomes the `default` profile; after that the
+  persisted choice wins. Keys managed through the UI are stored server-side in
+  `<data dir>/provider-profiles.json` (mode 0600, **plaintext at rest** —
+  no keychain integration yet; the key is never returned by any API, log line,
+  or error).
 
 ## Skills
 
