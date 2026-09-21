@@ -77,6 +77,16 @@ export class FakeElement {
     return node;
   }
 
+  /** Replace all children (what `main.ts` render() uses to rebuild the DOM). */
+  replaceChildren(...nodes: Array<FakeElement | FakeText | string>): void {
+    for (const child of this.children) child.parent = null;
+    this.children.length = 0;
+    this.append(...nodes);
+  }
+
+  /** No-op focus (render() restores focus across re-renders when applicable). */
+  focus(): void {}
+
   addEventListener(type: string, listener: Listener): void {
     const list = this.listeners.get(type) ?? [];
     list.push(listener);
@@ -232,12 +242,31 @@ function matchesGroup(el: FakeElement, group: string): boolean {
 export interface StubDocument {
   createElement(tag: string): FakeElement;
   createTextNode(text: string): FakeText;
+  /** Descendant lookup by `id` attribute (what `main.ts` uses to find `#app`). */
+  getElementById(id: string): FakeElement | null;
+  readonly body: FakeElement;
+  activeElement: FakeElement | null;
+}
+
+function findById(node: FakeElement, id: string): FakeElement | null {
+  if (node.getAttribute("id") === id) return node;
+  for (const child of node.children) {
+    if (child instanceof FakeElement) {
+      const found = findById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 export function createStubDocument(): StubDocument {
+  const body = new FakeElement("body");
   return {
     createElement: (tag: string) => new FakeElement(tag),
     createTextNode: (text: string) => new FakeText(text),
+    getElementById: (id: string) => findById(body, id),
+    body,
+    activeElement: null,
   };
 }
 
