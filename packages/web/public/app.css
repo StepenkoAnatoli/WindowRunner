@@ -147,6 +147,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-vi
 table.usage { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
 table.usage th, table.usage td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.usage th { color: var(--muted); font-weight: 600; }
+/* Cells are nowrap, so at narrow viewports the table must scroll inside its
+   own box — without this wrapper the page itself scrolls sideways. */
+.usage-scroll { overflow-x: auto; }
 
 /* Settings shell */
 .settings-nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }

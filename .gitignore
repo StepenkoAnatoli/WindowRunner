@@ -20,6 +20,10 @@ crash-reports/
 test-results/
 playwright-report/
 
-# Eval reports from CI runs (committed reports live in eval/results/)
+# Eval reports: the committed sample lives in eval/results/ (see
+# eval/results/scripted-2026-09-20.json). Locally generated runs are ignored
+# so they can never be staged into a commit by accident; committing a new
+# report is a deliberate `git add -f`.
 eval-scripted.json
+eval/results/scripted-*.json
 eval/results/validate-*fake*.json

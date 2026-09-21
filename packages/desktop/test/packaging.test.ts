@@ -98,8 +98,34 @@ describe("installer packaging contract (electron-builder.yml)", () => {
   });
 
   it("ships the desktop e2e harness", () => {
-    for (const rel of ["playwright.config.ts", "e2e/desktop.spec.ts", "e2e/launch.ts"]) {
+    for (const rel of [
+      "playwright.config.ts",
+      "e2e/desktop.spec.ts",
+      "e2e/providers.spec.ts",
+      "e2e/launch.ts",
+    ]) {
       assert.ok(fs.existsSync(path.join(desktopRoot, rel)), `missing ${rel}`);
     }
+  });
+
+  it("stages the B2 web assets into the distribution payload", () => {
+    // copy-assets.mjs must keep mirroring the monorepo geometry the bundled
+    // server resolves at runtime — including the dashboard asset tree
+    // (resolveDashboardDir serves it at `/dashboard`). The requireFile guards
+    // make a missing dashboard build fail the desktop build, not the smoke.
+    const copyAssets = read("scripts/copy-assets.mjs");
+    assert.match(
+      copyAssets,
+      /requireFile\(path\.join\(webDashboardDir, "dashboard\.html"\)/,
+      "copy-assets.mjs must require the built dashboard.html before staging"
+    );
+    assert.ok(
+      copyAssets.includes('copy(webAppDir, path.join(staged, "packages", "web", "dist", "app"));'),
+      "copy-assets.mjs must stage packages/web/dist/app (the B2 route app)"
+    );
+    assert.ok(
+      copyAssets.includes('copy(webDashboardDir, path.join(staged, "packages", "web", "dist", "dashboard"));'),
+      "copy-assets.mjs must stage packages/web/dist/dashboard (the compatibility entry)"
+    );
   });
 });

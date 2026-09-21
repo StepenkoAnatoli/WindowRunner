@@ -108,6 +108,44 @@ describe("settings shell", () => {
     assert.equal(appVersion().length > 0, true);
   });
 
+  it("security page explains the trust, approval, and local-access models", () => {
+    const root = renderSecurityPage({ health: health(), server: { securityMode: "token", persistenceMode: "file" } });
+    const text = root.textContent ?? "";
+    assert.match(text, /approving a single tool call never grants trust/, "project trust model is explained");
+    assert.match(text, /explicit approve\/deny decision/, "approval model is explained");
+    assert.match(q(root, '[data-testid="security-local-warning"]').textContent ?? "", /loopback/, "local/remote access information");
+  });
+
+  it("storage page describes browser and desktop catalog storage and token hygiene", () => {
+    const browser = renderStoragePage({
+      health: health(),
+      server: { securityMode: "token", persistenceMode: "file" },
+      desktopAvailable: false,
+      onResetNavigationMetadata: () => {},
+    });
+    assert.match(browser.textContent ?? "", /kept in this browser's localStorage under one key/, "browser catalog behavior");
+    assert.match(browser.textContent ?? "", /sessionStorage only/, "browser token hygiene");
+
+    const desktop = renderStoragePage({
+      health: health(),
+      server: { securityMode: "token", persistenceMode: "file" },
+      desktopAvailable: true,
+      onResetNavigationMetadata: () => {},
+    });
+    assert.match(desktop.textContent ?? "", /desktop app in its own application data/, "desktop catalog behavior");
+    assert.match(desktop.textContent ?? "", /desktop app's memory only/, "desktop token hygiene");
+  });
+
+  it("about page shows the runtime and the installation link", () => {
+    const root = renderAboutPage({
+      health: health(),
+      server: { securityMode: "token", persistenceMode: "file" },
+      desktopAvailable: false,
+    });
+    assert.ok((q(root, '[data-testid="about-runtime"]').textContent ?? "").length > 0, "runtime is shown");
+    assert.match(q(root, '[data-testid="about-link-install"]').getAttribute("href") ?? "", /docs\/INSTALL\.md$/, "installation guide is linked");
+  });
+
   it("no settings page offers credential inputs or renders secret-shaped values", () => {
     const health: HealthSummary = {
       status: "ok",

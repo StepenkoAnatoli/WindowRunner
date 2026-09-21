@@ -53,6 +53,8 @@ a { color: var(--primary); }
 table.usage { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.usage th, table.usage td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.usage th { color: var(--muted); font-weight: 600; }
+/* Same containment as app.css: the usage table scrolls in its own box. */
+.usage-scroll { overflow-x: auto; }
 
 /* Quick chat */
 .chat-out { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; min-height: 20px; }

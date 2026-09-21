@@ -65,12 +65,18 @@ export function renderUsagePage(props: UsagePageProps): HTMLElement {
       : null,
     state.status === "ready" && state.records.length === 0
       ? el("p", { class: "hint", "data-testid": "usage-empty" }, "No turns recorded yet.")
-      : el(
-          "table",
-          { class: "usage", "data-testid": "usage-table" },
-          el("thead", {}, el("tr", {}, ...["time", "provider", "model", "tokens (in/out)", "cost", "status"].map((h) => el("th", {}, h)))),
-          el("tbody", {}, ...rows)
-        ),
+      : state.records.length > 0
+        ? el(
+            "div",
+            { class: "usage-scroll" },
+            el(
+              "table",
+              { class: "usage", "data-testid": "usage-table" },
+              el("thead", {}, el("tr", {}, ...["time", "provider", "model", "tokens (in/out)", "cost", "status"].map((h) => el("th", {}, h)))),
+              el("tbody", {}, ...rows)
+            )
+          )
+        : null,
     state.bounded
       ? el(
           "p",
