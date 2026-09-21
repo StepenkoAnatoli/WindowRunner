@@ -161,11 +161,17 @@ test("the provider route works in the desktop window with the in-memory token", 
   await expect(page.locator(tid("workspace-shell"))).toBeVisible();
   await expect(page.locator(tid("session-id"))).toBeVisible();
   await expect(page.locator(tid("turn")).last()).toContainText("desktop e2e turn");
+  // Re-answer the native folder dialog for this test (the stub from the
+  // previous test persists, but each test owns its setup).
+  await app!.evaluate(({ dialog }, dir) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog;
+  }, PROJECT_DIR);
   await page.click(tid("choose-project"));
   await expect(page.locator(tid("project-item")).first()).toBeVisible();
 
   // No token and no provider key in: the URL, the workspace catalog file, or
-  // the visible page text.
+  // the visible page text. (The masked key was asserted on the Providers page
+  // above; the workspace page deliberately shows no provider data.)
   const token = (await page.evaluate(() => {
     const bridge = (window as unknown as { windowRunnerDesktop?: { getBootstrap(): { token: string } } }).windowRunnerDesktop;
     return bridge?.getBootstrap().token ?? "";
@@ -176,7 +182,6 @@ test("the provider route works in the desktop window with the in-memory token", 
   const bodyText = await page.locator("body").innerText();
   expect(bodyText).not.toContain(token);
   expect(bodyText).not.toContain(RAW_KEY);
-  expect(bodyText).toContain("****cdef"); // masked form is what the user sees
   const catalogFile = await app!.evaluate(({ app: electronApp }) => {
     const sep = process.platform === "win32" ? "\\" : "/";
     return `${electronApp.getPath("userData")}${sep}workspace-catalog.json`;
