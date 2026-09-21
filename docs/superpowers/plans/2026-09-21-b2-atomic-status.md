@@ -19,7 +19,8 @@ B2.0 PASS — baseline cleared by run 35621840761 (plan-only branch rerun of the
             Desktop (windows-latest) failure on the post-merge main run)
 B2.1 PASS — d020434, run 35623562775
 B2.2 PASS — e77f1e2 / f036576 / c97b5c4, run 35626280132
-Current phase: B2.3 NOT STARTED
+B2.3 PASS — 6e33e70 / 3b5fe20, run 35628371479
+Current phase: B2.4 NOT STARTED
 ```
 
 ## Historical note — permanently red run on main
@@ -41,4 +42,7 @@ d020434 test(web): complete B2 route and state contract coverage
 e77f1e2 test(web): cover active provider banner states
 f036576 test(web): cover provider controller workflows
 c97b5c4 test(web): cover provider page composition
+7bb4e95 docs: record B2 atomic checklist progress through B2.2
+6e33e70 test(web): cover usage loading and bounded history
+3b5fe20 test(web): cover settings models and catalog reset isolation
 ```
