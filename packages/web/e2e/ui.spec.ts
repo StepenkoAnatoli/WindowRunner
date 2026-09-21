@@ -4,7 +4,12 @@ import { E2E_PROJECT, E2E_TOKEN, MCP_CONFIG_HASH } from "./fixture.js";
 /**
  * Browser E2E for the web UI against the real server + scripted provider
  * (see e2e/server.ts). Every test starts from a fresh tab; the token lives in
- * sessionStorage so nothing leaks between tests.
+ * sessionStorage and the workspace catalog in localStorage, so nothing leaks
+ * between tests.
+ *
+ * B1 flow: sign in -> open a project in the sidebar -> new session (the id
+ * is client-generated) -> turn. Reattaching a remembered session goes
+ * through the same create call; SESSION_ALREADY_EXISTS means it is alive.
  */
 
 const tid = (id: string) => `[data-testid="${id}"]`;
@@ -15,12 +20,23 @@ async function signIn(page: Page, token = E2E_TOKEN) {
   await page.click(tid("token-submit"));
 }
 
-async function createSession(page: Page, id = `s-${Date.now().toString(36)}`, cwd = E2E_PROJECT) {
-  await page.fill(tid("session-id-input"), id);
-  await page.fill(tid("cwd-input"), cwd);
-  await page.click(tid("create-session"));
-  await expect(page.locator(tid("session-id"))).toHaveText(id);
-  return id;
+async function openProject(page: Page, cwd = E2E_PROJECT) {
+  await page.fill(tid("project-path-input"), cwd);
+  await page.click(tid("open-project"));
+  await expect(page.locator(tid("project-item")).first()).toBeVisible();
+}
+
+async function newSession(page: Page, previous?: string | null) {
+  await page.click(tid("new-session"));
+  const id = page.locator(tid("session-id"));
+  if (previous) await expect(id).not.toHaveText(previous, { timeout: 10_000 });
+  else await expect(id).toBeVisible({ timeout: 10_000 });
+  return (await id.textContent())!;
+}
+
+async function createSession(page: Page, cwd = E2E_PROJECT) {
+  await openProject(page, cwd);
+  return newSession(page);
 }
 
 async function send(page: Page, message: string) {
@@ -38,14 +54,14 @@ test.describe("authentication", () => {
     await page.fill(tid("token-input"), E2E_TOKEN);
     await page.click(tid("token-submit"));
     await expect(page.locator(tid("server-info"))).toContainText("auth token");
-    await expect(page.locator(tid("session-form"))).toBeVisible();
+    await expect(page.locator(tid("project-sidebar"))).toBeVisible();
     expect(page.url()).not.toContain(E2E_TOKEN);
     expect(await page.evaluate(() => sessionStorage.getItem("windows-runner.token"))).toBe(E2E_TOKEN);
   });
 
   test("picks the token up from the URL fragment (what the banner prints) and strips it", async ({ page }) => {
     await page.goto(`/#token=${E2E_TOKEN}`);
-    await expect(page.locator(tid("session-form"))).toBeVisible();
+    await expect(page.locator(tid("project-sidebar"))).toBeVisible();
     expect(page.url()).not.toContain("token=");
   });
 
@@ -69,9 +85,10 @@ test.describe("authentication", () => {
 test.describe("sessions", () => {
   test("refuses a folder outside the allowed roots with an actionable error", async ({ page }) => {
     await signIn(page);
-    await page.fill(tid("session-id-input"), "outside");
-    await page.fill(tid("cwd-input"), "/");
-    await page.click(tid("create-session"));
+    // Opening a project is local-only; the refusal surfaces when the session
+    // is created against the server.
+    await openProject(page, "/");
+    await page.click(tid("new-session"));
     const banner = page.locator(tid("error-banner"));
     await expect(banner).toContainText("PATH_ESCAPES_ROOT");
     await page.click(tid("dismiss-error"));
@@ -80,11 +97,11 @@ test.describe("sessions", () => {
 
   test("creates, shows root and trust status, and deletes", async ({ page }) => {
     await signIn(page);
-    await createSession(page, "life");
+    await createSession(page);
     await expect(page.locator(tid("session-root"))).toHaveText(E2E_PROJECT);
     await expect(page.locator(tid("trust-status"))).toContainText("not trusted");
     await page.click(tid("delete-session"));
-    await expect(page.locator(tid("session-form"))).toBeVisible();
+    await expect(page.locator(tid("no-session"))).toBeVisible();
   });
 });
 
@@ -199,7 +216,7 @@ test.describe("approvals", () => {
 test.describe("project trust", () => {
   test("untrusted project is refused, granting trust from the prompt lets the next turn run, revoke works", async ({ page }) => {
     await signIn(page);
-    await createSession(page, `trust-${Date.now().toString(36)}`);
+    await createSession(page);
     const first = await send(page, "trust: what time is it");
     await expect(first.locator(tid("tool")).first()).toContainText("PROJECT_NOT_TRUSTED");
     await expect(first).toHaveAttribute("data-status", "completed");

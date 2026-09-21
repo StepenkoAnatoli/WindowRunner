@@ -97,7 +97,7 @@ before(async () => {
   }, { baseUrl: server!.url, token: server!.token });
 
   await page.goto(`${server!.url}/desktop`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector('[data-testid="session-form"]', { timeout: 60_000 });
+  await page.waitForSelector('[data-testid="project-sidebar"]', { timeout: 60_000 });
 });
 
 after(async () => {

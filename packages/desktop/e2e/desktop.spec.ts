@@ -37,7 +37,7 @@ test.beforeAll(async () => {
   dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-desktop-e2e-data-"));
   app = await launchDesktopApp({ dataDir, allowedRoots: [PROJECT_DIR] });
   page = await app.firstWindow({ timeout: 60_000 });
-  await page.waitForSelector(tid("session-form"), { timeout: 60_000 });
+  await page.waitForSelector(tid("project-sidebar"), { timeout: 60_000 });
   backendOrigin = new URL(page.url()).origin;
 });
 
@@ -51,9 +51,9 @@ test.afterAll(async () => {
 test("loads /desktop from the backend origin and auto-authenticates", async () => {
   expect(backendOrigin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(page.url()).toBe(`${backendOrigin}/desktop`);
-  // Auto-authenticated: the UI rendered the server info and session form.
+  // Auto-authenticated: the UI rendered the server info and project sidebar.
   await expect(page.locator(tid("server-info"))).toContainText("auth token");
-  await expect(page.locator(tid("session-form"))).toBeVisible();
+  await expect(page.locator(tid("project-sidebar"))).toBeVisible();
 
   // The token is in memory only — never in the URL and never in web storage.
   const bootstrap = await page.evaluate(() => {
@@ -75,11 +75,17 @@ test("loads /desktop from the backend origin and auto-authenticates", async () =
 });
 
 test("opens a project and completes a mock turn", async () => {
-  const id = `e2e-${Date.now().toString(36)}`;
-  await page.fill(tid("session-id-input"), id);
-  await page.fill(tid("cwd-input"), PROJECT_DIR);
-  await page.click(tid("create-session"));
-  await expect(page.locator(tid("session-id"))).toHaveText(id);
+  // The sidebar's "Choose folder…" opens a native dialog; answer it from the
+  // main process instead of driving OS UI. Same `dialog` object the IPC
+  // handler calls (the module is external to the bundle).
+  await app!.evaluate(({ dialog }, dir) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dir] })) as typeof dialog.showOpenDialog;
+  }, PROJECT_DIR);
+  await page.click(tid("choose-project"));
+  await expect(page.locator(tid("project-item")).first()).toBeVisible();
+  await page.click(tid("new-session"));
+  const id = await page.locator(tid("session-id")).textContent();
+  expect(id).toBeTruthy();
 
   await page.fill(tid("message-input"), "desktop e2e turn");
   await page.click(tid("send"));
@@ -87,6 +93,22 @@ test("opens a project and completes a mock turn", async () => {
   await expect(turn).toHaveAttribute("data-status", "completed", { timeout: 30_000 });
   await expect(turn).toContainText("[mock]");
   await expect(turn).toContainText("desktop e2e turn");
+
+  // The workspace catalog persisted under the per-user data dir — navigation
+  // metadata only, never the token.
+  const catalogFile = await app!.evaluate(({ app: electronApp }) => {
+    const sep = process.platform === "win32" ? "\\" : "/";
+    return `${electronApp.getPath("userData")}${sep}workspace-catalog.json`;
+  });
+  const catalogRaw = await fsp.readFile(catalogFile, "utf8");
+  expect(catalogRaw).toContain(PROJECT_DIR);
+  const token = await page.evaluate(() => {
+    const bridge = (window as unknown as { windowRunnerDesktop?: { getBootstrap(): { token: string } } }).windowRunnerDesktop;
+    return bridge?.getBootstrap().token ?? "";
+  });
+  expect(token).toBeTruthy();
+  expect(catalogRaw).not.toContain(token);
+  await fsp.rm(catalogFile, { force: true });
 });
 
 test("quits cleanly: exit 0 and the backend stops with it", async () => {

@@ -1,5 +1,14 @@
 import type { ApprovalRequest, StreamEvent, TurnState } from "@windows-runner/shared";
 import { createInitialTurnState, reduceTurnState } from "@windows-runner/shared";
+import {
+  initialWorkspaceUiState,
+  type InspectorSelection,
+  type InspectorTab,
+  type ProjectCatalogEntry,
+  type SessionCatalogEntry,
+  type WorkspaceCatalog,
+  type WorkspaceUiState,
+} from "./workspace-catalog.js";
 
 /**
  * UI state: a pure reducer over UI actions, separate from the shared turn
@@ -48,9 +57,16 @@ export interface AppState {
   /** Untrusted-project refusals seen in the active turn; the UI offers a grant button. */
   trustPrompt?: TrustPrompt;
   busy: boolean;
+  /**
+   * B1 workspace navigation + inspector-only state. The turn reducer above
+   * stays authoritative for turns/tools/approvals; this slice only decides
+   * which project/session is shown and which turn/tool/approval the
+   * inspector focuses. No DOM behavior lives here.
+   */
+  workspace: WorkspaceUiState;
 }
 
-export const initialAppState: AppState = { auth: "unknown", turns: [], busy: false };
+export const initialAppState: AppState = { auth: "unknown", turns: [], busy: false, workspace: initialWorkspaceUiState };
 
 export type AppAction =
   | { type: "auth_checking" }
@@ -67,7 +83,17 @@ export type AppAction =
   | { type: "error"; code: string; message: string }
   | { type: "error_cleared" }
   | { type: "trust_prompt_cleared" }
-  | { type: "busy"; busy: boolean };
+  | { type: "busy"; busy: boolean }
+  // ---- B1 workspace navigation (coordinator-owned side effects live in main.ts) ----
+  | { type: "workspace_catalog_loaded"; catalog: WorkspaceCatalog }
+  | { type: "project_upserted"; project: ProjectCatalogEntry }
+  | { type: "project_selected"; projectId: string; lastOpenedAt: number }
+  | { type: "session_upserted"; session: SessionCatalogEntry }
+  | { type: "session_selected"; sessionId: string; lastOpenedAt: number }
+  | { type: "inspector_tab_selected"; tab: InspectorTab }
+  | { type: "inspector_selection_changed"; selection: InspectorSelection }
+  | { type: "sidebar_toggled" }
+  | { type: "inspector_toggled" };
 
 export function reduceApp(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -76,13 +102,39 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
     case "auth_ok":
       return { ...state, auth: "ok", authError: undefined, server: { securityMode: action.securityMode, persistenceMode: action.persistenceMode } };
     case "auth_invalid":
-      return { ...initialAppState, auth: "invalid", authError: action.message };
+      // The catalog is local navigation metadata, not server state: signing
+      // out forgets the token/session but keeps the remembered projects.
+      return { ...initialAppState, auth: "invalid", authError: action.message, workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog } };
     case "auth_cleared":
-      return { ...initialAppState };
-    case "session_created":
-      return { ...state, session: { sessionId: action.sessionId, root: action.root, trust: undefined }, turns: [], activeTurnId: undefined, error: undefined, trustPrompt: undefined };
+      return { ...initialAppState, workspace: { ...initialWorkspaceUiState, catalog: state.workspace.catalog } };
+    case "session_created": {
+      // Unchanged turn semantics (clear turns/prompt) plus workspace selection:
+      // the attached session becomes the selected one, aligned to its project.
+      const entry = state.workspace.catalog.sessions.find((s) => s.sessionId === action.sessionId);
+      return {
+        ...state,
+        session: { sessionId: action.sessionId, root: action.root, trust: undefined },
+        turns: [],
+        activeTurnId: undefined,
+        error: undefined,
+        trustPrompt: undefined,
+        workspace: {
+          ...state.workspace,
+          selectedSessionId: action.sessionId,
+          selectedProjectId: entry ? entry.projectId : state.workspace.selectedProjectId,
+          inspectorSelection: { kind: "none" },
+        },
+      };
+    }
     case "session_cleared":
-      return { ...state, session: undefined, turns: [], activeTurnId: undefined, trustPrompt: undefined };
+      return {
+        ...state,
+        session: undefined,
+        turns: [],
+        activeTurnId: undefined,
+        trustPrompt: undefined,
+        workspace: { ...state.workspace, selectedSessionId: undefined, inspectorSelection: { kind: "none" } },
+      };
     case "trust_loaded":
       return state.session ? { ...state, session: { ...state.session, trust: action.grant }, trustPrompt: action.grant ? undefined : state.trustPrompt } : state;
     case "turn_submitted": {
@@ -111,7 +163,8 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       const turns = state.turns.slice();
       turns[idx] = next;
       const activeTurnId = nextState.isTerminal && state.activeTurnId === action.turnId ? undefined : state.activeTurnId;
-      return { ...state, turns, activeTurnId, trustPrompt };
+      const workspace = nextInspectorSelection(state.workspace, view, next, action.turnId);
+      return { ...state, turns, activeTurnId, trustPrompt, workspace };
     }
     case "turn_connection": {
       return updateTurn(state, action.turnId, (v) => ({ ...v, connection: action.connection, reconnectAttempt: action.attempt ?? 0, streamError: action.connection === "streaming" ? undefined : v.streamError }));
@@ -126,9 +179,169 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, trustPrompt: undefined };
     case "busy":
       return { ...state, busy: action.busy };
+    case "workspace_catalog_loaded": {
+      // Keep the in-memory selection only where the loaded catalog still has
+      // the referenced project/session; a stale selection is dropped, never
+      // kept dangling. This intentionally does not synthesize any transcript.
+      const catalog = action.catalog;
+      const selectedProjectId = catalog.projects.some((p) => p.id === state.workspace.selectedProjectId)
+        ? state.workspace.selectedProjectId
+        : undefined;
+      const selectedSession = catalog.sessions.find((s) => s.sessionId === state.workspace.selectedSessionId);
+      const selectedSessionId = selectedSession && selectedSession.projectId === selectedProjectId
+        ? selectedSession.sessionId
+        : undefined;
+      return { ...state, workspace: { ...state.workspace, catalog, selectedProjectId, selectedSessionId } };
+    }
+    case "project_upserted": {
+      const catalog = upsertProjectEntry(state.workspace.catalog, action.project);
+      // Opening a project selects it. Re-opening the already-selected project
+      // only touches recency — it must not wipe the visible turns.
+      if (state.workspace.selectedProjectId === action.project.id) {
+        return { ...state, workspace: { ...state.workspace, catalog } };
+      }
+      return {
+        ...state,
+        session: undefined,
+        turns: [],
+        activeTurnId: undefined,
+        trustPrompt: undefined,
+        workspace: {
+          ...state.workspace,
+          catalog,
+          selectedProjectId: action.project.id,
+          selectedSessionId: undefined,
+          inspectorSelection: { kind: "none" },
+        },
+      };
+    }
+    case "project_selected": {
+      const project = state.workspace.catalog.projects.find((p) => p.id === action.projectId);
+      if (!project) return state;
+      const catalog = touchProjectEntry(state.workspace.catalog, action.projectId, action.lastOpenedAt);
+      if (state.workspace.selectedProjectId === action.projectId) {
+        return { ...state, workspace: { ...state.workspace, catalog } };
+      }
+      // Selecting a project clears the server-session display until one of
+      // its sessions is attached (the coordinator blocks this while a turn
+      // is active, so no visible stream is ever abandoned here).
+      return {
+        ...state,
+        session: undefined,
+        turns: [],
+        activeTurnId: undefined,
+        trustPrompt: undefined,
+        workspace: {
+          ...state.workspace,
+          catalog,
+          selectedProjectId: action.projectId,
+          selectedSessionId: undefined,
+          inspectorSelection: { kind: "none" },
+        },
+      };
+    }
+    case "session_upserted":
+      return { ...state, workspace: { ...state.workspace, catalog: upsertSessionEntry(state.workspace.catalog, action.session) } };
+    case "session_selected": {
+      // Selection only: this must not mutate turns itself. The coordinator
+      // decides whether switching is allowed and then attaches, at which
+      // point `session_created` clears the old turns. A selected session
+      // always belongs to the selected project — selecting across projects
+      // moves the project selection along.
+      const entry = state.workspace.catalog.sessions.find((s) => s.sessionId === action.sessionId);
+      if (!entry) return state;
+      if (!state.workspace.catalog.projects.some((p) => p.id === entry.projectId)) return state;
+      return {
+        ...state,
+        workspace: {
+          ...state.workspace,
+          catalog: touchSessionEntry(state.workspace.catalog, action.sessionId, action.lastOpenedAt),
+          selectedProjectId: entry.projectId,
+          selectedSessionId: action.sessionId,
+        },
+      };
+    }
+    case "inspector_tab_selected":
+      return { ...state, workspace: { ...state.workspace, inspectorTab: action.tab } };
+    case "inspector_selection_changed":
+      return { ...state, workspace: { ...state.workspace, inspectorSelection: action.selection } };
+    case "sidebar_toggled":
+      return { ...state, workspace: { ...state.workspace, sidebarOpen: !state.workspace.sidebarOpen } };
+    case "inspector_toggled":
+      return { ...state, workspace: { ...state.workspace, inspectorOpen: !state.workspace.inspectorOpen } };
     default:
       return state;
   }
+}
+
+/**
+ * Inspector auto-follow for streamed events. A newly pending approval always
+ * takes over (`{ kind: "approval", … }` on the approvals tab); otherwise the
+ * active turn is followed only while the user has not manually focused
+ * another turn/tool/approval. A resolved approval falls back to its turn.
+ * Post-terminal events never reach here (the caller early-returns when the
+ * shared reducer reports no change), so late UI state cannot overwrite the
+ * terminal turn handling.
+ */
+function nextInspectorSelection(workspace: WorkspaceUiState, before: TurnView, after: TurnView, turnId: string): WorkspaceUiState {
+  const beforePending = before.state.pendingApprovals;
+  const afterPending = after.state.pendingApprovals;
+  let fresh: string | undefined;
+  for (const requestId of afterPending.keys()) {
+    if (!beforePending.has(requestId)) {
+      fresh = requestId;
+      break;
+    }
+  }
+  if (fresh !== undefined) {
+    return {
+      ...workspace,
+      inspectorTab: "approvals",
+      inspectorSelection: { kind: "approval", turnId, requestId: fresh },
+    };
+  }
+  const selection = workspace.inspectorSelection;
+  if (selection.kind === "approval" && selection.turnId === turnId && !afterPending.has(selection.requestId)) {
+    return { ...workspace, inspectorSelection: { kind: "turn", turnId } };
+  }
+  if (selection.kind === "none") {
+    return { ...workspace, inspectorSelection: { kind: "turn", turnId } };
+  }
+  return workspace;
+}
+
+function sortByRecency<T extends { lastOpenedAt: number }>(entries: T[]): T[] {
+  return [...entries].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+}
+
+function upsertProjectEntry(catalog: WorkspaceCatalog, project: ProjectCatalogEntry): WorkspaceCatalog {
+  const projects = sortByRecency([
+    project,
+    ...catalog.projects.filter((p) => p.id !== project.id && p.root !== project.root),
+  ]);
+  return { ...catalog, projects };
+}
+
+function touchProjectEntry(catalog: WorkspaceCatalog, projectId: string, lastOpenedAt: number): WorkspaceCatalog {
+  return {
+    ...catalog,
+    projects: sortByRecency(catalog.projects.map((p) => (p.id === projectId ? { ...p, lastOpenedAt } : p))),
+  };
+}
+
+function upsertSessionEntry(catalog: WorkspaceCatalog, session: SessionCatalogEntry): WorkspaceCatalog {
+  const sessions = sortByRecency([
+    session,
+    ...catalog.sessions.filter((s) => s.sessionId !== session.sessionId),
+  ]);
+  return { ...catalog, sessions };
+}
+
+function touchSessionEntry(catalog: WorkspaceCatalog, sessionId: string, lastOpenedAt: number): WorkspaceCatalog {
+  return {
+    ...catalog,
+    sessions: sortByRecency(catalog.sessions.map((s) => (s.sessionId === sessionId ? { ...s, lastOpenedAt } : s))),
+  };
 }
 
 function updateTurn(state: AppState, turnId: string, fn: (v: TurnView) => TurnView): AppState {

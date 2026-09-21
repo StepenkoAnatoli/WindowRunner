@@ -137,7 +137,7 @@ describe("desktop main process flow (electron stub)", () => {
       traces("ipc-invoke-registered")
         .map((t) => t.channel)
         .sort(),
-      ["window-runner:choose-folder", "window-runner:get-app-info", "window-runner:open-external"]
+      ["window-runner:choose-folder", "window-runner:get-app-info", "window-runner:open-external", "window-runner:workspace-catalog:load", "window-runner:workspace-catalog:save"]
     );
     const win = traces("window")[0] as Record<string, unknown> | undefined;
     assert.equal(win?.contextIsolation, true);

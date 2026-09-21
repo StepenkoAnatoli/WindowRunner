@@ -101,7 +101,7 @@ before(async () => {
   ]);
   page = await app.firstWindow({ timeout: 60_000 });
   // Wait for the shell to mount the web application (bootstrap auto-connect).
-  await page.waitForSelector('[data-testid="session-form"]', { timeout: 60_000 });
+  await page.waitForSelector('[data-testid="project-sidebar"]', { timeout: 60_000 });
 });
 
 after(async () => {

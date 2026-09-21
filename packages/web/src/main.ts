@@ -1,18 +1,42 @@
 import { ApiClient, ApiRequestError, clearToken, loadToken, saveToken } from "./api.js";
-import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, type AppAction, type AppState, type TurnView, previewApproval, type ApprovalPreview } from "./app-state.js";
+import { activeTurn, initialAppState, reduceApp, type AppAction, type AppState, type TurnView } from "./app-state.js";
+import { renderAppShell } from "./app-shell.js";
 import { describeError } from "./describe-error.js";
+import { getDesktopCapabilities, isDesktopAvailable } from "./desktop-bridge.js";
 import { button, el } from "./dom.js";
+import { renderInspector } from "./inspector.js";
+import { renderProjectSidebar } from "./project-sidebar.js";
+import { renderConversationWorkspace } from "./workspace.js";
+import {
+  createInMemoryCatalogStore,
+  createLocalStorageCatalogStore,
+  emptyWorkspaceCatalog,
+  newCatalogId,
+  type SessionCatalogEntry,
+  type WorkspaceCatalogStore,
+} from "./workspace-catalog.js";
 
 /**
- * Windows Runner web UI — the smallest client that drives the whole lifecycle:
- * token → session → turn → streamed events (with reconnect) → approvals,
- * cancellation, trust prompts and errors. Plain DOM, no framework; every
- * element the E2E suite touches carries a stable `data-testid`.
+ * Windows Runner web UI — coordinator for the B1 three-column workspace.
+ *
+ * main.ts is the only module that owns side effects: connect/sign out,
+ * workspace-catalog load/save, the desktop folder picker, session
+ * create/reattach/delete, the turn stream lifecycle, cancel, approve/deny,
+ * grant/revoke trust, and render scheduling. All rendering is delegated to
+ * the pure view modules (`app-shell`, `project-sidebar`, `workspace`,
+ * `inspector`, `tool-timeline`); all turn/tool/approval state stays in the
+ * `app-state` reducer.
+ *
+ * B1 boundary: the sidebar is a persisted catalog of locally remembered
+ * `{ project root, sessionId }` pairs, not a server-backed history browser.
+ * There is exactly one visible/active stream (`streamAbort`); switching
+ * projects/sessions while a turn is active is blocked, never silent.
  */
 
 let state: AppState = initialAppState;
 let client: ApiClient | undefined;
 let streamAbort: AbortController | undefined;
+let catalogStore: WorkspaceCatalogStore = createInMemoryCatalogStore();
 
 const root = document.getElementById("app")!;
 
@@ -56,20 +80,107 @@ function signOut(): void {
   dispatch({ type: "auth_cleared" });
 }
 
-async function createSession(sessionId: string, cwd: string): Promise<void> {
-  if (!client) return;
+async function persistCatalog(): Promise<void> {
+  try {
+    await catalogStore.save(state.workspace.catalog);
+  } catch (err) {
+    // Non-blocking: a catalog write failure must never roll back a
+    // successfully created/attached server session.
+    dispatch({ type: "error", code: "CATALOG_SAVE_FAILED", message: `could not save recent projects: ${describeError(err)}` });
+  }
+}
+
+function basenameOf(root: string): string {
+  const trimmed = root.replace(/[\\/]+$/, "");
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || root;
+}
+
+/** Open (remember + select) a project. Never calls the server. */
+async function openProject(root: string): Promise<void> {
+  const trimmed = root.trim();
+  if (!trimmed) return;
+  if (activeTurn(state)) {
+    dispatch({ type: "error", code: "SESSION_SWITCH_BLOCKED", message: "Finish or stop the active turn before switching sessions." });
+    return;
+  }
+  const existing = state.workspace.catalog.projects.find((p) => p.root === trimmed);
+  if (existing) {
+    dispatch({ type: "project_selected", projectId: existing.id, lastOpenedAt: Date.now() });
+  } else {
+    dispatch({
+      type: "project_upserted",
+      project: { id: newCatalogId("p"), root: trimmed, label: basenameOf(trimmed), lastOpenedAt: Date.now() },
+    });
+  }
+  await persistCatalog();
+}
+
+async function chooseProjectFolder(): Promise<void> {
+  const caps = getDesktopCapabilities();
+  if (!caps) return;
+  try {
+    const folder = await caps.chooseProjectFolder();
+    if (folder) await openProject(folder);
+  } catch (err) {
+    reportError(err);
+  }
+}
+
+async function selectProject(projectId: string): Promise<void> {
+  if (projectId === state.workspace.selectedProjectId) return;
+  if (activeTurn(state)) {
+    dispatch({ type: "error", code: "SESSION_SWITCH_BLOCKED", message: "Finish or stop the active turn before switching sessions." });
+    return;
+  }
+  dispatch({ type: "project_selected", projectId, lastOpenedAt: Date.now() });
+  await persistCatalog();
+}
+
+/** Create a fresh session id for a project and attach it. */
+async function newSession(projectId: string): Promise<void> {
+  if (activeTurn(state)) {
+    dispatch({ type: "error", code: "SESSION_SWITCH_BLOCKED", message: "Finish or stop the active turn before switching sessions." });
+    return;
+  }
+  const project = state.workspace.catalog.projects.find((p) => p.id === projectId);
+  if (!project) return;
+  const entry: SessionCatalogEntry = { sessionId: newCatalogId("s"), projectId, lastOpenedAt: Date.now() };
+  dispatch({ type: "session_upserted", session: entry });
+  await persistCatalog();
+  await selectSession(entry);
+}
+
+/**
+ * Attach a catalogued session: select it locally, then create-or-reattach
+ * server-side. `SESSION_ALREADY_EXISTS` is the reattach path (the session
+ * is still alive); anything else surfaces as an error and the optimistic
+ * selection stays so the user can retry.
+ */
+async function selectSession(entry: SessionCatalogEntry): Promise<void> {
+  if (activeTurn(state)) {
+    dispatch({ type: "error", code: "SESSION_SWITCH_BLOCKED", message: "Finish or stop the active turn before switching sessions." });
+    return;
+  }
+  const project = state.workspace.catalog.projects.find((p) => p.id === entry.projectId);
+  if (!project || !client) return;
+  dispatch({ type: "session_selected", sessionId: entry.sessionId, lastOpenedAt: Date.now() });
+  await persistCatalog();
   dispatch({ type: "busy", busy: true });
   try {
-    const created = await client.createSession(sessionId, cwd);
+    const created = await client.createSession(entry.sessionId, project.root);
     dispatch({ type: "session_created", sessionId: created.sessionId, root: created.root });
     await refreshTrust();
+    await persistCatalog();
   } catch (err) {
     if (err instanceof ApiRequestError && err.code === "SESSION_ALREADY_EXISTS") {
-      // Reattach to an existing session (e.g. after a page reload).
+      // Reattach to an existing session (e.g. after a page reload, or a
+      // session remembered in the catalog from an earlier visit).
       try {
-        const trust = await client.getTrust(sessionId);
-        dispatch({ type: "session_created", sessionId, root: trust.canonicalRoot });
+        const trust = await client.getTrust(entry.sessionId);
+        dispatch({ type: "session_created", sessionId: entry.sessionId, root: trust.canonicalRoot });
         dispatch({ type: "trust_loaded", grant: trust.grant });
+        await persistCatalog();
       } catch (inner) {
         reportError(inner);
       }
@@ -81,14 +192,16 @@ async function createSession(sessionId: string, cwd: string): Promise<void> {
   }
 }
 
-async function deleteSession(): Promise<void> {
-  if (!client || !state.session) return;
+async function deleteSession(sessionId: string): Promise<void> {
+  if (!client) return;
   streamAbort?.abort();
   try {
-    await client.deleteSession(state.session.sessionId);
+    await client.deleteSession(sessionId);
   } catch (err) {
     reportError(err);
   }
+  // The catalog entry is kept as a recent: reselecting it recreates the
+  // (empty) server session under the same id.
   dispatch({ type: "session_cleared" });
 }
 
@@ -195,9 +308,18 @@ function reportError(err: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// Rendering. Rebuilds the DOM from state; small enough that diffing is not worth it.
+// Rendering: header + three-column shell. Rebuilds the DOM from state.
 // Input values are preserved across renders by keeping the inputs' current
 // values when the same element is rebuilt.
+
+function inspectorTurn(): TurnView | undefined {
+  const sel = state.workspace.inspectorSelection;
+  if (sel.kind !== "none") {
+    const found = state.turns.find((t) => t.turnId === sel.turnId);
+    if (found) return found;
+  }
+  return activeTurn(state) ?? state.turns[state.turns.length - 1];
+}
 
 function render(): void {
   const focused = document.activeElement as HTMLElement | null;
@@ -208,13 +330,69 @@ function render(): void {
     if (id) inputValues.set(id, el.value);
   });
 
-  root.replaceChildren(
-    ...([
-      header(),
-      state.auth !== "ok" ? tokenPanel() : el("div", { class: "main" }, sessionPanel(), state.session ? conversationPanel() : el("p", { class: "hint", "data-testid": "no-session" }, "Create or open a session to start.")),
-      state.error ? errorBanner() : null,
-    ].filter((n): n is HTMLElement => n !== null))
-  );
+  const children: HTMLElement[] = [];
+  if (state.auth !== "ok") {
+    children.push(header(), tokenPanel());
+  } else {
+    const turn = inspectorTurn();
+    children.push(
+      renderAppShell({
+        header: header(),
+        sidebar: renderProjectSidebar({
+          catalog: state.workspace.catalog,
+          selectedProjectId: state.workspace.selectedProjectId,
+          selectedSessionId: state.workspace.selectedSessionId,
+          attachedRoot: state.session?.root,
+          hasActiveTurn: Boolean(activeTurn(state)),
+          desktopAvailable: isDesktopAvailable(),
+          busy: state.busy,
+          onChooseProjectFolder: () => void chooseProjectFolder(),
+          onOpenProject: (root) => void openProject(root),
+          onSelectProject: (projectId) => void selectProject(projectId),
+          onNewSession: (projectId) => void newSession(projectId),
+          onSelectSession: (sessionId) => {
+            const entry = state.workspace.catalog.sessions.find((s) => s.sessionId === sessionId);
+            if (entry) void selectSession(entry);
+          },
+          onDeleteSession: (sessionId) => void deleteSession(sessionId),
+        }),
+        workspace: renderConversationWorkspace({
+          session: state.session,
+          turns: state.turns,
+          activeTurn: activeTurn(state),
+          busy: state.busy,
+          trustPrompt: state.trustPrompt,
+          selectedTurnId: state.workspace.inspectorSelection.kind !== "none" ? state.workspace.inspectorSelection.turnId : undefined,
+          onSubmit: (message) => void submitTurn(message),
+          onCancel: () => void cancelActive(),
+          onDecide: (requestId, decision) => void decide(requestId, decision),
+          onGrantTrust: () => void grantTrust(),
+          onDismissTrust: () => dispatch({ type: "trust_prompt_cleared" }),
+          onSelectTurn: (turnId) => dispatch({ type: "inspector_selection_changed", selection: { kind: "turn", turnId } }),
+          onSelectApproval: (turnId, requestId) => {
+            dispatch({ type: "inspector_selection_changed", selection: { kind: "approval", turnId, requestId } });
+            dispatch({ type: "inspector_tab_selected", tab: "approvals" });
+          },
+        }),
+        inspector: renderInspector({
+          tab: state.workspace.inspectorTab,
+          selection: state.workspace.inspectorSelection,
+          session: state.session,
+          turn,
+          turns: state.turns,
+          onSelectTab: (tab) => dispatch({ type: "inspector_tab_selected", tab }),
+          onSelectTool: (turnId, callId) => dispatch({ type: "inspector_selection_changed", selection: { kind: "tool", turnId, callId } }),
+          onDecide: (requestId, decision) => void decide(requestId, decision),
+          onRevokeTrust: () => void revokeTrust(),
+        }),
+        sidebarOpen: state.workspace.sidebarOpen,
+        inspectorOpen: state.workspace.inspectorOpen,
+      })
+    );
+  }
+  if (state.error) children.push(errorBanner());
+
+  root.replaceChildren(...children);
 
   inputValues.forEach((value, id) => {
     const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid="${id}"]`);
@@ -225,11 +403,17 @@ function render(): void {
 
 function header(): HTMLElement {
   const server = state.server ? `auth ${state.server.securityMode} · persistence ${state.server.persistenceMode}` : "";
+  const sidebarToggle = state.auth === "ok" ? button("toggle-sidebar", state.workspace.sidebarOpen ? "Hide projects" : "Show projects", () => dispatch({ type: "sidebar_toggled" }), "secondary") : null;
+  const inspectorToggle = state.auth === "ok" ? button("toggle-inspector", state.workspace.inspectorOpen ? "Hide inspector" : "Show inspector", () => dispatch({ type: "inspector_toggled" }), "secondary") : null;
+  if (sidebarToggle) sidebarToggle.setAttribute("aria-pressed", String(state.workspace.sidebarOpen));
+  if (inspectorToggle) inspectorToggle.setAttribute("aria-pressed", String(state.workspace.inspectorOpen));
   return el(
     "header",
     {},
     el("h1", {}, "Windows Runner"),
     el("span", { class: "muted", "data-testid": "server-info" }, server),
+    sidebarToggle,
+    inspectorToggle,
     state.auth === "ok" ? button("sign-out", "Sign out", signOut, "secondary") : null
   );
 }
@@ -253,145 +437,31 @@ function tokenPanel(): HTMLElement {
   return form;
 }
 
-function sessionPanel(): HTMLElement {
-  if (state.session) {
-    const s = state.session;
-    return el(
-      "section",
-      { class: "panel", "data-testid": "session-panel" },
-      el("h2", {}, "Session ", el("code", { "data-testid": "session-id" }, s.sessionId)),
-      el("p", {}, el("span", { class: "muted" }, "root "), el("code", { "data-testid": "session-root" }, s.root)),
-      trustLine(),
-      button("delete-session", "Delete session", () => void deleteSession(), "secondary")
-    );
-  }
-  const form = el(
-    "form",
-    { class: "panel", "data-testid": "session-form" },
-    el("h2", {}, "New session"),
-    el("label", {}, "Session id", el("input", { "data-testid": "session-id-input", value: `s-${Date.now().toString(36)}`, pattern: "[A-Za-z0-9_-]{1,128}", required: "true" })),
-    el("label", {}, "Project folder (absolute path inside an allowed root)", el("input", { "data-testid": "cwd-input", placeholder: "/home/me/project", required: "true" })),
-    button("create-session", state.busy ? "Creating…" : "Create session", undefined, "primary", state.busy)
-  );
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const id = form.querySelector<HTMLInputElement>('[data-testid="session-id-input"]')!.value.trim();
-    const cwd = form.querySelector<HTMLInputElement>('[data-testid="cwd-input"]')!.value.trim();
-    if (id && cwd) void createSession(id, cwd);
-  });
-  return form;
-}
-
-function trustLine(): HTMLElement {
-  const trust = state.session?.trust;
-  if (trust === undefined) return el("p", { class: "muted", "data-testid": "trust-status" }, "trust: …");
-  if (trust === null) return el("p", { class: "muted", "data-testid": "trust-status" }, "trust: project not trusted to run project-supplied configuration");
-  return el(
-    "p",
-    { "data-testid": "trust-status" },
-    el("span", { class: "ok" }, "trusted "),
-    el("code", {}, trust.source ?? "configuration"),
-    " ",
-    el("code", { class: "muted" }, trust.configHash.slice(0, 19) + "…"),
-    " ",
-    button("revoke-trust", "Revoke", () => void revokeTrust(), "link")
-  );
-}
-
-function conversationPanel(): HTMLElement {
-  const active = activeTurn(state);
-  const form = el(
-    "form",
-    { class: "composer", "data-testid": "turn-form" },
-    el("textarea", { "data-testid": "message-input", rows: "3", placeholder: "Ask the agent…", required: "true", ...(active ? { disabled: "true" } : {}) }),
-    el(
-      "div",
-      { class: "row" },
-      button("send", state.busy ? "Sending…" : "Send", undefined, "primary", Boolean(active) || state.busy),
-      active ? button("cancel", "Stop", () => void cancelActive(), "danger") : null
-    )
-  );
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const ta = form.querySelector<HTMLTextAreaElement>('[data-testid="message-input"]')!;
-    const message = ta.value.trim();
-    if (message) {
-      ta.value = "";
-      void submitTurn(message);
-    }
-  });
-  return el(
-    "section",
-    { class: "conversation", "data-testid": "conversation" },
-    state.trustPrompt ? trustPrompt() : null,
-    el("div", { class: "turns", "data-testid": "turns" }, ...state.turns.map(turnCard)),
-    form
-  );
-}
-
-function trustPrompt(): HTMLElement {
-  const p = state.trustPrompt!;
-  return el(
-    "div",
-    { class: "card warn", role: "alert", "data-testid": "trust-prompt" },
-    el("strong", {}, p.staleConfigHash ? "Project configuration changed" : "Project not trusted"),
-    el("p", {}, `The tool `, el("code", {}, p.toolName), ` wants to run configuration from `, el("code", {}, p.source), ` in `, el("code", {}, p.realRoot), `.`),
-    p.staleConfigHash ? el("p", { class: "muted" }, `Previously trusted ${p.staleConfigHash.slice(0, 19)}…; now ${p.configHash.slice(0, 19)}…`) : el("p", { class: "muted" }, `configHash ${p.configHash}`),
-    el("p", { class: "hint" }, "Trusting lets this project's configuration execute on your machine for future turns until revoked. Approving a single call never grants this."),
-    el("div", { class: "row" }, button("grant-trust", "Trust this project", () => void grantTrust(), "primary"), button("dismiss-trust", "Not now", () => dispatch({ type: "trust_prompt_cleared" }), "secondary"))
-  );
-}
-
-function turnCard(view: TurnView): HTMLElement {
-  const status = describeTurn(view);
-  const approvals = pendingApprovals(view);
-  return el(
-    "article",
-    { class: `card turn status-${view.state.status}`, "data-testid": "turn", "data-turn-id": view.turnId, "data-status": view.state.status },
-    el("div", { class: "user" }, el("span", { class: "muted" }, "you "), el("span", { "data-testid": "turn-message" }, view.message)),
-    el("div", { class: "assistant" }, el("span", { class: "muted" }, "agent "), el("span", { "data-testid": "turn-text" }, view.state.textAccumulated), view.state.isTerminal ? null : el("span", { class: "cursor" }, "▍")),
-    view.tools.length > 0 ? el("ul", { class: "tools", "data-testid": "tools" }, ...view.tools.map((t) => el("li", { "data-testid": "tool", "data-status": t.status }, el("code", {}, t.toolName), " ", t.status, t.result && !t.result.ok ? el("span", { class: "error" }, ` — ${t.result.code}: ${t.result.message}`) : null))) : null,
-    ...approvals.map((req) =>
-      el(
-        "div",
-        { class: "card approval", role: "alertdialog", "data-testid": "approval", "data-request-id": req.requestId },
-        el("strong", {}, "Approval required: ", el("code", {}, req.toolName)),
-        el("p", {}, req.reason),
-        renderPreview(previewApproval(req.toolName, req.input)),
-        el("div", { class: "row" }, button("approve", "Approve", () => void decide(req.requestId, "approve"), "primary"), button("deny", "Deny", () => void decide(req.requestId, "deny"), "danger"))
-      )
-    ),
-    el("footer", { class: `status ${view.streamError || view.state.status === "failed" ? "error" : ""}`, "data-testid": "turn-status" }, status, " ", el("span", { class: "muted" }, `seq ${view.state.seq}`))
-  );
-}
-
-function renderPreview(p: ApprovalPreview): HTMLElement {
-  switch (p.kind) {
-    case "diff":
-      return el(
-        "div",
-        { class: "preview", "data-testid": "approval-preview", "data-kind": "diff" },
-        el("div", { class: "muted" }, el("code", {}, p.path), p.note ? ` — ${p.note}` : ""),
-        el("pre", { class: "diff" }, ...p.lines.map((l) => el("span", { class: l.type === "-" ? "del" : l.type === "+" ? "add" : "ctx" }, `${l.type} ${l.text}\n`)))
-      );
-    case "command":
-      return el(
-        "div",
-        { class: "preview", "data-testid": "approval-preview", "data-kind": "command" },
-        el("pre", { class: "input" }, "$ " + p.command),
-        p.note ? el("div", { class: "muted" }, p.note) : null
-      );
-    default:
-      return el("pre", { class: "input", "data-testid": "approval-preview", "data-kind": "json" }, p.text);
-  }
-}
-
 function errorBanner(): HTMLElement {
   return el("div", { class: "banner error", role: "alert", "data-testid": "error-banner" }, el("strong", {}, state.error!.code), " ", state.error!.message, " ", button("dismiss-error", "Dismiss", () => dispatch({ type: "error_cleared" }), "link"));
 }
 
 // ---------------------------------------------------------------------------
 
+function resolveCatalogStore(): WorkspaceCatalogStore {
+  const caps = getDesktopCapabilities();
+  if (caps) {
+    return {
+      load: async () => (await caps.loadWorkspaceCatalog()) ?? emptyWorkspaceCatalog(),
+      save: async (catalog) => caps.saveWorkspaceCatalog(catalog),
+    };
+  }
+  try {
+    if (typeof localStorage !== "undefined") return createLocalStorageCatalogStore(localStorage);
+  } catch {}
+  return createInMemoryCatalogStore();
+}
+
 const initialToken = loadToken();
+catalogStore = resolveCatalogStore();
 render();
+void catalogStore.load().then(
+  (catalog) => dispatch({ type: "workspace_catalog_loaded", catalog }),
+  () => dispatch({ type: "workspace_catalog_loaded", catalog: emptyWorkspaceCatalog() })
+);
 if (initialToken) void connect(initialToken);

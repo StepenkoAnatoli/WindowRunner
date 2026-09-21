@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { activeTurn, describeTurn, initialAppState, pendingApprovals, reduceApp, previewApproval, type AppState } from "../src/app-state.js";
+import { validateWorkspaceCatalog } from "../src/workspace-catalog.js";
 
 function ev(seq: number, type: string, extra: Record<string, unknown> = {}): any {
   return { seq, at: seq * 10, sessionId: "s", turnId: "t1", type, ...extra };
@@ -111,5 +112,150 @@ describe("previewApproval", () => {
     assert.equal(j.kind, "json");
     assert.match((j as any).text, /"a": 1/);
     assert.equal(previewApproval("edit_file", "not an object").kind, "json");
+  });
+});
+
+describe("workspace navigation (B1)", () => {
+  const catalog = validateWorkspaceCatalog({
+    version: 1,
+    projects: [
+      { id: "p1", root: "/one", label: "one", lastOpenedAt: 1 },
+      { id: "p2", root: "/two", label: "two", lastOpenedAt: 2 },
+    ],
+    sessions: [
+      { sessionId: "s1", projectId: "p1", lastOpenedAt: 3 },
+      { sessionId: "s2", projectId: "p2", lastOpenedAt: 4 },
+    ],
+  });
+
+  function withCatalog(): AppState {
+    return reduceApp(initialAppState, { type: "workspace_catalog_loaded", catalog });
+  }
+
+  it("starts with an empty catalog, context tab, and open panels", () => {
+    assert.deepEqual(initialAppState.workspace.catalog, { version: 1, projects: [], sessions: [] });
+    assert.equal(initialAppState.workspace.inspectorTab, "context");
+    assert.deepEqual(initialAppState.workspace.inspectorSelection, { kind: "none" });
+    assert.equal(initialAppState.workspace.sidebarOpen, true);
+    assert.equal(initialAppState.workspace.inspectorOpen, true);
+  });
+
+  it("preserves the selected project/session on catalog load only when references exist", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "session_selected", sessionId: "s1", lastOpenedAt: 11 });
+    assert.equal(s.workspace.selectedProjectId, "p1");
+    assert.equal(s.workspace.selectedSessionId, "s1");
+    // Reload with the project gone: stale selection is dropped, never dangling.
+    const pruned = validateWorkspaceCatalog({ version: 1, projects: [], sessions: [] });
+    s = reduceApp(s, { type: "workspace_catalog_loaded", catalog: pruned });
+    assert.equal(s.workspace.selectedProjectId, undefined);
+    assert.equal(s.workspace.selectedSessionId, undefined);
+  });
+
+  it("loading a catalog never synthesizes transcript history", () => {
+    const s = withCatalog();
+    assert.deepEqual(s.turns, []);
+    assert.equal(s.activeTurnId, undefined);
+    assert.equal(s.session, undefined);
+  });
+
+  it("selecting a project clears the session display; reselecting keeps turns", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "session_created", sessionId: "s1", root: "/one" });
+    s = reduceApp(s, { type: "turn_submitted", turnId: "t1", message: "hi" });
+    assert.equal(s.turns.length, 1);
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 11 });
+    assert.equal(s.turns.length, 1, "reselecting the same project must not wipe turns");
+    s = reduceApp(s, { type: "project_selected", projectId: "p2", lastOpenedAt: 12 });
+    assert.equal(s.session, undefined);
+    assert.deepEqual(s.turns, []);
+    assert.equal(s.workspace.selectedSessionId, undefined);
+  });
+
+  it("upserting the already-selected project only touches recency", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "session_created", sessionId: "s1", root: "/one" });
+    s = reduceApp(s, { type: "turn_submitted", turnId: "t1", message: "hi" });
+    s = reduceApp(s, { type: "project_upserted", project: { id: "p1", root: "/one", label: "one", lastOpenedAt: 99 } });
+    assert.equal(s.turns.length, 1);
+    assert.equal(s.workspace.catalog.projects[0].id, "p1");
+    assert.equal(s.workspace.catalog.projects[0].lastOpenedAt, 99);
+  });
+
+  it("session selection never mutates turns and always belongs to the selected project", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "session_created", sessionId: "s1", root: "/one" });
+    s = reduceApp(s, { type: "turn_submitted", turnId: "t1", message: "hi" });
+    const before = s.turns;
+    s = reduceApp(s, { type: "session_selected", sessionId: "s2", lastOpenedAt: 11 });
+    assert.equal(s.turns, before, "session_selected must not touch turns; session_created clears them");
+    assert.equal(s.workspace.selectedSessionId, "s2");
+    assert.equal(s.workspace.selectedProjectId, "p2", "selecting across projects moves the project along");
+    s = reduceApp(s, { type: "session_created", sessionId: "s2", root: "/two" });
+    assert.deepEqual(s.turns, []);
+  });
+
+  it("session_created aligns the workspace selection; session_cleared drops it", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "session_created", sessionId: "s2", root: "/two" });
+    assert.equal(s.workspace.selectedSessionId, "s2");
+    assert.equal(s.workspace.selectedProjectId, "p2");
+    s = reduceApp(s, { type: "session_cleared" });
+    assert.equal(s.workspace.selectedSessionId, undefined);
+    assert.equal(s.workspace.selectedProjectId, "p2");
+  });
+
+  it("a newly pending approval takes over the inspector on the approvals tab", () => {
+    let s = withTurn();
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(1, "turn_started", { limits: {}, message: "hello", root: "/p" }) });
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "turn", turnId: "t1" });
+    const req = { requestId: "apr_1", providerCallId: "c1", turnId: "t1", sessionId: "s", toolName: "run_terminal", input: { cmd: "ls" }, reason: "needs approval", expiresAt: 999, createdAt: 40 };
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(2, "turn_waiting_for_approval", { request: req }) });
+    assert.equal(s.workspace.inspectorTab, "approvals");
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "approval", turnId: "t1", requestId: "apr_1" });
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(3, "approval_resolved", { requestId: "apr_1", decision: "approve", resolvedAt: 60 }) });
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "turn", turnId: "t1" });
+  });
+
+  it("a manual selection of another turn is not stolen by streamed events", () => {
+    let s = withTurn();
+    s = reduceApp(s, { type: "turn_submitted", turnId: "t2", message: "second" });
+    s = reduceApp(s, { type: "inspector_selection_changed", selection: { kind: "turn", turnId: "t2" } });
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(1, "turn_started", { limits: {}, message: "hello", root: "/p" }) });
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(2, "text_delta", { delta: "hi" }) });
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "turn", turnId: "t2" });
+  });
+
+  it("a selected terminal turn stays selected when another turn terminates", () => {
+    let s = withTurn();
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(1, "turn_started", { limits: {}, message: "hello", root: "/p" }) });
+    s = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(2, "turn_completed", { usage: { totalTokens: 1 } }) });
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "turn", turnId: "t1" });
+    s = reduceApp(s, { type: "turn_submitted", turnId: "t2", message: "second" });
+    s = reduceApp(s, { type: "turn_event", turnId: "t2", event: ev(1, "turn_started", { limits: {}, message: "second", root: "/p" }) });
+    s = reduceApp(s, { type: "turn_event", turnId: "t2", event: ev(2, "turn_cancelled", { reason: "stop" }) });
+    assert.deepEqual(s.workspace.inspectorSelection, { kind: "turn", turnId: "t1" });
+    // Late events for the terminal turn change nothing at all.
+    const after = reduceApp(s, { type: "turn_event", turnId: "t1", event: ev(3, "text_delta", { delta: "late" }) });
+    assert.equal(after, s);
+  });
+
+  it("sign-out keeps the catalog but resets the selection; toggles flip panels", () => {
+    let s = withCatalog();
+    s = reduceApp(s, { type: "project_selected", projectId: "p1", lastOpenedAt: 10 });
+    s = reduceApp(s, { type: "auth_cleared" });
+    assert.equal(s.workspace.catalog.projects.length, 2);
+    assert.equal(s.workspace.selectedProjectId, undefined);
+    assert.equal(s.workspace.sidebarOpen, true);
+    s = reduceApp(s, { type: "sidebar_toggled" });
+    assert.equal(s.workspace.sidebarOpen, false);
+    s = reduceApp(s, { type: "inspector_toggled" });
+    assert.equal(s.workspace.inspectorOpen, false);
+    s = reduceApp(s, { type: "inspector_tab_selected", tab: "changes" });
+    assert.equal(s.workspace.inspectorTab, "changes");
   });
 });
