@@ -4,13 +4,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ProjectRoot, PathError } from "../src/project-root.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function makeTempRoot(): Promise<{ root: string; cleanup: () => Promise<void> }> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "wr-test-"));
   return {
     root: tmp,
     cleanup: async () => {
-      await fs.rm(tmp, { recursive: true, force: true });
+      await removeTempPath(tmp);
     },
   };
 }
@@ -99,7 +100,7 @@ test("symlink escaping root", async () => {
       await fs.symlink(outside, linkPath);
     } catch {
       // Symlink creation may fail on Windows without admin, skip
-      await fs.rm(outside, { recursive: true, force: true });
+      await removeTempPath(outside);
       return;
     }
 
@@ -121,7 +122,7 @@ test("symlink escaping root", async () => {
     const realInside = await pr.resolveReal("linkInside/inside.txt");
     assert.ok(realInside.includes("inside.txt"));
 
-    await fs.rm(outside, { recursive: true, force: true });
+    await removeTempPath(outside);
   } finally {
     await cleanup();
   }

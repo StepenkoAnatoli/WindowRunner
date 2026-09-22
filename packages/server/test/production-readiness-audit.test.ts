@@ -8,6 +8,7 @@ import { FileTurnLogStore } from "../src/agent/file-turn-log-store.js";
 import { FileSessionStore } from "../src/agent/file-session-store.js";
 import { TurnManager } from "../src/agent/turn-manager.js";
 import { ProjectRoot } from "../src/project-root.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function mkTmpDir(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "wr-audit-"));
@@ -72,7 +73,7 @@ describe("Production-readiness audit", () => {
       assert.equal(sessDiag2.sessionsSkipped, 1);
       assert.equal(sessDiag2.sessionsLoaded, 0);
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -116,7 +117,7 @@ describe("Production-readiness audit", () => {
       assert.equal(events.length, 1);
 
       unsubscribe();
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("async mode reports persistence failures instead of silently losing them", async () => {
@@ -154,7 +155,7 @@ describe("Production-readiness audit", () => {
       assert.ok(diag.warnings.length >= 1, "warnings should contain failure");
       assert.ok(diag.warnings.some((w) => w.includes("Persistence failed") || w.includes("Failed to persist") || w.includes("append failed")));
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("fsync failures, rename failures, disk-full, permission errors handled", async () => {
@@ -199,7 +200,7 @@ describe("Production-readiness audit", () => {
       }
       assert.equal(threw, true, "durable mode should throw on persistence failure, not emit SSE");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -230,7 +231,7 @@ describe("Production-readiness audit", () => {
       const diag2 = await sessionStore.boot(["/home"], () => Date.now());
       assert.equal(diag2.sessionsSkipped, 1);
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("allowedRootsSnapshot, canonicalRoot, realRoot never authorize by themselves", async () => {
@@ -275,7 +276,7 @@ describe("Production-readiness audit", () => {
       const diag2 = await sessionStore.boot([sysTmp], () => Date.now());
       assert.equal(diag2.sessionsSkipped, 1, "canonicalRoot outside allowedRoots should not authorize");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("symlink replacement between boot validation and file access", async () => {
@@ -311,8 +312,8 @@ describe("Production-readiness audit", () => {
       }
       assert.equal(threw, true, "symlink replacement should be caught by resolveReal");
 
-      await fs.rm(dir, { recursive: true, force: true });
-      await fs.rm(outsideDir, { recursive: true, force: true });
+      await removeTempPath(dir);
+      await removeTempPath(outsideDir);
     });
 
     it("quarantined files cannot be loaded as active turns", async () => {
@@ -351,7 +352,7 @@ describe("Production-readiness audit", () => {
       const list = await turnStore.list();
       assert.ok(!list.includes(turnId), "quarantined turn should not be listed as active");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -397,7 +398,7 @@ describe("Production-readiness audit", () => {
       turns = await turnStore.list();
       assert.equal(turns.length, 100);
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("eviction cannot delete active turn", async () => {
@@ -429,7 +430,7 @@ describe("Production-readiness audit", () => {
       assert.ok(list.includes(activeTurnId), "active turn file should not be deleted");
       assert.ok(!list.includes(completedTurnId), "completed turn file should be deleted");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("diagnostics observable through logs and health endpoint", async () => {
@@ -457,7 +458,7 @@ describe("Production-readiness audit", () => {
       // Diagnostics should be observable via getDiagnostics (health endpoint can expose)
       console.log("Diagnostics observable:", JSON.stringify(diag, null, 2));
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("single-process writer limitation documented prominently", async () => {
@@ -493,7 +494,7 @@ describe("Production-readiness audit", () => {
       const events = await fileStore.readAll(turnId);
       assert.equal(events.length, 3);
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("old events without providerCallId", async () => {
@@ -530,7 +531,7 @@ describe("Production-readiness audit", () => {
       const req = (events[0] as any).request;
       assert.equal(req.providerCallId, "apr_123");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("malformed metadata, empty logs, duplicate restarts, gaps, legacy flat files", async () => {
@@ -592,7 +593,7 @@ describe("Production-readiness audit", () => {
       const flatList = await turnStore.list();
       assert.ok(flatList.includes(flatTurnId));
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("UI reconnect behavior after restart using Last-Event-ID", async () => {
@@ -625,7 +626,7 @@ describe("Production-readiness audit", () => {
       assert.equal(replay2[1].type, "turn_failed");
       assert.equal((replay2[1] as any).code, "RESTART");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -676,7 +677,7 @@ describe("Production-readiness audit", () => {
       assert.equal(log!.state.isTerminal, true);
       assert.equal(log!.events.length, 3);
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 });

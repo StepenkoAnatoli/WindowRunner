@@ -27,6 +27,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -108,7 +109,7 @@ after(async () => {
   await app?.close().catch(() => {});
   app = undefined;
   page = undefined;
-  if (dataDir) await fsp.rm(dataDir, { recursive: true, force: true });
+  if (dataDir) await removeTempPath(dataDir);
 });
 
 describe("desktop shell smoke (unpacked Electron)", () => {

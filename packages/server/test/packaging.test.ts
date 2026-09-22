@@ -20,6 +20,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempPath, removeTempPathSync } from "../../../scripts/temp-path.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
@@ -238,7 +239,7 @@ describe("Packaging contract", () => {
         assert.match(result.stderr, /does-not-exist\.mjs/);
         assert.match(result.stderr, /no workspaces/);
       } finally {
-        await fsp.rm(tmp, { recursive: true, force: true });
+        await removeTempPath(tmp);
       }
     });
   });
@@ -409,7 +410,7 @@ describe("Packaging contract", () => {
           assert.equal(exitCode, 0);
         }
       } finally {
-        await fsp.rm(tmp, { recursive: true, force: true });
+        await removeTempPath(tmp);
       }
     });
   });
@@ -516,13 +517,13 @@ describe("Packaging contract", () => {
         fs.utimesSync(path.join(tmp, "packages/web/public/app.css"), oldTime, oldTime);
 
         // 5. Missing dashboard bundle -> rebuilds
-        await fsp.rm(path.join(tmp, "packages/web/dist/dashboard/dashboard.js"));
+        await removeTempPath(path.join(tmp, "packages/web/dist/dashboard/dashboard.js"));
         const resMissing = runHook();
         assert.equal(resMissing.status, 0);
         assert.match(resMissing.stdout, /build output missing: packages\/web\/dist\/dashboard\/dashboard\.js/);
         assert.match(resMissing.stdout, /mock-build-ran/);
       } finally {
-        await fsp.rm(tmp, { recursive: true, force: true });
+        await removeTempPath(tmp);
       }
     });
   });
@@ -548,7 +549,7 @@ describe("Packaging contract", () => {
 
       // 1. Build server when shared/dist is absent
       const sharedDist = path.join(repoRoot, "packages", "shared", "dist");
-      fs.rmSync(sharedDist, { recursive: true, force: true });
+      removeTempPathSync(sharedDist);
       assert.ok(!fs.existsSync(sharedDist), "packages/shared/dist should be deleted");
 
       const resServer = runWorkspaceBuild("packages/server");
@@ -560,7 +561,7 @@ describe("Packaging contract", () => {
       assert.ok(fs.existsSync(path.join(repoRoot, "packages", "server", "dist", "index.cjs")));
 
       // 2. Build web when shared/dist is absent
-      fs.rmSync(sharedDist, { recursive: true, force: true });
+      removeTempPathSync(sharedDist);
       assert.ok(!fs.existsSync(sharedDist), "packages/shared/dist should be deleted");
 
       const resWeb = runWorkspaceBuild("packages/web");

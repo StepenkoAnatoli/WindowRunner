@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { checkChangelog, collectVersionProblems, SEMVER_RE } from "../../../scripts/check-release.mjs";
 import { extractReleaseNotes } from "../../../scripts/release-notes.mjs";
 import { formatSums } from "../../../scripts/checksums.mjs";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -78,7 +79,7 @@ describe("release contract: versioning (B5.1)", () => {
       assert.equal(problems.length, 1);
       assert.match(problems[0]!, /packages\/two.*1\.2\.4.*1\.2\.3/);
     } finally {
-      await fsp.rm(tmp, { recursive: true, force: true });
+      await removeTempPath(tmp);
     }
   });
 
@@ -207,7 +208,7 @@ describe("release contract: artifact checksums (B5.4)", () => {
       );
       assert.ok(sums.endsWith("\n"), "the sidecar ends with a newline");
     } finally {
-      await fsp.rm(tmp, { recursive: true, force: true });
+      await removeTempPath(tmp);
     }
   });
 
@@ -221,7 +222,7 @@ describe("release contract: artifact checksums (B5.4)", () => {
       await fsp.writeFile(path.join(tmp, "y", "same.txt"), "two");
       await assert.rejects(async () => formatSums([path.join(tmp, "x", "same.txt"), path.join(tmp, "y", "same.txt")]), /duplicate basename/);
     } finally {
-      await fsp.rm(tmp, { recursive: true, force: true });
+      await removeTempPath(tmp);
     }
   });
 

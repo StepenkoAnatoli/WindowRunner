@@ -7,6 +7,7 @@ import { FileTurnLogStore } from "../src/agent/file-turn-log-store.js";
 import { FileSessionStore } from "../src/agent/file-session-store.js";
 import { TurnManager } from "../src/agent/turn-manager.js";
 import { createInitialTurnState, reduceTurnState } from "@windows-runner/shared";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function mkTmpDir(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "wr-integration-"));
@@ -63,7 +64,7 @@ describe("File persistence integration — restart recovery", () => {
     const meta = await sessionStore.load(sessionId);
     assert.equal(meta!.activeTurnId, null);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("idempotency of restart recovery — second boot does not append second RESTART", async () => {
@@ -90,7 +91,7 @@ describe("File persistence integration — restart recovery", () => {
     const log2 = manager3.getLog(turnId);
     assert.equal(log2!.events.length, 2); // still 2, not 3
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("flat-layout fallback migration without changing source files", async () => {
@@ -132,6 +133,6 @@ describe("File persistence integration — restart recovery", () => {
     const restart = JSON.parse(linesAfter[1]);
     assert.equal(restart.code, "RESTART");
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 });

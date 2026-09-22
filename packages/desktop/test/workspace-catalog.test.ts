@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 import {
   emptyWorkspaceCatalog,
   loadWorkspaceCatalogFile,
@@ -21,7 +22,7 @@ import {
 
 const tmps: string[] = [];
 after(async () => {
-  await Promise.all(tmps.map((t) => fsp.rm(t, { recursive: true, force: true })));
+  await Promise.all(tmps.map((t) => removeTempPath(t)));
 });
 
 async function tmpFile(): Promise<string> {

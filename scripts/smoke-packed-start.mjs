@@ -9,10 +9,11 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempPathSync } from "./temp-path.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const READY_RE = /^windows-runner listening on (http:\/\/\S+)$/m;
@@ -196,7 +197,7 @@ async function main() {
         } else process.kill(-child.pid, "SIGKILL");
       } catch {}
     }
-    rmSync(tmp, { recursive: true, force: true });
+    removeTempPathSync(tmp);
   }
 }
 

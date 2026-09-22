@@ -24,6 +24,7 @@ import { startServer, type StartedServer } from "../src/boot.js";
 import { loadServerConfig, type ServerConfig } from "../src/config.js";
 import { FakeProvider, Steps } from "./fakes/fake-provider.js";
 import type { ToolDefinition } from "../src/agent/tools/types.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const TOKEN = "unit-test-token-0123456789abcdef";
 
@@ -34,7 +35,7 @@ const tmpDirs: string[] = [];
 after(async () => {
   for (const s of servers) await new Promise<void>((r) => s.close(() => r()));
   for (const h of started) await h.close({ graceMs: 500 }).catch(() => {});
-  for (const d of tmpDirs) await fs.rm(d, { recursive: true, force: true });
+  for (const d of tmpDirs) await removeTempPath(d);
 });
 
 async function mkTmp(prefix = "wr-sec-"): Promise<string> {

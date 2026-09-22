@@ -22,6 +22,7 @@ import { ConfigError, type ServerConfig } from "../src/config.js";
 import { MockProvider } from "../src/providers/mock.js";
 import { AVAILABLE_PROVIDERS, createProvider, UnknownProviderError } from "../src/providers/index.js";
 import { FakeProvider, Steps } from "./fakes/fake-provider.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..");
@@ -81,7 +82,7 @@ after(async () => {
     } catch {}
   }
   for (const dir of tmpDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   }
 });
 

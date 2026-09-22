@@ -32,6 +32,7 @@ import * as zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { startServer, stopServer, waitForHealth, type DesktopServer } from "../src/server-process.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -71,7 +72,7 @@ before(async () => {
     const tarPath = path.join(os.tmpdir(), `wr-${pack}.tar`);
     await fsp.writeFile(tarPath, zlib.brotliDecompressSync(await fsp.readFile(archive)));
     spawnSync("tar", ["-xf", tarPath, "-C", os.tmpdir()], { stdio: "ignore" });
-    await fsp.rm(tarPath, { force: true });
+    await removeTempPath(tarPath);
   }
   // The al2023 pack's contents extract to `<tmp>/lib/*` (its tar paths are
   // `lib/…`), which is where the loader must look.
@@ -103,7 +104,7 @@ before(async () => {
 after(async () => {
   await browser?.close().catch(() => {});
   if (server) await stopServer(server);
-  if (dataDir) await fsp.rm(dataDir, { recursive: true, force: true });
+  if (dataDir) await removeTempPath(dataDir);
 });
 
 describe("desktop page smoke (real headless Chromium)", () => {

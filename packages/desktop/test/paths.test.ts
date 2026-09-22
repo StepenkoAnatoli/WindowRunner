@@ -12,10 +12,11 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DATA_DIR_ENV, ensureDesktopPaths, resolveDesktopPaths } from "../src/paths.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const tmps: string[] = [];
 after(async () => {
-  await Promise.all(tmps.map((t) => fsp.rm(t, { recursive: true, force: true })));
+  await Promise.all(tmps.map((t) => removeTempPath(t)));
 });
 
 async function tmp(): Promise<string> {
