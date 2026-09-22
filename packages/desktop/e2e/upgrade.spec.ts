@@ -15,8 +15,9 @@
  *
  *   phase "new" (WR_UPGRADE_PHASE=new): assert the installed app reports the
  *     new version, the marker project is still in the workspace catalog, the
- *     phase-A session still lists and still renders its completed turn, and a
- *     fresh turn completes; quit cleanly.
+ *     phase-A session is still listed and reattachable (its persisted turn
+ *     log survived on disk — the UI deliberately does not replay historical
+ *     turns), and a fresh turn completes; quit cleanly.
  *
  * The job's uninstall step (after this spec) asserts user data survives
  * uninstall — `deleteAppDataOnUninstall: false`.
@@ -148,12 +149,28 @@ test.describe(`upgrade journey (phase: ${phase})`, () => {
       // …and the sidebar renders it.
       await expect(page.locator(tid("project-item"), { hasText: markerDir })).toBeVisible();
 
-      // The phase-A session survived and still renders its completed turn.
+      // The phase-A session survived AND is reattachable: selecting it enters
+      // the session (create-or-reattach path; SESSION_ALREADY_EXISTS → the
+      // session store still knows it). The UI deliberately does not replay
+      // historical turns after reattach (documented B3 limitation: live
+      // conversation only), so turn survival is asserted at the persistence
+      // layer below — where the data actually lives.
       await page.click(`[data-testid="project-select-${marker!.id}"]`);
       await expect(page.locator(`[data-testid="session-select-${sessionId}"]`)).toBeVisible({ timeout: 20_000 });
       await page.click(`[data-testid="session-select-${sessionId}"]`);
-      await expect(page.locator(tid("turn")).first()).toHaveAttribute("data-status", "completed", { timeout: 20_000 });
-      await expect(page.locator(tid("turns"))).toContainText("upgrade journey phase a");
+      await expect(page.locator(tid("session-id"))).toContainText(sessionId, { timeout: 20_000 });
+
+      // Persistence-layer survival: the phase-A turn log (JSONL of stream
+      // events, including the user message) must still be on disk under the
+      // per-user data dir — an upgrade must never lose session data.
+      const turnsDir = path.join(dataDir, "sessions", sessionId, "turns");
+      const turnFiles = (await fsp.readdir(turnsDir)).filter((name) => name.endsWith(".jsonl"));
+      expect(turnFiles.length, `turn logs must survive the upgrade (${turnsDir})`).toBeGreaterThan(0);
+      const persisted = (
+        await Promise.all(turnFiles.map((name) => fsp.readFile(path.join(turnsDir, name), "utf8")))
+      ).join("\n");
+      expect(persisted).toContain("upgrade journey phase a");
+      expect(persisted).toContain("turn_completed");
 
       // A fresh turn completes on the upgraded app.
       await page.fill(tid("message-input"), "upgrade journey phase b");
