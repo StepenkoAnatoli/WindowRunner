@@ -26,6 +26,7 @@ import { MockProvider } from "../src/providers/mock.js";
 import { createProviderFromProfile } from "../src/providers/index.js";
 import { ProviderStore } from "../src/provider-profiles.js";
 import { ActiveProviderBox, ProviderService } from "../src/provider-service.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 import {
   DISCOVERY_TIMEOUT_MS,
   DISCOVERY_UNAVAILABLE_MESSAGE,
@@ -475,7 +476,7 @@ describe("POST /api/providers/discover-models (route)", () => {
 
   after(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    await fs.rm(dataDir, { recursive: true, force: true });
+    await removeTempPath(dataDir);
   });
 
   const req = async (body: unknown, token: string | "none" = "discovery-route-token-0123456789") => {

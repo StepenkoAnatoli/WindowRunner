@@ -33,6 +33,7 @@ import { UsageLog, type TurnUsageRecord } from "../src/usage-log.js";
 import { startServer, type StartedServer } from "../src/boot.js";
 import type { ServerConfig } from "../src/config.js";
 import { startFakeOpenAI } from "./fakes/fake-openai-server.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const TOKEN = "test-token-0123456789abcdef";
 const AUTH = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
@@ -149,7 +150,7 @@ describe("provider profile routes", () => {
 
   after(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    await fs.rm(dataDir, { recursive: true, force: true });
+    await removeTempPath(dataDir);
   });
 
   const req = async (method: string, path: string, body?: unknown, token: string | "none" = TOKEN) => {

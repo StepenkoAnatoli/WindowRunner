@@ -16,6 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultServerBundle, startServer, stopServer, waitForHealth, type DesktopServer } from "../src/server-process.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, "..");
@@ -38,7 +39,7 @@ before(async () => {
 
 after(async () => {
   await Promise.all(servers.map((s) => s.stop().catch(() => {})));
-  await Promise.all(tmps.map((t) => fsp.rm(t, { recursive: true, force: true })));
+  await Promise.all(tmps.map((t) => removeTempPath(t)));
 });
 
 async function tmpDir(prefix: string): Promise<string> {

@@ -25,6 +25,7 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, "..");
@@ -83,7 +84,7 @@ before(async () => {
 
 after(async () => {
   if (child && child.exitCode === null) child.kill("SIGKILL");
-  if (dataDir) await fsp.rm(dataDir, { recursive: true, force: true });
+  if (dataDir) await removeTempPath(dataDir);
 });
 
 describe("desktop main process flow (electron stub)", () => {

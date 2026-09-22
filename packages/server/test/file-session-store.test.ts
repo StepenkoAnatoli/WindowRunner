@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { FileSessionStore } from "../src/agent/file-session-store.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function mkTmpDir(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "wr-session-store-"));
@@ -30,7 +31,7 @@ describe("FileSessionStore", () => {
     assert.equal(loaded!.sessionId, "sess_1");
     assert.equal(loaded!.canonicalRoot, "/tmp");
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("root rejection after configuration changes", async () => {
@@ -65,7 +66,7 @@ describe("FileSessionStore", () => {
     const loaded = await store.load("sess_reject");
     assert.equal(loaded!.activeTurnId, null);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("restart recovery clears activeTurnId and never trusts persisted roots for authorization", async () => {
@@ -114,7 +115,7 @@ describe("FileSessionStore", () => {
     // Should skip both sessions because the persisted root is not in current allowedRoots, even though snapshot says it is
     assert.ok(diag2.sessionsSkipped >= 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("retention and eviction", async () => {
@@ -142,6 +143,6 @@ describe("FileSessionStore", () => {
     const list2 = await store.list();
     assert.equal(list2.length, 2);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 });

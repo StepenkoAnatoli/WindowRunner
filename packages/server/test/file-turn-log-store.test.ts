@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { FileTurnLogStore } from "../src/agent/file-turn-log-store.js";
 import type { StreamEvent } from "@windows-runner/shared";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 function makeEvent(seq: number, turnId: string, sessionId: string, type: any = "text_delta", extra: any = {}): StreamEvent {
   return {
@@ -40,7 +41,7 @@ describe("FileTurnLogStore", () => {
     assert.equal(events.length, 10);
     assert.deepEqual(events.map((e) => e.seq), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("durable vs async notification ordering — durable awaits before notify", async () => {
@@ -60,7 +61,7 @@ describe("FileTurnLogStore", () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].seq, 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("truncated final record ignored", async () => {
@@ -85,7 +86,7 @@ describe("FileTurnLogStore", () => {
     const diag = store.getDiagnostics();
     assert.ok(diag.truncatedLinesIgnored >= 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("malformed middle record skipped and warned", async () => {
@@ -114,7 +115,7 @@ describe("FileTurnLogStore", () => {
     const diag = store.getDiagnostics();
     assert.ok(diag.eventsSkipped >= 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("duplicate sequence keep first", async () => {
@@ -135,7 +136,7 @@ describe("FileTurnLogStore", () => {
     const diag = store.getDiagnostics();
     assert.ok(diag.duplicatesSkipped >= 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("out-of-order sequences sorted on read, diagnostic emitted, never rewrites file", async () => {
@@ -165,7 +166,7 @@ describe("FileTurnLogStore", () => {
     const diag = store.getDiagnostics();
     assert.ok(diag.outOfOrderDetected >= 1);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("gaps and identity mismatches", async () => {
@@ -193,7 +194,7 @@ describe("FileTurnLogStore", () => {
     assert.ok(diag.gapsDetected >= 1);
     assert.ok(diag.eventsSkipped >= 2);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("quarantine behavior >50% invalid — file moved to quarantine, cannot be loaded as active", async () => {
@@ -230,7 +231,7 @@ describe("FileTurnLogStore", () => {
     const list = await store.list();
     assert.ok(!list.includes(turnId));
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("crash during append — truncated last line ignored, file not corrupted", async () => {
@@ -258,7 +259,7 @@ describe("FileTurnLogStore", () => {
     // The file now has 1,2,truncated,3 — truncated ignored, so 1,2,3
     assert.equal(events2.length, 3);
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("legacy providerCallId fallback", async () => {
@@ -299,7 +300,7 @@ describe("FileTurnLogStore", () => {
     assert.equal(req.providerCallId, "apr_123"); // fallback to requestId
     assert.ok(req.createdAt); // fallback to at
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("retention and flat-layout migration", async () => {
@@ -329,7 +330,7 @@ describe("FileTurnLogStore", () => {
     const list2 = await store.list();
     assert.ok(!list2.includes(turnId));
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 
   it("concurrency boundary: serialized writes within one process, multi-process unsupported documented", async () => {
@@ -356,6 +357,6 @@ describe("FileTurnLogStore", () => {
       assert.ok(parsed.seq);
     }
 
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeTempPath(dir);
   });
 });

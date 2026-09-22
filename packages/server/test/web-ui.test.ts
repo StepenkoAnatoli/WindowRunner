@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { startServer, resolveWebDir, resolveDesktopDir, type StartedServer } from "../src/boot.js";
 import { isClientAppRoute } from "../src/app.js";
 import { loadServerConfig } from "../src/config.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 const TOKEN = "web-ui-test-token-0123456789abcdef";
 const started: StartedServer[] = [];
@@ -26,7 +27,7 @@ const tmps: string[] = [];
 
 after(async () => {
   await Promise.all(started.map((s) => s.close().catch(() => {})));
-  await Promise.all(tmps.map((t) => fs.rm(t, { recursive: true, force: true })));
+  await Promise.all(tmps.map((t) => removeTempPath(t)));
 });
 
 async function fakeWebDir(): Promise<string> {

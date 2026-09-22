@@ -4,13 +4,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { SessionManager } from "../src/agent/session-manager.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function makeTempRoot(): Promise<{ root: string; cleanup: () => Promise<void> }> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "wr-session-"));
   return {
     root: tmp,
     cleanup: async () => {
-      await fs.rm(tmp, { recursive: true, force: true });
+      await removeTempPath(tmp);
     },
   };
 }

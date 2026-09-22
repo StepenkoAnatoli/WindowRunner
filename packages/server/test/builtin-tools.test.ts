@@ -21,6 +21,7 @@ import { InMemoryTurnLogStore } from "../src/agent/turn-log-store.js";
 import { ApprovalRegistry } from "../src/agent/approval-registry.js";
 import { FakeProvider, Steps, type ProviderStep } from "./fakes/fake-provider.js";
 import type { ToolExecutionContext } from "../src/agent/tools/types.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 let base: string;
 let project: string;
@@ -44,7 +45,7 @@ before(async () => {
   root = await ProjectRoot.create(project, [base]);
 });
 after(async () => {
-  await fs.rm(base, { recursive: true, force: true });
+  await removeTempPath(base);
 });
 
 function ctx(signal = new AbortController().signal): ToolExecutionContext {

@@ -15,6 +15,7 @@ import { InMemoryTurnLogStore } from "../src/agent/turn-log-store.js";
 import { FakeProvider } from "./fakes/fake-provider.js";
 import { FakeClock } from "./fakes/fake-clock.js";
 import { createApp } from "../src/app.js";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 
 async function mkTmpDir(): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), "wr-metrics-"));
@@ -85,7 +86,7 @@ describe("Metrics/alerts — required adjustments", () => {
       const files2: string[] = await fs.readdir(path.join(dir, "sessions", "sess1")).catch(() => [] as string[]);
       assert.ok(!files2.includes("metrics.json"));
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -462,7 +463,7 @@ describe("Metrics/alerts — required adjustments", () => {
       // No per-turn counter label
       assert.ok(!("t_persist" in snap.counters));
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
   });
 
@@ -920,7 +921,7 @@ describe("Metrics/alerts — required adjustments", () => {
       assert.ok(health.alerts.some((a: any) => a.category === "quarantine"));
       app.close();
       await new Promise<void>((r) => server.close(() => r()));
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("skipped session increments metrics", async () => {
@@ -945,7 +946,7 @@ describe("Metrics/alerts — required adjustments", () => {
       assert.equal(snap.recent.counts.sessionsSkipped, 1);
       assert.equal(snap.recent.incidents[0].sessionId, "sess_skip");
 
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("persistenceFailures via ENOTDIR increments metrics and shows in health recent", async () => {
@@ -983,7 +984,7 @@ describe("Metrics/alerts — required adjustments", () => {
       assert.ok(health.alerts.some((a: any) => a.category === "persistenceFailure"));
       app.close();
       await new Promise<void>((r) => server.close(() => r()));
-      await fs.rm(dir, { recursive: true, force: true });
+      await removeTempPath(dir);
     });
 
     it("durations observed for turnCompletion and approvalWait", async () => {

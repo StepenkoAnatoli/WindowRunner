@@ -24,10 +24,11 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTempPathSync } from "./temp-path.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = path.join(repoRoot, "packages", "server", "dist", "index.cjs");
@@ -322,7 +323,7 @@ async function main() {
       handle.child.kill(IS_WINDOWS ? undefined : "SIGKILL");
       await handle.exited.catch(() => {});
     }
-    rmSync(tmp, { recursive: true, force: true });
+    removeTempPathSync(tmp);
   }
 }
 

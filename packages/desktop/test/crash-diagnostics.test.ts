@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { removeTempPath } from "../../../scripts/temp-path.mjs";
 import {
   CRASH_LOG_KEEP,
   MAX_DETAILS_LENGTH,
@@ -32,7 +33,7 @@ import {
 
 const tmps: string[] = [];
 after(async () => {
-  await Promise.all(tmps.map((t) => fsp.rm(t, { recursive: true, force: true })));
+  await Promise.all(tmps.map((t) => removeTempPath(t)));
 });
 
 async function tmp(): Promise<string> {
