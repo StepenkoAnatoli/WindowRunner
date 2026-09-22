@@ -543,6 +543,9 @@ jobs:
           for spec in desktop providers deep-routes; do
             test -f "packages/desktop/e2e/${spec}.spec.ts" || { echo "::error::B2 desktop contract: e2e/${spec}.spec.ts is missing"; exit 1; }
           done
+          # B5 addition: the upgrade journey spec must ship too (it runs in the
+          # installer job; here it self-skips without its env contract).
+          test -f "packages/desktop/e2e/upgrade.spec.ts" || { echo "::error::B5 desktop contract: e2e/upgrade.spec.ts is missing"; exit 1; }
           echo "B2 desktop contract inventory OK"
 
       - name: "Desktop e2e (user journey - boot -> mock turn -> clean shutdown)"
@@ -608,11 +611,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The A2 merge gate: build the NSIS installer, install it silently on a clean
-  # Windows runner, drive the INSTALLED app through the user journey (boot ->
-  # auto-auth -> mock turn -> clean shutdown), then uninstall silently and
-  # assert the app is gone. The installer exe is uploaded as a workflow
-  # artifact so a human can install exactly what CI proved.
+  # The A2 merge gate (extended by B5): build the NSIS installer, install it
+  # silently on a clean Windows runner, drive the INSTALLED app through the
+  # user journey (boot -> auto-auth -> mock turn -> clean shutdown), then
+  # verify the UPGRADE story: seed real user data with the current version,
+  # install a patch-bumped build over it, assert the version took and the data
+  # survived, and finally uninstall silently — asserting the app is gone AND
+  # user data outlives the uninstall (deleteAppDataOnUninstall: false). The
+  # installer exe is uploaded as a workflow artifact so a human can install
+  # exactly what CI proved.
   desktop-installer:
     name: Desktop installer (windows-latest)
     runs-on: windows-latest
@@ -689,6 +696,11 @@ jobs:
           Write-Host "ASSERT PASS: silent install verified — WindowRunner.exe present at $exe"
           Write-Host "::notice title=installer gate::ASSERT PASS: silent install verified — WindowRunner.exe present at $exe"
           "WR_ELECTRON_EXECUTABLE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # B5.6 upgrade journey anchors: the REAL per-user data location for
+          # the installed app, a marker project dir, and the current version.
+          "WR_APPDATA_DIR=$(Join-Path $env:APPDATA 'WindowRunner')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WR_UPGRADE_MARKER_DIR=$(Join-Path $env:RUNNER_TEMP 'wr-upgrade-marker')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WR_CURRENT_VERSION=$(node -p "require('./package.json').version")" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: "E2E against the installed app (boot -> auto-auth -> mock turn -> clean shutdown)"
         shell: bash
@@ -696,7 +708,67 @@ jobs:
         env:
           CI: "1"
 
-      - name: "Uninstall silently and assert the app is removed"
+      # B5.6 — in-place upgrade journey, phase A: seed real user data (a
+      # project in the workspace catalog, a session with a completed turn)
+      # with the CURRENT version, at the REAL per-user data location.
+      - name: "Upgrade phase A: seed user data with the current version"
+        shell: bash
+        run: npm run e2e --workspace packages/desktop -- upgrade.spec.ts
+        env:
+          CI: "1"
+          WR_UPGRADE_PHASE: old
+          WR_EXPECTED_APP_VERSION: ${{ env.WR_CURRENT_VERSION }}
+          WR_UPGRADE_DATA_DIR: ${{ env.WR_APPDATA_DIR }}
+          WR_UPGRADE_MARKER_DIR: ${{ env.WR_UPGRADE_MARKER_DIR }}
+
+      # Build the upgrade target: the same tree, a patch-bumped version
+      # (electron-builder -c.extraMetadata.version), into a separate output
+      # dir so the current-version artifacts above stay untouched.
+      - name: "Build the next-version installer (upgrade target)"
+        shell: bash
+        run: |
+          NEXT=$(node -p "const p=require('./package.json').version.split('.').map(Number); p[2]+=1; p.join('.')")
+          echo "upgrade target version: $NEXT"
+          echo "WR_NEXT_VERSION=$NEXT" >> "$GITHUB_ENV"
+          cd packages/desktop
+          npx electron-builder --win nsis --config electron-builder.yml -c.extraMetadata.version="$NEXT" -c.directories.output=release-next
+
+      - name: "Install the next version over the old one (in-place upgrade)"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Get-ChildItem packages\desktop\release-next\*-Setup-*.exe | Select-Object -First 1
+          if (!$setup) { throw "no upgrade installer produced in release-next" }
+          Write-Host "installing upgrade $($setup.FullName)"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -PassThru -Wait
+          Write-Host "upgrade installer exit code: $($p.ExitCode)"
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\WindowRunner\WindowRunner.exe"
+          for ($i = 0; $i -lt 60; $i++) {
+            if (Test-Path $exe) { break }
+            Start-Sleep -Seconds 1
+          }
+          if (!(Test-Path $exe)) { throw "upgraded executable not found at $exe" }
+          $productVersion = (Get-Item $exe).VersionInfo.ProductVersion
+          Write-Host "installed exe ProductVersion: $productVersion (expected $($env:WR_NEXT_VERSION))"
+          if ($productVersion -ne $env:WR_NEXT_VERSION) {
+            throw "in-place upgrade did not take: exe ProductVersion is $productVersion, expected $($env:WR_NEXT_VERSION)"
+          }
+          Write-Host "ASSERT PASS: in-place upgrade verified — exe now at $productVersion"
+          Write-Host "::notice title=installer gate::ASSERT PASS: in-place upgrade to $productVersion over the previous install"
+
+      # B5.6 — phase B: the upgraded app must still see the phase-A data and
+      # still work (fresh turn), proving upgrades preserve user data.
+      - name: "Upgrade phase B: user data survived the in-place upgrade"
+        shell: bash
+        run: npm run e2e --workspace packages/desktop -- upgrade.spec.ts
+        env:
+          CI: "1"
+          WR_UPGRADE_PHASE: new
+          WR_EXPECTED_APP_VERSION: ${{ env.WR_NEXT_VERSION }}
+          WR_UPGRADE_DATA_DIR: ${{ env.WR_APPDATA_DIR }}
+          WR_UPGRADE_MARKER_DIR: ${{ env.WR_UPGRADE_MARKER_DIR }}
+
+      - name: "Uninstall silently, assert the app is removed AND user data survives"
         shell: pwsh
         run: |
           # Same canonical product path as the install assertion.
@@ -713,6 +785,16 @@ jobs:
           if (Test-Path $exe) { throw "uninstall left $exe behind" }
           Write-Host "ASSERT PASS: silent uninstall verified — WindowRunner.exe removed from $dir"
           Write-Host "::notice title=installer gate::ASSERT PASS: silent uninstall verified — WindowRunner.exe removed from $dir"
+          # B5.6: the documented contract is deleteAppDataOnUninstall: false —
+          # user data must SURVIVE uninstall (docs/INSTALL.md). Assert it on
+          # the real per-user location, using the catalog the upgrade journey
+          # seeded (also proves the catalog was not silently wiped).
+          $catalog = Join-Path $env:APPDATA "WindowRunner\workspace-catalog.json"
+          if (!(Test-Path $catalog)) { throw "uninstall removed user data: $catalog is gone (deleteAppDataOnUninstall must stay false)" }
+          Write-Host "ASSERT PASS: user data survived uninstall — $catalog still present"
+          Write-Host "::notice title=installer gate::ASSERT PASS: user data survived uninstall"
+          # Runner hygiene: the seeded data has served its purpose.
+          Remove-Item -Recurse -Force (Join-Path $env:APPDATA "WindowRunner") -ErrorAction SilentlyContinue
 
       - name: Collect installer diagnostics
         if: failure()
@@ -721,8 +803,12 @@ jobs:
           {
             echo "== release dir =="
             ls -la packages/desktop/release 2>/dev/null || true
+            echo "== release-next dir (upgrade target) =="
+            ls -la packages/desktop/release-next 2>/dev/null || true
             echo "== install dir =="
             ls -la "$LOCALAPPDATA/Programs/WindowRunner" 2>/dev/null || true
+            echo "== app data dir =="
+            ls -la "$APPDATA/WindowRunner" 2>/dev/null || true
             echo "== app data server log =="
             tail -n 50 "$APPDATA/WindowRunner/logs/server.log" 2>/dev/null || echo "(none)"
           } > installer-diagnostics.txt

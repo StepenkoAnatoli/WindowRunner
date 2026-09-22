@@ -578,6 +578,9 @@ npm run package:desktop:win
 - **Silent install** (automation): `WindowRunner-Setup-<version>.exe /S`.
 - **Silent uninstall**:
   `%LOCALAPPDATA%\Programs\WindowRunner\Uninstall WindowRunner.exe /S`.
+- **Upgrade**: run the new version's installer — it installs straight over
+  the previous version (same location, no uninstall first). Sessions, the
+  workspace catalog, provider profiles and logs are untouched.
 - **User data** (sessions, provider profiles, logs) lives in
   `%APPDATA%\WindowRunner` and is intentionally kept across uninstall.
 

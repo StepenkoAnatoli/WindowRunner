@@ -141,6 +141,7 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       "e2e/desktop.spec.ts",
       "e2e/providers.spec.ts",
       "e2e/deep-routes.spec.ts",
+      "e2e/upgrade.spec.ts",
       "e2e/launch.ts",
     ]) {
       assert.ok(fs.existsSync(path.join(desktopRoot, rel)), `missing ${rel}`);

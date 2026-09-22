@@ -228,3 +228,47 @@ describe("release contract: artifact checksums (B5.4)", () => {
     assert.ok(/GitHub Releases of this\s+repository/.test(install), "INSTALL must name the official download sources");
   });
 });
+
+describe("release contract: upgrade/uninstall gate (B5.6)", () => {
+  const ci = read(".github/workflows/ci.yml");
+  const spec = read("packages/desktop/e2e/upgrade.spec.ts");
+
+  it("the upgrade journey ships as a spec that is inert without its CI contract", () => {
+    assert.ok(spec.includes("WR_UPGRADE_PHASE"), "the spec must be driven by WR_UPGRADE_PHASE");
+    assert.ok(
+      spec.includes('test.skip('),
+      "the spec must self-skip so the standard e2e runs (dev layout, installer journey) never trigger it accidentally"
+    );
+  });
+
+  it("CI verifies in-place upgrade with data preservation on every PR", () => {
+    // Phase A seeds real user data at the real per-user location.
+    assert.ok(ci.includes("WR_UPGRADE_PHASE: old"), "phase A must seed data with the current version");
+    assert.ok(ci.includes("WR_UPGRADE_DATA_DIR: ${{ env.WR_APPDATA_DIR }}"), "the journey must use the real per-user data dir");
+    // The upgrade target is the same tree with a bumped version.
+    assert.ok(
+      ci.includes('-c.extraMetadata.version="$NEXT"'),
+      "the next-version installer must be the same tree with a bumped version"
+    );
+    assert.ok(ci.includes("WR_UPGRADE_PHASE: new"), "phase B must verify the upgraded app");
+    // The installed exe must actually BE the new version.
+    assert.ok(ci.includes("VersionInfo.ProductVersion"), "the upgrade assertion must check the exe ProductVersion");
+  });
+
+  it("CI asserts uninstall removes the app AND keeps user data", () => {
+    assert.ok(ci.includes("uninstall removed user data"), "the uninstall step must fail if user data was removed");
+    assert.ok(
+      ci.includes("deleteAppDataOnUninstall must stay false"),
+      "the assertion must name the config contract it protects"
+    );
+    const yml = fs.readFileSync(path.join(desktopRoot, "electron-builder.yml"), "utf8").replace(/\r\n/g, "\n");
+    assert.match(yml, /deleteAppDataOnUninstall: false/, "the config must keep user data on uninstall");
+  });
+
+  it("the upgrade spec is pinned in the desktop contract inventory", () => {
+    assert.ok(
+      ci.includes('test -f "packages/desktop/e2e/upgrade.spec.ts"'),
+      "the inventory step must fail if the upgrade spec is deleted"
+    );
+  });
+});
