@@ -60,9 +60,12 @@ table.usage th { color: var(--muted); font-weight: 600; }
 .chat-out { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; min-height: 20px; }
 .chat-out .cursor { animation: blink 1s steps(2) infinite; color: var(--muted); }
 @keyframes blink { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-out .cursor { animation: none; }
+}
 
 /* Notices */
-.banner { position: sticky; bottom: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.banner { position: static; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
 
 /* ---- B2 compatibility: shared provider-component classes the dashboard now
    renders through provider-page.ts (kept visually stable) ---- */
