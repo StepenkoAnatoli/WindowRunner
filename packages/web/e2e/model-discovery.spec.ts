@@ -22,6 +22,13 @@ const tid = (id: string) => `[data-testid="${id}"]`;
 const RAW_KEY = "sk-discovery-e2e-0123456789abcdef";
 const RAW_KEY_MASK = "****cdef";
 const TOKEN_KEY = "windows-runner.token";
+// CI retries re-run a failed test against the SAME fixture server, so every
+// saved profile id must be unique per attempt.
+const RUN = Date.now().toString(36);
+const ID1 = `disc-${RUN}-1`;
+const ID2 = `disc-${RUN}-2`;
+const ID3 = `disc-${RUN}-3`;
+const IDERR = `disc-${RUN}-err`;
 const CATALOG_KEY = "windows-runner.workspace-catalog.v1";
 
 test.use({ baseURL: `http://127.0.0.1:${PROVIDERS_PORT}` });
@@ -132,12 +139,13 @@ async function expectNoRawKeyAnywhere(page: Page): Promise<void> {
 // -- The main journey --------------------------------------------------------
 test("discover once, choose, save masked, and keep the raw key off every boundary", async ({ page }) => {
   test.setTimeout(120_000);
+  upstreamHits.length = 0;
   await signIn(page);
   await expect(card(page, "default")).toBeVisible(); // env bootstrap profile is there and active
   const watched = watchDiscovery(page);
 
   // -- 1-3: open the form, type kind/base URL/key, click Fetch models.
-  await openAddForm(page, "disc-1", `${upstreamBase}/v1`);
+  await openAddForm(page, ID1, `${upstreamBase}/v1`);
   await page.click(tid("provider-discover-models"));
 
   // -- 4/5: exactly one discovery request, one upstream hit, sorted options.
@@ -159,7 +167,7 @@ test("discover once, choose, save masked, and keep the raw key off every boundar
   // -- 8/9: save; the card shows the mask only.
   await page.click(tid("provider-submit"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card(page, "disc-1").locator(tid("dash-card-key"))).toHaveText(`key: ${RAW_KEY_MASK}`);
+  await expect(card(page, ID1).locator(tid("dash-card-key"))).toHaveText(`key: ${RAW_KEY_MASK}`);
 
   // -- 10: the raw key is absent from every boundary after save.
   await expectNoRawKeyAnywhere(page);
@@ -167,7 +175,7 @@ test("discover once, choose, save masked, and keep the raw key off every boundar
 
   // -- 11/12: a hostile echo upstream fails into a secret-free error, and
   // manual entry still completes the journey.
-  await openAddForm(page, "disc-2", `${upstreamBase}/v1/echo`);
+  await openAddForm(page, ID2, `${upstreamBase}/v1/echo`);
   await page.click(tid("provider-discover-models"));
   await expect(page.locator(tid("provider-model-discovery-error"))).toBeVisible();
   const errorText = await page.locator(tid("provider-model-discovery-error")).innerText();
@@ -177,10 +185,10 @@ test("discover once, choose, save masked, and keep the raw key off every boundar
   await page.locator(tid("provider-model")).fill("typed-by-hand");
   await page.click(tid("provider-submit"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card(page, "disc-2").locator(tid("dash-card-model"))).toContainText("typed-by-hand");
+  await expect(card(page, ID2).locator(tid("dash-card-model"))).toContainText("typed-by-hand");
 
   // -- 15/16: changing the base URL clears the (now stale) results.
-  await openAddForm(page, "disc-3", `${upstreamBase}/v1`);
+  await openAddForm(page, ID3, `${upstreamBase}/v1`);
   await page.click(tid("provider-discover-models"));
   await expect(page.locator(tid("provider-model-select"))).toBeVisible();
   await page.locator(tid("provider-base-url")).fill(`${upstreamBase}/v1/empty`);
@@ -189,23 +197,25 @@ test("discover once, choose, save masked, and keep the raw key off every boundar
 
   // -- 17: nothing above activated a profile.
   expect(watched.activations).toBe(0);
-  await expect(page.locator(tid("providers-active"))).toContainText("default");
+  await expect(page.locator(tid("providers-active"))).toContainText("mock (env)");
+  await expect(page.locator(tid("providers-active"))).not.toContainText("Disc ");
 
   // -- 18: cancel discards the typed form (including the key) without saving.
   await page.once("dialog", (dialog) => void dialog.accept());
   await page.click(tid("provider-cancel"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card(page, "disc-3")).toHaveCount(0);
+  await expect(card(page, ID3)).toHaveCount(0);
   await expectNoRawKeyAnywhere(page);
 });
 
 test("empty, failing, redirecting, and anthropic discovery fall back to manual entry", async ({ page }) => {
   test.setTimeout(120_000);
+  upstreamHits.length = 0;
   await signIn(page);
   const watched = watchDiscovery(page);
 
   // -- 13/14: empty result → the exact guidance copy.
-  await openAddForm(page, "disc-empty", `${upstreamBase}/v1/empty`);
+  await openAddForm(page, `disc-${RUN}-empty`, `${upstreamBase}/v1/empty`);
   await page.click(tid("provider-discover-models"));
   await expect(page.locator(tid("provider-model-discovery-empty"))).toHaveText(
     "No models were returned. Enter the model id manually."
@@ -215,7 +225,7 @@ test("empty, failing, redirecting, and anthropic discovery fall back to manual e
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
 
   // An upstream 500 (its body carries the raw key!) → actionable, secret-free.
-  await openAddForm(page, "disc-err", `${upstreamBase}/v1/error`);
+  await openAddForm(page, IDERR, `${upstreamBase}/v1/error`);
   await page.click(tid("provider-discover-models"));
   await expect(page.locator(tid("provider-model-discovery-error"))).toContainText("HTTP 500");
   expect((await page.locator(tid("provider-model-discovery-error")).innerText())).not.toContain(RAW_KEY);
@@ -224,10 +234,10 @@ test("empty, failing, redirecting, and anthropic discovery fall back to manual e
   await page.locator(tid("provider-model")).fill("handpicked");
   await page.click(tid("provider-submit"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card(page, "disc-err")).toBeVisible();
+  await expect(card(page, IDERR)).toBeVisible();
 
   // A redirect is refused, not followed.
-  await openAddForm(page, "disc-redir", `${upstreamBase}/v1/redirect`);
+  await openAddForm(page, `disc-${RUN}-redir`, `${upstreamBase}/v1/redirect`);
   await page.click(tid("provider-discover-models"));
   await expect(page.locator(tid("provider-model-discovery-error"))).toContainText("redirect");
   await page.once("dialog", (dialog) => void dialog.accept());
@@ -247,6 +257,6 @@ test("empty, failing, redirecting, and anthropic discovery fall back to manual e
 
   // -- 17 (again): still no activation, and the active banner is untouched.
   expect(watched.activations).toBe(0);
-  await expect(page.locator(tid("providers-active"))).toContainText("default");
+  await expect(page.locator(tid("providers-active"))).toContainText("mock (env)");
   await expectNoRawKeyAnywhere(page);
 });
