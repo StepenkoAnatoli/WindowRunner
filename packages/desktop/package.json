@@ -16,14 +16,15 @@
     "smoke:page": "tsx --test test/page-smoke.ts",
     "smoke:electron": "tsx --test test/electron-smoke.ts",
     "e2e": "playwright test",
-    "package:win": "electron-builder --win nsis --config electron-builder.yml"
+    "package:win": "electron-builder --win nsis --config electron-builder.yml",
+    "package:win:release": "electron-builder --win nsis --config electron-builder.yml -c.forceCodeSigning=true"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@sparticuz/chromium": "^138.0.2",
     "@types/node": "^26.6.2",
     "electron": "44.4.3",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "26.15.3",
     "esbuild": "^0.28.2",
     "playwright-core": "^1.63.0",
     "tsx": "^4.19.1",

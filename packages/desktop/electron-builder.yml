@@ -52,6 +52,31 @@ npmRebuild: false
 win:
   target:
     - nsis
+  # B5.3 — Authenticode code signing. Signing is credential-driven, not
+  # config-driven: with `win.sign` unset, electron-builder signs every
+  # executable it produces (app exe, uninstaller, NSIS installer) when
+  # WIN_CSC_LINK (or CSC_LINK) + WIN_CSC_KEY_PASSWORD are present — WIN_CSC_LINK
+  # accepts a .pfx/.p12 file path, an https:// URL, or base64 content, which is
+  # the shape the release workflow passes from repo secrets — and silently
+  # SKIPS signing when they are absent, so local and PR builds stay green
+  # unsigned. `npm run package:desktop:win:release` additionally sets
+  # forceCodeSigning, which fails a build that could not sign instead of
+  # shipping silently unsigned. The CI "Desktop signing" job proves the whole
+  # pipeline on every PR with a self-signed test certificate.
+  signtoolOptions:
+    # SHA-256 only. The electron-builder default is ['sha1', 'sha256'] (a
+    # legacy SHA-1 signature plus a nested SHA-256 one); no supported Windows
+    # needs the SHA-1 leg, so we drop it.
+    signingHashAlgorithms:
+      - sha256
+    # rfc3161TimeStampServer keeps its electron-builder default
+    # (http://timestamp.digicert.com): signatures are counter-signed at build
+    # time so they stay verifiable after the certificate expires. The CI
+    # signing-proof job disables it (ELECTRON_BUILDER_OFFLINE=true) because its
+    # throwaway test certificate needs no timestamp and no external service.
+    # v27 note: when electron-builder is upgraded past v26, `signtoolOptions`
+    # moves under the unified `win.sign` key — `npx electron-builder
+    # migrate-schema` rewrites this automatically.
 
 nsis:
   oneClick: true
@@ -66,6 +91,9 @@ nsis:
   runAfterFinish: false
   artifactName: "WindowRunner-Setup-${version}.${ext}"
 
-# No icon and no code signing yet: default Electron icon, unsigned installer
-# (SmartScreen warns on first run). Branding and signing are separate
-# milestones.
+# No icon yet: default Electron icon (branding is a separate milestone). Code
+# signing is configured above: env-driven (WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD),
+# proven in CI with a test certificate, and enforced for release builds via
+# forceCodeSigning. Until a production certificate is provided as a repo
+# secret, official installers are unsigned and SmartScreen warns — see
+# docs/INSTALL.md → "Code signing and SmartScreen".

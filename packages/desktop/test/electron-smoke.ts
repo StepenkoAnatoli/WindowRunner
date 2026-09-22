@@ -171,6 +171,62 @@ describe("desktop shell smoke (unpacked Electron)", () => {
     assert.equal(originRes.status, 403);
   });
 
+  it("writes a redacted crash log for a main-process unhandled rejection and keeps running (B5.5)", async () => {
+    // The app resolves its data dir from app.getPath("userData") — Electron's
+    // REAL per-user location (e.g. ~/.config/WindowRunner), not this suite's
+    // WINDOWS_RUNNER_DESKTOP_DATA_DIR temp dir (that override only affects the
+    // electron-stub flow and paths.defaultAppDataDir). Ask the app itself,
+    // the same way desktop.spec.ts locates the workspace catalog.
+    const userDataDir = await app!.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+    const logsDir = path.join(userDataDir, "logs");
+    assert.ok(fs.existsSync(path.join(logsDir, "README.txt")), `logs README must exist at ${logsDir}`);
+
+    type Bridge = { getBootstrap(): { token: string } };
+    const token = await page!.evaluate(() => {
+      const g = globalThis as unknown as { windowRunnerDesktop: Bridge };
+      return g.windowRunnerDesktop.getBootstrap().token;
+    });
+
+    // Snapshot the crash logs that exist before the probe. A clean boot
+    // usually has none, but on CI virtual displays the GPU child process can
+    // legitimately die at any moment — and recording that is exactly what
+    // child-process-gone diagnostics are for. The probe below therefore looks
+    // for a NEW record, not an empty directory.
+    const before = new Set(fs.readdirSync(logsDir).filter((n) => n.startsWith("crash-") && n.endsWith(".log")));
+
+    // Fire a real unhandled rejection in the MAIN process: the promise is
+    // never awaited by anyone, so Node raises unhandledRejection there.
+    const marker = "electron-smoke-synthetic-rejection-7f3a";
+    await app!.evaluate((_electronMain, mark: string) => {
+      setTimeout(() => {
+        Promise.reject(new Error(mark));
+      }, 0);
+      return "scheduled";
+    }, marker);
+
+    // The handler writes synchronously, but the rejection itself is async.
+    let recorded = "";
+    for (let i = 0; i < 100 && recorded === ""; i += 1) {
+      const files = fs.readdirSync(logsDir).filter((n) => n.startsWith("crash-") && n.endsWith(".log") && !before.has(n));
+      for (const name of files) {
+        const content = fs.readFileSync(path.join(logsDir, name), "utf8");
+        if (content.includes(marker)) {
+          recorded = content;
+          break;
+        }
+      }
+      if (recorded === "") await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(recorded !== "", `an unhandled rejection must produce a crash log in ${logsDir} naming the error`);
+    assert.match(recorded, /kind: unhandledRejection/);
+    assert.ok(!recorded.includes(token), "the crash log must not contain the bearer token");
+
+    // The shell survives the rejection (documented behavior: keep running).
+    const alive = await app!.evaluate(() => process.versions.node !== undefined);
+    assert.ok(alive, "the app must stay alive after an unhandled rejection");
+    assert.equal(fs.readdirSync(logsDir).filter((n) => n.endsWith(".tmp")).length, 0, "no tmp files left behind");
+  });
+
   it("stops the backend when the app quits (clean shutdown)", async () => {
     const origin = new URL(page!.url()).origin;
     const exited = new Promise<void>((resolve) => app!.on("close", () => resolve()));

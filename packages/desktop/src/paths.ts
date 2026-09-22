@@ -20,8 +20,14 @@ export interface DesktopPaths {
   appDataDir: string;
   /** Persistence directory handed to the bundled server as WINDOWS_RUNNER_DATA_DIR. */
   serverDataDir: string;
-  /** Directory for redacted server logs (`logs/server.log`). */
+  /** Directory for redacted server logs (`logs/server.log`) and crash logs (B5.5). */
   logsDir: string;
+  /**
+   * Directory for Crashpad minidumps (B5.5). `app.setPath("crashDumps", …)`
+   * points here; dumps stay local and are never uploaded. Retention-pruned on
+   * boot.
+   */
+  crashesDir: string;
   /**
    * Fixed B1 workspace-catalog file (`workspace-catalog.json` directly under
    * the app data root). Navigation metadata only — no tokens or transcripts.
@@ -73,6 +79,7 @@ export function resolveDesktopPaths(options: ResolveDesktopPathsOptions = {}): D
     // auth-token and sessions/ directly under the app data root.
     serverDataDir: appDataDir,
     logsDir: path.join(appDataDir, "logs"),
+    crashesDir: path.join(appDataDir, "crashes"),
     workspaceCatalogFile: path.join(appDataDir, "workspace-catalog.json"),
     userProjectsDir: undefined,
   };

@@ -51,6 +51,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/server && npm run build --workspace packages/web",
+    "check:release": "node scripts/check-release.mjs",
     "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
     "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
     "build:desktop": "npm run build --workspace packages/desktop",
@@ -59,6 +60,7 @@
     "smoke:desktop": "npm run smoke:page --workspace packages/desktop && npm run smoke:electron --workspace packages/desktop",
     "e2e:desktop": "npm run e2e --workspace packages/desktop",
     "package:desktop:win": "npm run package:win --workspace packages/desktop",
+    "package:desktop:win:release": "npm run package:win:release --workspace packages/desktop",
     "setup": "node scripts/setup.mjs",
     "prestart": "node scripts/ensure-built.mjs",
     "start": "node packages/server/dist/index.cjs",

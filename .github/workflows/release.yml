@@ -1,0 +1,283 @@
+# Release workflow (B5.7) — tag-driven artifact publication.
+#
+# Pushing a tag `vX.Y.Z` builds everything a release needs, proves it, and
+# creates a DRAFT GitHub Release a human then reviews and publishes:
+#
+#   guard      — the tag must match package.json AND the changelog section
+#                (check-release --require-version), plus the unit suite
+#   cli        — the npm tarball, proven by the packed-artifact smokes
+#   installer  — the NSIS installer, signed with the production certificate
+#                when WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD secrets exist
+#                (forceCodeSigning refuses to ship silently unsigned),
+#                otherwise built unsigned and the draft carries a warning;
+#                installed silently, driven through the desktop e2e journey,
+#                uninstalled
+#   release    — draft release with the installer, tarball, update metadata,
+#                SHA256SUMS.txt and the changelog-derived notes
+#
+# Draft, never publish: publishing is a human action. Until the signing
+# secrets exist the draft is explicitly marked unsigned (SmartScreen will
+# warn on the installer — see docs/INSTALL.md → "Code signing and SmartScreen").
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Guard (tag matches the tree)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      # Binds the tag to the tree: the tagged version must equal the
+      # package.json version and must have a changelog section.
+      - name: Release consistency gate (tag-bound)
+        run: npm run check:release -- --require-version "${GITHUB_REF_NAME}"
+
+      - name: Unit tests
+        run: npm test
+
+  cli:
+    name: CLI tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [guard]
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The tarball must be what the manifest claims, and must boot from a
+      # clean directory outside the repository, before it is shipped.
+      - name: Packed-artifact smoke test
+        run: npm run smoke:packed
+
+      - name: Packed-tarball start smoke test
+        run: npm run smoke:packed:start
+
+      - name: Pack the release tarball
+        run: |
+          npm pack
+          mkdir -p release-cli
+          mv windows-runner-*.tgz release-cli/
+
+      - name: Upload the CLI tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-cli
+          path: release-cli/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  installer:
+    name: Installer (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    needs: [guard]
+    outputs:
+      signed: ${{ steps.signing.outputs.mode == 'signed' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Build the desktop shell
+        run: npm run build:desktop
+
+      # Production signing is credential-driven (same as CI's signing-proof
+      # job, but with the real certificate): when the secrets exist the build
+      # runs with forceCodeSigning and cannot ship unsigned; when they do not,
+      # the build is unsigned and the draft release carries an explicit
+      # warning. One config, no code changes — adding the secrets flips it.
+      # The secret itself is never interpolated into shell code — only the
+      # yes/no decision crosses the step boundary (HAS_CERT env).
+      - name: Decide the signing mode
+        id: signing
+        shell: bash
+        env:
+          HAS_CERT: ${{ secrets.WIN_CSC_LINK != '' && 'yes' || 'no' }}
+        run: |
+          if [ "$HAS_CERT" = "yes" ]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::warning title=unsigned release build::WIN_CSC_LINK is not configured — the installer will be built UNSIGNED and the draft release will say so."
+          fi
+
+      - name: Build the installer (signed, forceCodeSigning)
+        if: steps.signing.outputs.mode == 'signed'
+        shell: bash
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npm run package:desktop:win:release
+
+      - name: Build the installer (unsigned — no certificate secret configured)
+        if: steps.signing.outputs.mode != 'signed'
+        shell: bash
+        run: npm run package:desktop:win
+
+      # Same install → journey → uninstall gate as the per-PR installer job
+      # (minus the upgrade phases, which need two versions): the release
+      # artifact is exercised, not just produced.
+      - name: "Install silently (per-user, no UAC) and assert the app is present"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Get-ChildItem packages\desktop\release\*-Setup-*.exe | Select-Object -First 1
+          if (!$setup) { throw "no installer produced" }
+          Write-Host "installing $($setup.FullName)"
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -PassThru -Wait
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\WindowRunner\WindowRunner.exe"
+          for ($i = 0; $i -lt 60; $i++) {
+            if (Test-Path $exe) { break }
+            Start-Sleep -Seconds 1
+          }
+          if (!(Test-Path $exe)) { throw "installed executable not found at $exe (installer exit $($p.ExitCode))" }
+          Write-Host "ASSERT PASS: silent install verified — WindowRunner.exe present at $exe"
+          "WR_ELECTRON_EXECUTABLE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: "E2E against the installed app (boot -> auto-auth -> mock turn -> clean shutdown)"
+        shell: bash
+        run: npm run e2e --workspace packages/desktop
+        env:
+          CI: "1"
+
+      - name: "Uninstall silently and assert the app is removed"
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\WindowRunner\WindowRunner.exe"
+          $dir = Split-Path $exe
+          $un = Get-ChildItem $dir -Filter "Uninstall*.exe" | Select-Object -First 1
+          if (!$un) { throw "uninstaller not found in $dir" }
+          Start-Process -FilePath $un.FullName -ArgumentList "/S" -Wait
+          for ($i = 0; $i -lt 60; $i++) {
+            if (!(Test-Path $exe)) { break }
+            Start-Sleep -Seconds 1
+          }
+          if (Test-Path $exe) { throw "uninstall left $exe behind" }
+          Write-Host "ASSERT PASS: silent uninstall verified"
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-installer
+          path: packages/desktop/release/*-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      # Update metadata for the future auto-updater (nothing consumes it yet).
+      # electron-builder emits latest.yml/blockmap only when a publish
+      # provider is configured, which this repo does not have yet — so this
+      # upload is optional and simply skips when there is nothing to attach.
+      - name: Upload the update metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-installer-metadata
+          path: |
+            packages/desktop/release/latest.yml
+            packages/desktop/release/*.exe.blockmap
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: Draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [guard, cli, installer]
+    permissions:
+      # Only this job can write, and only what a draft release needs.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-files
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd release-files
+          node ../scripts/checksums.mjs --out . *
+          echo "SHA256SUMS.txt:"
+          cat SHA256SUMS.txt
+
+      - name: Extract the release notes from the changelog
+        run: |
+          node scripts/release-notes.mjs "${GITHUB_REF_NAME}" --out notes.md
+          # An unsigned build is a fact the publisher must see in the draft.
+          if [ "${{ needs.installer.outputs.signed }}" != "true" ]; then
+            printf '\n---\n\n**Warning: this build is UNSIGNED** — the WIN_CSC_LINK repository secret is not configured, so the installer carries no Authenticode signature and Windows SmartScreen will warn on first run (docs/INSTALL.md -> "Code signing and SmartScreen"). Verify the SHA256SUMS.txt sidecar before installing, or build from source.\n' >> notes.md
+          fi
+          # The checksums travel in the body as well as the sidecar file.
+          printf '\n---\n\n### SHA-256 checksums\n\n```\n' >> notes.md
+          cat release-files/SHA256SUMS.txt >> notes.md
+          printf '```\n' >> notes.md
+
+      # Draft: publishing is a deliberate human action.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --title "WindowRunner ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            release-files/*
+          echo "::notice title=release::Draft release ${GITHUB_REF_NAME} created with all artifacts — review and publish."

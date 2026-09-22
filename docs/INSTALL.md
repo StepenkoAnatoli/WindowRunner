@@ -1,7 +1,8 @@
 # Installation
 
 Status of every install path this repository advertises, verified against the
-current `main`.
+current `main`. Notable changes between versions are in
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 **Verification environment:** Node `v22.22.3`, npm `10.9.8`, git `2.39.5`,
 Linux x86_64, 2026-09-20. Every row below was produced by running the command
@@ -11,10 +12,12 @@ on `windows-latest` and `macos-latest`. See
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md) → "CI enforcement status" for
 which platform checks exist and which do not.
 
-**PR checks (all eight required green before merge):** `CI`, `Browser E2E`,
+**PR checks (all nine required green before merge):** `CI`, `Browser E2E`,
 `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop
 (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
-(windows-latest)` — named in `.github/workflows/ci.yml`, whose two B2
+(windows-latest)` (which also verifies in-place upgrade and uninstall data
+survival), and `Desktop signing (windows-latest)` — named in
+`.github/workflows/ci.yml`, whose two B2
 inventory steps fail the run if the browser or desktop E2E specs are deleted,
 renamed, or stop being discovered. Per-phase B2 evidence (run ids and commit
 index) lives in
@@ -575,18 +578,95 @@ npm run package:desktop:win
 - **Silent install** (automation): `WindowRunner-Setup-<version>.exe /S`.
 - **Silent uninstall**:
   `%LOCALAPPDATA%\Programs\WindowRunner\Uninstall WindowRunner.exe /S`.
+- **Upgrade**: run the new version's installer — it installs straight over
+  the previous version (same location, no uninstall first). Sessions, the
+  workspace catalog, provider profiles and logs are untouched.
 - **User data** (sessions, provider profiles, logs) lives in
   `%APPDATA%\WindowRunner` and is intentionally kept across uninstall.
 
 CI enforces the whole story on every push: the `Desktop installer
 (windows-latest)` job builds the NSIS installer, installs silently, drives the
-installed app through boot → auto-auth → mock turn → clean shutdown, then
-uninstalls and asserts removal. The installer exe is uploaded as a workflow
-artifact (`windowrunner-installer`).
+installed app through boot → auto-auth → mock turn → clean shutdown, verifies
+an in-place upgrade to a newer build keeps your data (B5.6), then uninstalls
+and asserts removal while user data survives. The installer exe and a
+`SHA256SUMS.txt` sidecar are uploaded as a workflow artifact
+(`windowrunner-installer`; electron-builder update metadata joins it when
+present — it is emitted only once a publish provider is configured).
 
-**Known gaps:** the installer is not code-signed (SmartScreen warns on first
-run: "More info → Run anyway") and uses the default Electron icon. Signing and
-branding are separate milestones.
+### Code signing and SmartScreen
+
+**Current status: the signing pipeline is proven, but official installers are
+not yet signed — SmartScreen will warn until a production certificate is
+provided.**
+
+- The build signs automatically when `WIN_CSC_LINK` (a `.pfx`/`.p12` file
+  path, an https URL, or base64 content) and `WIN_CSC_KEY_PASSWORD` are set;
+  without them it builds unsigned (documented in
+  `packages/desktop/electron-builder.yml`). SHA-256 only.
+- The `Desktop signing (windows-latest)` CI job proves the full pipeline on
+  every push: it signs a build with a self-signed test certificate and asserts
+  the app executable and the installer carry an Authenticode signature. This
+  proves cert injection → signtool → signed artifacts; it does **not** create
+  trust — a self-signed chain is untrusted on every machine by design.
+- Release builds use `npm run package:desktop:win:release`, which sets
+  `forceCodeSigning`: a release build that cannot sign **fails** instead of
+  shipping silently unsigned.
+- To ship signed installers, a maintainer adds the repository secrets
+  `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (OV or EV code-signing certificate).
+  Nothing else changes — the release workflow picks them up automatically.
+  With an OV certificate, SmartScreen reputation builds over downloads of the
+  signed artifacts; an EV certificate earns immediate reputation. Until then,
+  Windows SmartScreen shows "Windows protected your PC" on first run — click
+  **More info → Run anyway** if you trust the source, or build from source.
+
+### Verifying a download
+
+Official artifacts come from exactly two places: **GitHub Releases of this
+repository** and the **npm registry tarball** (`windows-runner`). Anything
+else (mirrors, "free download" sites) is not ours. Every release and every
+CI `windowrunner-installer` artifact carries a `SHA256SUMS.txt` sidecar:
+
+```powershell
+# Windows PowerShell
+Get-FileHash .\WindowRunner-Setup-<version>.exe -Algorithm SHA256
+# or: certutil -hashfile .\WindowRunner-Setup-<version>.exe SHA256
+```
+
+```bash
+# Linux / macOS / Git Bash
+sha256sum -c SHA256SUMS.txt   # from the directory holding the artifacts
+```
+
+Compare against the value published with the release. A checksum verifies
+integrity (your download matches what we built), not publisher identity —
+publisher identity is what the code signature above provides once a
+certificate is in place.
+
+### Crash reports and logs
+
+The desktop shell keeps its diagnostics in the per-user data directory
+(`%APPDATA%\WindowRunner` on Windows):
+
+- `logs/server.log` — the bundled server's combined output with the auth
+  token redacted.
+- `logs/crash-*.log` — small, redacted, bounded records the shell writes when
+  something fails: an uncaught exception, an unhandled promise rejection, the
+  window renderer dying, or the backend exiting unexpectedly. A fatal error
+  dialog names the file it wrote. An unhandled rejection is recorded but does
+  **not** kill the app; a renderer crash reloads the window once and fails
+  loudly only if it keeps crashing.
+- `logs/README.txt` — the note above, shipped next to the files.
+- `crashes/*.dmp` — Crashpad minidumps (native memory snapshots) written when
+  a process dies hard. **These can contain process memory** — treat them as
+  sensitive.
+
+Nothing here is ever uploaded — crash reporting is strictly local (no
+`submitURL`, `uploadToServer: false`). Crash logs are scrubbed of the bearer
+token and truncated; old crash logs (beyond 20) and minidumps (beyond 10) are
+pruned on every boot. You can delete any of these files at any time.
+
+**Known gaps:** no production code-signing certificate yet (see above), and
+the app uses the default Electron icon. Branding is a separate milestone.
 
 ### UI limitations (B3)
 

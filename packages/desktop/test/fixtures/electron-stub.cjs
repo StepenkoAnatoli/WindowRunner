@@ -26,17 +26,24 @@ const trace = (event, data = {}) => {
 
 let quitHandlers = [];
 let windowCount = 0;
+const setPaths = new Map();
 
 const app = {
   isPackaged: false,
   getVersion: () => "0.0.0-stub",
   getPath: (name) => {
     if (name === "userData") return process.env.WINDOWS_RUNNER_DESKTOP_DATA_DIR || "/tmp/wr-stub-userdata";
+    if (setPaths.has(name)) return setPaths.get(name);
     return "/tmp";
+  },
+  setPath: (name, value) => {
+    setPaths.set(name, value);
+    trace("set-path", { name, value });
   },
   whenReady: () => Promise.resolve(),
   on: (event, handler) => {
     if (event === "before-quit") quitHandlers.push(handler);
+    trace("app-on", { name: event });
   },
   quit: () => {
     const event = { defaultPrevented: false, preventDefault: () => (event.defaultPrevented = true) };
@@ -50,6 +57,10 @@ const app = {
     trace("exit", { code });
     process.exit(code || 0);
   },
+};
+
+const crashReporter = {
+  start: (options) => trace("crash-reporter-start", options),
 };
 
 class WebContents {
@@ -106,7 +117,7 @@ const session = {
 
 const shell = { openPath: async () => "" };
 
-const electronStub = { app, BrowserWindow, ipcMain, dialog, session, shell };
+const electronStub = { app, BrowserWindow, crashReporter, ipcMain, dialog, session, shell };
 
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
