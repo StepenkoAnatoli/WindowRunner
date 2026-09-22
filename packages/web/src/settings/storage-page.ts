@@ -59,8 +59,8 @@ export function renderStoragePage(props: StoragePageProps): HTMLElement {
         "dd",
         {},
         props.desktopAvailable
-          ? "Held in the desktop app's memory only; nothing is written to disk, the URL, or web storage."
-          : "Held in this tab's sessionStorage only; it dies with the tab and is never written to localStorage."
+          ? "Held in the desktop app's memory only, including after a refresh of Workspace, Providers, Usage, or Settings; nothing is written to disk, the URL, or web storage."
+          : "Held in this tab's sessionStorage only; a refresh reuses it and it is never written to the URL or localStorage. It dies with the tab."
       )
     ),
     el("h3", {}, "Reset navigation metadata"),
