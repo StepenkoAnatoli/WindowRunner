@@ -34,6 +34,7 @@ const EDIT_FORM: ProviderFormState = {
   model: "model-x",
   apiKey: "",
   apiKeyMode: "unchanged",
+  modelDiscovery: { status: "idle" },
   validationErrors: {},
   submitting: false,
 };

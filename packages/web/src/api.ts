@@ -112,6 +112,19 @@ export interface ProviderTestResult {
   message?: string;
 }
 
+/** Input for one-shot model discovery (POST /api/providers/discover-models). */
+export interface DiscoverModelsInput {
+  kind: string;
+  baseUrl?: string;
+  /** Transient: rides only in this request body, never stored anywhere. */
+  apiKey?: string;
+}
+
+/** The server's normalized, deduplicated, deterministically sorted model ids. */
+export interface ModelDiscoveryResult {
+  models: string[];
+}
+
 export interface TurnUsageView {
   at: number;
   providerId: string;
@@ -290,6 +303,16 @@ export class ApiClient {
 
   async testProfile(id: string): Promise<ProviderTestResult> {
     return (await this.request<ProviderTestResult>("POST", `/api/providers/${encodeURIComponent(id)}/test`)).body;
+  }
+
+  /**
+   * One-shot model discovery. The freshly typed key rides ONLY in this
+   * request body to THIS server (which forwards it once as the upstream
+   * probe's Authorization header); it is never persisted anywhere by the
+   * client. Errors map to ApiRequestError with the server's DISCOVERY_* code.
+   */
+  async discoverModels(input: DiscoverModelsInput): Promise<ModelDiscoveryResult> {
+    return (await this.request<ModelDiscoveryResult>("POST", "/api/providers/discover-models", input)).body;
   }
 
   /**
@@ -502,3 +525,4 @@ export function clearToken(): void {
     window.sessionStorage.removeItem(TOKEN_KEY);
   } catch {}
 }
+

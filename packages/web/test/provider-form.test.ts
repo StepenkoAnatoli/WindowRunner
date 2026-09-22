@@ -22,6 +22,7 @@ describe("provider form", () => {
       model: "",
       apiKey: "",
       apiKeyMode: "empty",
+      modelDiscovery: { status: "idle" },
       validationErrors: {},
       submitting: false,
       ...overrides,
