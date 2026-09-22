@@ -11,6 +11,7 @@ import { createSecurityPolicy, type SecurityPolicy, type SecurityOptions } from 
 import { ProjectTrustRegistry, isValidConfigHash } from "./agent/project-trust.js";
 import { ProfileError, type ActiveProviderBox } from "./provider-service.js";
 import type { ProviderService } from "./provider-service.js";
+import { discoverModels, DiscoveryError, redactKey } from "./provider-discovery.js";
 import type { TurnUsageRecord } from "./usage-log.js";
 
 /**
@@ -916,6 +917,29 @@ export function createApp(deps: AppDeps) {
       }
       return id;
     };
+
+    // POST /api/providers/discover-models — one-shot model discovery (B4.1).
+    // Static path, deliberately registered BEFORE the parameterized /:id
+    // routes so it can never be captured by one. The body carries kind, base
+    // URL, and the freshly typed raw key; the key exists only in this
+    // request's memory and the Authorization header of the single upstream
+    // probe — it is never persisted, never logged, and never part of any
+    // response or error (redactKey is a second layer on top of messages that
+    // are already secret-free by construction). Discovery never creates,
+    // updates, activates, or tests a profile.
+    app.post("/api/providers/discover-models", async (req: any, res: any) => {
+      const body = bodyObject(req, res);
+      if (!body) return;
+      try {
+        res.json(await discoverModels(body));
+      } catch (err) {
+        if (err instanceof DiscoveryError) {
+          const message = redactKey(err.message, typeof body.apiKey === "string" ? body.apiKey : undefined);
+          return res.status(err.status).json({ error: message, code: err.code });
+        }
+        sendProfileError(res, err);
+      }
+    });
 
     // GET /api/providers — list profiles (keys masked) + which is active + last health check
     app.get("/api/providers", (_req: any, res: any) => {
