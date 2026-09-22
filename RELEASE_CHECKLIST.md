@@ -487,11 +487,37 @@ Acceptance:
 ### [ ] All Phase 5 acceptance criteria are satisfied
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
-### [ ] Release artifacts are tested and verified before publication
+### [x] Release artifacts are tested and verified before publication — B5 (2026-09-22): tag-driven release workflow (`.github/workflows/release.yml`) gates on the tag matching `package.json` + the changelog section, re-runs the packed smokes and the installed-app e2e journey before a DRAFT GitHub Release is created with the installer, CLI tarball, update metadata and `SHA256SUMS.txt`; per-PR the `Desktop installer` job proves install → upgrade → uninstall
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
-### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action)
+### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action) — B5 adds `Desktop signing (windows-latest)` to the intended required set (nine checks)
 ### [x] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays (narrowed to >=22.0.0)
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
+### [x] Versioning: single source of truth — B5 (2026-09-22): `npm run check:release` (CI-enforced) requires the root `package.json` version to be valid semver and all four workspaces to match it; release tags are bound to the tree via `--require-version`
+### [x] Changelog: B5 (2026-09-22) — `CHANGELOG.md` in Keep a Changelog format, format-validated by `check:release`, and the source of GitHub Release notes (`scripts/release-notes.mjs`)
+### [ ] Code signing: B5 (2026-09-22) — the pipeline is proven (`Desktop signing` CI job: certificate injection → signtool → signed installer + app exe, SHA-256, `forceCodeSigning` release builds); **a production OV/EV certificate is still needed** — add repo secrets `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` and releases sign automatically (SmartScreen reputation follows)
+### [x] Crash diagnostics: B5 (2026-09-22) — local-only Crashpad minidumps + redacted bounded crash logs with retention (20 logs / 10 dumps), never uploaded (docs/INSTALL.md → "Crash reports and logs")
+
+## Cutting a release (B5 procedure)
+
+1. Land everything on `main` through a PR with all nine checks green
+   (`CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`,
+   `Platform (macos-latest)`, `Desktop (ubuntu-latest)`,
+   `Desktop (windows-latest)`, `Desktop installer (windows-latest)`,
+   `Desktop signing (windows-latest)`).
+2. Bump the version: edit the ROOT `package.json` `version` only, then copy
+   it to the four workspace manifests (`packages/{shared,server,web,desktop}/package.json`),
+   move the changelog's `[Unreleased]` content into a
+   `## [X.Y.Z] - YYYY-MM-DD` section, and verify with
+   `npm run check:release` (CI runs the same gate).
+3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. The release workflow (`.github/workflows/release.yml`) runs: guard
+   (tag↔tree↔changelog binding + unit tests) → CLI tarball (packed smokes) →
+   installer (signed with the production certificate when
+   `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` secrets exist, else explicitly
+   unsigned; installed, e2e-driven, uninstalled) → DRAFT GitHub Release with
+   the installer, tarball, `latest.yml`, `SHA256SUMS.txt` and the
+   changelog-derived notes.
+5. A human reviews the draft (checksums, notes, signing status) and publishes.
 
 ---
 

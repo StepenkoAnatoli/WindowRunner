@@ -24,6 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkChangelog, collectVersionProblems, SEMVER_RE } from "../../../scripts/check-release.mjs";
+import { extractReleaseNotes } from "../../../scripts/release-notes.mjs";
 import { formatSums } from "../../../scripts/checksums.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -270,5 +271,66 @@ describe("release contract: upgrade/uninstall gate (B5.6)", () => {
       ci.includes('test -f "packages/desktop/e2e/upgrade.spec.ts"'),
       "the inventory step must fail if the upgrade spec is deleted"
     );
+  });
+});
+
+describe("release contract: release workflow (B5.7)", () => {
+  const release = read(".github/workflows/release.yml");
+
+  it("is tag-driven, minimal-permission, and gated by the tag-bound check", () => {
+    assert.match(release, /tags:\n {6}- "v\*\.\*\.\*"/, "trigger must be vX.Y.Z tag pushes");
+    assert.match(release, /^permissions:\n {2}contents: read$/m, "default permissions must be read-only");
+    // Only the publishing job escalates, and only for contents.
+    const releaseJob = release.slice(release.indexOf("  release:"));
+    assert.ok(releaseJob.includes("    permissions:"), "the release job declares its own permissions");
+    assert.ok(releaseJob.includes("      contents: write"), "only the release job writes, and only contents");
+    assert.match(release, /check:release -- --require-version "\$\{GITHUB_REF_NAME\}"/, "the tag must be bound to the tree");
+    assert.match(release, /npm run smoke:packed/, "the CLI tarball must pass the packed smokes before shipping");
+  });
+
+  it("signs with the production certificate when the secret exists, and fails otherwise only into an explicitly-unsigned draft", () => {
+    assert.ok(release.includes("secrets.WIN_CSC_LINK"), "signing must be driven by the production secret");
+    assert.ok(
+      release.includes("npm run package:desktop:win:release"),
+      "the signed path must use forceCodeSigning (cannot ship silently unsigned)"
+    );
+    assert.ok(
+      release.includes("this build is UNSIGNED"),
+      "the unsigned path must stamp an explicit warning into the draft release"
+    );
+    assert.ok(release.includes("--draft"), "releases are created as drafts; publishing is a human action");
+  });
+
+  it("exercises the installer before shipping it", () => {
+    assert.ok(release.includes("E2E against the installed app"), "the release installer must be driven, not just built");
+    assert.ok(release.includes("silent uninstall verified"), "the release must verify uninstall");
+  });
+
+  it("ships checksums and changelog-derived notes with every release", () => {
+    assert.ok(release.includes("scripts/checksums.mjs"), "the release must generate SHA256SUMS.txt");
+    assert.ok(release.includes("scripts/release-notes.mjs"), "the release notes must come from the changelog");
+    assert.ok(release.includes("SHA-256 checksums"), "the checksums must be visible in the release body");
+  });
+});
+
+describe("release contract: release notes (B5.7)", () => {
+  it("extracts the changelog section for a shipped version", () => {
+    const notes = extractReleaseNotes(read("CHANGELOG.md"), "0.1.0");
+    assert.ok(notes, "the changelog must yield notes for the current version");
+    assert.match(notes!, /^# WindowRunner v0\.1\.0 \(2026-09-22\)/);
+    assert.match(notes!, /### Added/);
+    assert.ok(!notes!.includes("## ["), "the extracted body must not leak the next section heading");
+  });
+
+  it("accepts the tag form (leading v) and refuses versions without a section", async () => {
+    const notes = extractReleaseNotes("# Changelog\n\n## [1.2.3] - 2026-09-22\n\n### Fixed\n- x\n\n## [1.2.2] - 2026-09-21\n\n### Fixed\n- y\n", "v1.2.3");
+    assert.match(notes!, /^# WindowRunner v1\.2\.3 \(2026-09-22\)/);
+    assert.ok(notes!.includes("- x"));
+    assert.ok(!notes!.includes("- y"), "content must stop at the next version heading");
+    assert.equal(extractReleaseNotes("# Changelog\n\n## [1.2.3] - 2026-09-22\n", "1.0.0"), null);
+
+    const missing = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "release-notes.mjs"), "v0.0.0"], { encoding: "utf8" });
+    assert.equal(missing.status, 1, "a version without notes must fail the release");
+    assert.match(missing.stderr, /no section for \[0\.0\.0\]/);
   });
 });
