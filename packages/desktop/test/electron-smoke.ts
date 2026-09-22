@@ -171,6 +171,47 @@ describe("desktop shell smoke (unpacked Electron)", () => {
     assert.equal(originRes.status, 403);
   });
 
+  it("writes a redacted crash log for a main-process unhandled rejection and keeps running (B5.5)", async () => {
+    const logsDir = path.join(dataDir, "logs");
+    // Clean-run baseline: no crash records from boot.
+    const before = fs.readdirSync(logsDir).filter((n) => n.startsWith("crash-"));
+    assert.deepEqual(before, [], "clean boot must not write crash logs");
+    assert.ok(fs.existsSync(path.join(logsDir, "README.txt")), "logs README must exist");
+
+    type Bridge = { getBootstrap(): { token: string } };
+    const token = await page!.evaluate(() => {
+      const g = globalThis as unknown as { windowRunnerDesktop: Bridge };
+      return g.windowRunnerDesktop.getBootstrap().token;
+    });
+
+    // Fire a real unhandled rejection in the MAIN process: the promise is
+    // never awaited by anyone, so Node raises unhandledRejection there.
+    const marker = "electron-smoke-synthetic-rejection-7f3a";
+    await app!.evaluate((_electronMain, mark: string) => {
+      setTimeout(() => {
+        Promise.reject(new Error(mark));
+      }, 0);
+      return "scheduled";
+    }, marker);
+
+    // The handler writes synchronously, but the rejection itself is async.
+    let crashFiles: string[] = [];
+    for (let i = 0; i < 100 && crashFiles.length === 0; i += 1) {
+      crashFiles = fs.readdirSync(logsDir).filter((n) => n.startsWith("crash-") && n.endsWith(".log"));
+      if (crashFiles.length === 0) await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(crashFiles.length > 0, "an unhandled rejection must produce a crash log");
+    const content = fs.readFileSync(path.join(logsDir, crashFiles[0]!), "utf8");
+    assert.match(content, /kind: unhandledRejection/);
+    assert.match(content, new RegExp(marker));
+    assert.ok(!content.includes(token), "the crash log must not contain the bearer token");
+
+    // The shell survives the rejection (documented behavior: keep running).
+    const alive = await app!.evaluate(() => process.versions.node !== undefined);
+    assert.ok(alive, "the app must stay alive after an unhandled rejection");
+    assert.equal(fs.readdirSync(logsDir).filter((n) => n.endsWith(".tmp")).length, 0, "no tmp files left behind");
+  });
+
   it("stops the backend when the app quits (clean shutdown)", async () => {
     const origin = new URL(page!.url()).origin;
     const exited = new Promise<void>((resolve) => app!.on("close", () => resolve()));

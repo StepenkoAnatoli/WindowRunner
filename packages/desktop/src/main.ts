@@ -17,15 +17,60 @@
  * token never appears in URLs, logs, or storage.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import * as path from "node:path";
 import { DESKTOP_CHANNELS, type DesktopAppInfo, type DesktopBootstrap } from "./desktop-bridge.js";
+import {
+  CRASH_DUMP_KEEP,
+  CRASH_LOG_KEEP,
+  describeError,
+  ensureLogsReadme,
+  pruneCrashDumps,
+  pruneCrashLogs,
+  writeCrashLog,
+  type CrashKind,
+  type CrashRecord,
+} from "./crash-diagnostics.js";
 import { ensureDesktopPaths, resolveDesktopPaths, type DesktopPaths } from "./paths.js";
 import { defaultServerBundle, startServer, stopServer, waitForHealth, type DesktopServer } from "./server-process.js";
 import { loadWorkspaceCatalogFile, saveWorkspaceCatalogFile } from "./workspace-catalog.js";
 
 let server: DesktopServer | undefined;
 let shuttingDown: Promise<void> | undefined;
+let mainWindow: BrowserWindow | undefined;
+
+// Crash diagnostics must be armed as early as possible — before anything else
+// can fail. Minidumps go to <userData>/crashes and are never uploaded; the
+// human-readable crash-*.log records are written by recordCrash() below.
+const bootPaths = resolveDesktopPaths({ appDataDir: app.getPath("userData") });
+app.setPath("crashDumps", bootPaths.crashesDir);
+crashReporter.start({ uploadToServer: false, compress: true });
+
+/**
+ * Write a redacted crash record to logs/crash-*.log. Synchronous and
+ * best-effort: called from paths where the process may be dying. Returns the
+ * file path (for the fatal dialog) or undefined.
+ */
+function recordCrash(kind: CrashKind, details: string, extras?: Record<string, string | number>): string | undefined {
+  const record: CrashRecord = {
+    kind,
+    writtenAt: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    pid: process.pid,
+    details,
+    extras,
+  };
+  // The bearer token is the one secret the main process holds; scrub it (and
+  // any env-provided token) from every crash record.
+  const scrub = [server?.token ?? "", process.env.WINDOWS_RUNNER_AUTH_TOKEN ?? ""].filter((s) => s.length > 0);
+  return writeCrashLog(resolveDesktopPaths({ appDataDir: app.getPath("userData") }).logsDir, record, {
+    scrub,
+    keep: CRASH_LOG_KEEP,
+  });
+}
 
 function resolveServerBundle(): string {
   if (app.isPackaged) {
@@ -128,8 +173,14 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-function fatal(title: string, message: string): never {
-  dialog.showErrorBox(title, message.length > 1500 ? `${message.slice(0, 1500)}…` : message);
+let rendererGoneStrikes = 0;
+
+function fatal(title: string, message: string, kind: CrashKind = "uncaughtException"): never {
+  // Record first (synchronously — we may be about to exit), then tell the
+  // human, naming the file we just wrote.
+  const crashFile = recordCrash(kind, message);
+  const suffix = crashFile ? `\n\nA crash report was written to:\n${crashFile}` : "";
+  dialog.showErrorBox(title, (message.length > 1500 ? `${message.slice(0, 1500)}…` : message) + suffix);
   if (server) {
     // Stop the backend before leaving; do not await — app.exit is immediate.
     void stopServer(server).finally(() => app.exit(1));
@@ -142,6 +193,11 @@ function fatal(title: string, message: string): never {
 async function bootstrap(): Promise<void> {
   const paths = resolveDesktopPaths({ appDataDir: app.getPath("userData") });
   await ensureDesktopPaths(paths);
+  // Crash diagnostics housekeeping: document the logs dir once, and bound how
+  // much history survives (P1-03 retention).
+  ensureLogsReadme(paths.logsDir);
+  pruneCrashLogs(paths.logsDir, CRASH_LOG_KEEP);
+  pruneCrashDumps(paths.crashesDir, CRASH_DUMP_KEEP);
 
   server = await startServer({
     dataDir: paths.serverDataDir,
@@ -150,7 +206,11 @@ async function bootstrap(): Promise<void> {
   });
   server.process.on("exit", (code) => {
     if (!shuttingDown) {
-      fatal("WindowRunner backend stopped", `The bundled server exited unexpectedly (code ${code}). See ${path.join(paths.logsDir, "server.log")}`);
+      fatal(
+        "WindowRunner backend stopped",
+        `The bundled server exited unexpectedly (code ${code}). See ${path.join(paths.logsDir, "server.log")}`,
+        "backend-exit"
+      );
     }
   });
 
@@ -159,13 +219,13 @@ async function bootstrap(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
   });
-  createWindow();
+  mainWindow = createWindow();
   console.log(`window-runner desktop: backend ready on ${server.url}`);
 }
 
 app.whenReady().then(
   () => void bootstrap(),
-  (err) => fatal("WindowRunner failed to start", err instanceof Error ? (err.stack ?? err.message) : String(err))
+  (err) => fatal("WindowRunner failed to start", describeError(err))
 );
 
 app.on("window-all-closed", () => {
@@ -182,6 +242,38 @@ app.on("before-quit", (event) => {
   void shuttingDown.then(() => app.quit());
 });
 
+// Renderer loss is recoverable once (reload); a second loss without a clean
+// restart in between means the shell itself is unhealthy — fail loudly.
+app.on("render-process-gone", (_event, _webContents, details) => {
+  recordCrash("render-process-gone", `renderer gone: ${details.reason}`, {
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+  rendererGoneStrikes += 1;
+  if (rendererGoneStrikes > 1) {
+    fatal("WindowRunner renderer kept crashing", `The window renderer crashed (${details.reason}) after a previous crash; the app will close.`);
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.reload();
+  }
+});
+
+// Child processes (GPU, utilities) are restarted by Electron itself; record
+// for diagnosis, keep running.
+app.on("child-process-gone", (_event, details) => {
+  recordCrash("child-process-gone", `${details.type} process gone: ${details.reason}`, {
+    type: details.type,
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+});
+
+// A rejected promise is a bug, not a reason to kill the user's session: the
+// shell keeps running (and the app can be quit normally). The record makes it
+// reportable instead of invisible.
+process.on("unhandledRejection", (reason) => {
+  recordCrash("unhandledRejection", describeError(reason));
+});
+
 process.on("uncaughtException", (err) => {
-  fatal("WindowRunner crashed", err.stack ?? err.message);
+  fatal("WindowRunner crashed", describeError(err));
 });

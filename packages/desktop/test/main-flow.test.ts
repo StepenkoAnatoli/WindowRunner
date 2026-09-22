@@ -99,6 +99,27 @@ describe("desktop main process flow (electron stub)", () => {
     assert.equal(fs.existsSync(path.join(dataDir, "logs", "server.log")), true, "server log must exist");
   });
 
+  it("arms local crash diagnostics before anything else (B5.5)", () => {
+    // Crashpad dumps go to <dataDir>/crashes and are never uploaded.
+    const started = traces("crash-reporter-start")[0] as Record<string, unknown> | undefined;
+    assert.ok(started, "crashReporter.start must be called");
+    assert.equal(started?.uploadToServer, false, "dumps must never upload");
+    const setPath = traces("set-path").find((t) => t.name === "crashDumps") as { value?: string } | undefined;
+    assert.ok(setPath?.value, "app.setPath('crashDumps', …) must be called");
+    assert.equal(setPath?.value, path.join(dataDir, "crashes"));
+
+    // Failure handlers are registered on app/process.
+    const events = traces("app-on").map((t) => t.name);
+    for (const expected of ["render-process-gone", "child-process-gone"]) {
+      assert.ok(events.includes(expected), `app.on('${expected}') must be registered (got ${JSON.stringify(events)})`);
+    }
+
+    // Boot housekeeping: README written, no crash records on a clean run.
+    assert.equal(fs.existsSync(path.join(dataDir, "logs", "README.txt")), true, "logs README must exist");
+    const stray = fs.readdirSync(path.join(dataDir, "logs")).filter((n) => n.startsWith("crash-"));
+    assert.deepEqual(stray, [], "a clean run must not write crash logs");
+  });
+
   it("hands the preload bootstrap a token that never appears in the URL", async () => {
     const reply = traces("bootstrap-reply")[0] as { value?: { baseUrl: string; token: string } } | undefined;
     assert.ok(reply?.value, `no bootstrap-reply in trace: ${JSON.stringify(traceLines)}`);

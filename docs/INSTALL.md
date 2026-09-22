@@ -638,6 +638,29 @@ integrity (your download matches what we built), not publisher identity —
 publisher identity is what the code signature above provides once a
 certificate is in place.
 
+### Crash reports and logs
+
+The desktop shell keeps its diagnostics in the per-user data directory
+(`%APPDATA%\WindowRunner` on Windows):
+
+- `logs/server.log` — the bundled server's combined output with the auth
+  token redacted.
+- `logs/crash-*.log` — small, redacted, bounded records the shell writes when
+  something fails: an uncaught exception, an unhandled promise rejection, the
+  window renderer dying, or the backend exiting unexpectedly. A fatal error
+  dialog names the file it wrote. An unhandled rejection is recorded but does
+  **not** kill the app; a renderer crash reloads the window once and fails
+  loudly only if it keeps crashing.
+- `logs/README.txt` — the note above, shipped next to the files.
+- `crashes/*.dmp` — Crashpad minidumps (native memory snapshots) written when
+  a process dies hard. **These can contain process memory** — treat them as
+  sensitive.
+
+Nothing here is ever uploaded — crash reporting is strictly local (no
+`submitURL`, `uploadToServer: false`). Crash logs are scrubbed of the bearer
+token and truncated; old crash logs (beyond 20) and minidumps (beyond 10) are
+pruned on every boot. You can delete any of these files at any time.
+
 **Known gaps:** no production code-signing certificate yet (see above), and
 the app uses the default Electron icon. Branding is a separate milestone.
 
