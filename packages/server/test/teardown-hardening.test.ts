@@ -45,6 +45,20 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 
+/**
+ * Repo-relative POSIX path. `path.relative` yields backslashes on Windows
+ * runners, so comparing its output against the POSIX-style expectations below
+ * must not depend on the separator — the first version of this guard did, and
+ * the Windows leg of PR #38's first run failed on exactly that (the audit
+ * expected `packages/server/test/builtin-tools.test.ts` and got
+ * `packages\server\test\builtin-tools.test.ts`).
+ */
+function toPosix(file: string): string {
+  return file.split(/[\\/]/).join("/");
+}
+
+const relPath = (file: string): string => toPosix(path.relative(repoRoot, file));
+
 /** This file: it holds the forbidden pattern as data, so it audits nothing. */
 const SELF = path.basename(fileURLToPath(import.meta.url));
 
@@ -111,6 +125,16 @@ describe("teardown hardening: the shared helper", () => {
 });
 
 describe("teardown hardening: the audit", () => {
+  it("normalizes repo-relative paths, so the audit reads the same on Windows", () => {
+    // The Windows leg of PR #38's first run failed here: `path.relative` gave
+    // backslashes and the POSIX expectations below did not match. Pin the
+    // normalization on every platform, since the mismatch is invisible on
+    // Linux and macOS.
+    assert.equal(toPosix("packages\\server\\test\\builtin-tools.test.ts"), "packages/server/test/builtin-tools.test.ts");
+    assert.equal(toPosix("packages/server/test/builtin-tools.test.ts"), "packages/server/test/builtin-tools.test.ts");
+    assert.equal(relPath(path.join(repoRoot, "scripts", "smoke-start.mjs")), "scripts/smoke-start.mjs");
+  });
+
   it("audits the suites that run on Windows, smoke scripts included", () => {
     assert.ok(audited.length >= 25, `the audit found only ${audited.length} files — is the walk broken?`);
     for (const expected of [
@@ -120,10 +144,7 @@ describe("teardown hardening: the audit", () => {
       "scripts/smoke-start.mjs",
       "scripts/smoke-packed-start.mjs",
     ]) {
-      assert.ok(
-        audited.some((file) => path.relative(repoRoot, file) === expected),
-        `${expected} must be audited`
-      );
+      assert.ok(audited.some((file) => relPath(file) === expected), `${expected} must be audited`);
     }
     assert.ok(
       !audited.some((file) => path.basename(file) === SELF),
@@ -137,7 +158,7 @@ describe("teardown hardening: the audit", () => {
     for (const file of audited) {
       const text = fs.readFileSync(file, "utf8").replace(/\s+/g, " ");
       const match = forbidden.exec(text);
-      if (match) violations.push(`${path.relative(repoRoot, file)} — ${match[0]}…`);
+      if (match) violations.push(`${relPath(file)} — ${match[0]}…`);
     }
     assert.deepEqual(
       violations,

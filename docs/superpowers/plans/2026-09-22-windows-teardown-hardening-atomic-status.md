@@ -13,11 +13,14 @@ Plan: `docs/superpowers/plans/2026-09-22-windows-teardown-hardening.md`
 
 ## Status
 
-**Implemented, full local gate green, PR open.** The fix, the audit that keeps
-it fixed, and the stage's paperwork are done and locally verified; the nine CI
-checks on the head commit are the remaining merge gate, and the post-merge
-`main` run is verified by the next session — per repo precedent a status PR
-cannot contain its own final-head run.
+**Implemented, full local gate green, CI round 1 diagnosed and fixed, PR
+open.** The fix, the audit that keeps it fixed and the stage's paperwork are
+done and locally verified; CI round 1 came back 8/9 — `Platform
+(windows-latest)` failed the *new guard itself* (a POSIX-only path comparison,
+invisible on Linux) — and the fix plus a regression pin are in. The nine CI
+checks on the final head commit are the merge gate, and the post-merge `main`
+run is verified by the next session — per repo precedent a status PR cannot
+contain its own final-head run.
 
 ## What happened, in order
 
@@ -76,6 +79,30 @@ cannot contain its own final-head run.
    (`/home/user/wr-gate-after.log` in the authoring sandbox; the counts are in
    "Tests" below). The packed tarball is unchanged by this stage: 148 entries,
    2,862,509 bytes unpacked — identical to the baseline run.
+8. **CI round 1 (head `4cb00c4`) — 8/9, and the one red leg was the new guard
+   itself.** Run
+   [35781156495](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35781156495):
+   eight legs green (`CI` 1m37s, `Browser E2E` 1m13s, `Docker` 29s, `Platform
+   (macos-latest)` 2m11s, `Desktop (ubuntu-latest)` 1m26s, `Desktop
+   (windows-latest)` 1m11s, `Desktop installer` 4m43s, `Desktop signing`
+   1m48s), `Platform (windows-latest)` failed its `Test` step in 1m48s.
+   Diagnosis path (per the repo's sandbox technique): the job's step list via
+   `actions/jobs/{id}` — only `Test` failed, every smoke/installer step
+   skipped behind it — then the check-run annotations, which named exactly one
+   failing test: `not ok 99 - teardown hardening: the audit` →
+   `not ok 1 - audits the suites that run on Windows, smoke scripts
+   included`. (The diagnostics artifact could not be downloaded — the
+   blob host is network-blocked in the authoring sandbox, as recorded in the
+   v0.1.0 file's Deviations — so the annotations carried the evidence.)
+   **Root cause: the audit compared `path.relative()` output, which uses
+   backslashes on Windows (`packages\server\test\builtin-tools.test.ts`),
+   against POSIX-style expectations. Every converted suite passed on Windows;
+   the guard was the only casualty — a defect in the new test, not in the
+   fix.** Resolution: a `toPosix()` normalization applied to every comparison
+   in the guard, plus an explicit regression pin that feeds it a backslashed
+   path, because the mismatch is invisible on Linux and macOS. Re-verified
+   locally (guard 7/7, typechecks, suites). The fix commit creates the final
+   head, which re-runs the full matrix fresh — the merge gate.
 
 ## Commits
 
@@ -128,7 +155,7 @@ Playwright specs and web e2e server helpers (their removals already
 | `npm run typecheck` (shared, server, web) | pass |
 | `npm run typecheck:desktop` | pass (3 tsconfigs) |
 | `npm run build` / `npm run build:desktop` | pass |
-| `npm test` — after | pass, **633/633** (shared 9/9, server 391/391 incl. the 6 new guard tests, web 233/233) |
+| `npm test` — after | pass, **634/634** (shared 9/9, server 392/392 incl. the 7 guard tests — the 6 initial ones plus the path-normalization pin added after CI round 1 — web 233/233) |
 | `npm test` — baseline (clean tree) | pass, all suites (the guard test did not exist yet) |
 | `npm run test:desktop` | pass — 69/69 (baseline: 69/69) |
 | `npm run smoke:packed` | pass — 148 entries, unchanged |
@@ -136,20 +163,26 @@ Playwright specs and web e2e server helpers (their removals already
 | `npm run smoke:start` | pass (turn, restart, SIGTERM, token, origins) |
 | `npm run eval -- --expect-pass` | pass — 5/5 |
 | `npm audit --omit=dev --audit-level=high` | pass (0 vulnerabilities) |
-| `packages/server/test/teardown-hardening.test.ts` | pass — 6/6 (run solo during development too) |
+| `packages/server/test/teardown-hardening.test.ts` | pass — 7/7 (run solo during development too) |
 | Guard vs. an injected regression | pass — restoring `fs.rm(dir, { recursive: true, force: true })` in `boot.test.ts` fails the audit with `packages/server/test/boot.test.ts — .rm(…` (5 pass, 1 fail); the injection was reverted and the tree is clean |
+| Guard vs. the round-1 Windows defect | pass — the `toPosix` pin feeds the normalizer a backslashed path (`packages\server\...`), the exact shape `path.relative` returns on Windows; it fails against the pre-fix comparison on any platform |
+| CI round 1 (Windows leg) | **fail, diagnosed** — the guard, not the fix (see item 8); eight legs green, including every converted suite on Windows |
 | Windows legs / Electron / browser | executed by CI only (sandbox limitation, as in B3/B4/B5) |
 
 ## Acceptance criteria (from the plan)
 
-- Guard test passes, audit included: **pass** (6/6 locally).
+- Guard test passes, audit included: **pass** (7/7 locally; round 1 proved the
+  audit runs on Windows too — it failed there for a path-separator bug in the
+  guard itself, now fixed and pinned).
 - No bare `fs.rm`/`rmSync` call left in any workspace `test/` tree or in the
   two smoke scripts: **pass** (`grep` returns nothing; the guard fails if it
   ever does again).
 - Full local gate green in the corrected order: **pass** (baseline and
   after-fix, 12/12 steps each).
-- All nine CI checks green on the PR head: **pending** — the head is
-  `<head>`; the run is recorded below and in the PR body.
+- All nine CI checks green on the PR head: **pending** — round 1
+  (`4cb00c4`) was 8/9 with the guard's Windows defect, fixed in the final
+  head; that head's run is the merge gate and is recorded in the PR body and
+  below.
 - v0.1.0 status file's known gap closed with the evidence + this record:
   **pass**.
 
@@ -202,6 +235,12 @@ Playwright specs and web e2e server helpers (their removals already
 
 ## Known gaps
 
+- **A CI round was needed to catch a defect in the guard.** The
+  path-separator bug (item 8) cannot fail locally — it only shows on Windows —
+  so this stage's CI evidence is two rounds rather than one, and the fix
+  carries a regression pin instead of relying on a lucky re-run. Worth
+  remembering: a Linux-green guard that reads paths is not yet a Windows-green
+  guard.
 - **The retry path itself has no deterministic Windows test.** Node performs
   the retries, so what the guard can prove is that the helper forwards
   `maxRetries`/`retryDelay` (injected `rm`) and that nothing bypasses it. The
@@ -225,13 +264,15 @@ Playwright specs and web e2e server helpers (their removals already
 | Run | Commit | Result | What |
 | --- | --- | --- | --- |
 | 35780220041 | `37cb67f` (PR #37) | 9/9 GREEN | PR #36 merge record — merge gate satisfied, merged as `cf40253` |
-| 35781014810 | `cf40253` | pending | post-merge main, PR #37 — verified by the next session |
-| (this PR) | `<head>` | pending | nine checks on the head commit |
+| 35781014810 | `cf40253` | **9/9 GREEN** | post-merge main, PR #37 (20:33:01Z → 20:39:45Z) — the PR #36 bookkeeping is closed out |
+| 35781156495 | `4cb00c4` (PR #38, round 1) | 8/9 + diagnosed | `Platform (windows-latest)` failed the new guard's path comparison (item 8); both Windows legs of the *converted* suites were otherwise green; fix + pin added |
+| (this PR, final head) | `<head>` | pending | nine checks on the head commit — the merge gate |
 
 ## Verdict
 
-**GO — the Windows teardown flake is fixed and guarded locally; the nine CI
-checks are the merge gate.** The stage closed the recorded known gap with a
+**GO — the Windows teardown flake is fixed and guarded locally; CI round 1's
+red leg was the guard itself (diagnosed, fixed, pinned); the nine checks on
+the final head are the merge gate.** The stage closed the recorded known gap with a
 single shared helper, converted every removal that runs on Windows, and pinned
 the pattern so a new suite cannot reintroduce it. Nothing in this stage is a
 STOP; the remaining inputs are the same owner actions and candidate stages the
