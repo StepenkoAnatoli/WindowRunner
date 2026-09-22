@@ -69,17 +69,28 @@ test("narrow widths collapse the rails, stack provider cards, and keep the form 
     { width: 800, height: 800 },
     { width: 640, height: 800 },
   ] as const) {
+    // Collapse at a wide viewport. A full re-render detaches the toggle, and
+    // a retried click would toggle twice — so do not "restore" with a second
+    // click. Reload between widths instead (sessionStorage keeps the token).
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.locator(tid("project-sidebar"))).toBeVisible();
     await page.setViewportSize(size);
-    const sidebarPos = await page.locator(tid("project-sidebar")).evaluate((el) => getComputedStyle(el).position);
-    expect(sidebarPos, `sidebar overlays at ${size.width}`).toBe("fixed");
+    const sidebarInfo = await page.locator(tid("project-sidebar")).evaluate((el) => ({
+      position: getComputedStyle(el).position,
+      display: getComputedStyle(el).display,
+      shell: el.parentElement?.className ?? "",
+    }));
+    expect(sidebarInfo.position, `sidebar overlays at ${size.width}: ${JSON.stringify(sidebarInfo)}`).toBe("fixed");
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.click(tid("toggle-sidebar"));
     await expect(page.locator(tid("project-sidebar"))).toBeHidden();
     await page.click(tid("toggle-inspector"));
     await expect(page.locator(tid("context-inspector"))).toBeHidden();
+    await page.setViewportSize(size);
     await noHorizontalOverflow(page);
-    // Restore the rails for the next width (toggles are workspace-only).
-    await page.click(tid("toggle-sidebar"));
-    await page.click(tid("toggle-inspector"));
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.reload();
+    await expect(page.locator(tid("workspace-shell"))).toBeVisible();
   }
 
   await page.setViewportSize({ width: 1280, height: 800 });
