@@ -57,6 +57,16 @@ jobs:
       - name: Release consistency gate (tag-bound)
         run: npm run check:release -- --require-version "${GITHUB_REF_NAME}"
 
+      # The unit suite includes the server packaging contract, which copies
+      # and runs the built bundle (packages/server/dist/index.cjs) in an
+      # isolated directory. A fresh checkout has no dist/ (gitignored, and
+      # postinstall deliberately does not build), so the guard must build
+      # before `npm test` — the same order as the CI job. Without this the
+      # very first tag push (v0.1.0) failed in the guard: the packaging test
+      # asserted the bundle exists on a tree that had never been built.
+      - name: Build
+        run: npm run build
+
       - name: Unit tests
         run: npm test
 
