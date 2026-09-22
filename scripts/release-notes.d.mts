@@ -3,5 +3,6 @@
  */
 
 export declare const repoRoot: string;
+export declare function normalizeNewlines(text: string): string;
 export declare function extractReleaseNotes(changelog: string, version: string): string | null;
 export declare function main(argv?: string[]): number;

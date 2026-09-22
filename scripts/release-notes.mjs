@@ -18,16 +18,25 @@ import { fileURLToPath } from "node:url";
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
+ * Normalize line endings before parsing (Windows checkouts may materialize
+ * CRLF; .gitattributes only pins *.sh). Kept in sync with check-release.mjs.
+ */
+export function normalizeNewlines(text) {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
  * Extract the release notes markdown for `version` (with or without a
  * leading "v"). Returns the body (title line + section content) or null when
  * the changelog has no section for that version.
  */
 export function extractReleaseNotes(changelog, version) {
   const clean = version.replace(/^v/, "");
+  const text = normalizeNewlines(changelog);
   const heading = new RegExp(`^## \\[${clean.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\](?: - (\\S+))?\\s*$`, "m");
-  const match = heading.exec(changelog);
+  const match = heading.exec(text);
   if (!match) return null;
-  const after = changelog.slice(match.index + match[0].length);
+  const after = text.slice(match.index + match[0].length);
   const next = after.indexOf("\n## ");
   const body = (next === -1 ? after : after.slice(0, next)).trim();
   const date = match[1] ? ` (${match[1]})` : "";

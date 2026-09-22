@@ -7,6 +7,7 @@
 export declare const repoRoot: string;
 export declare const SEMVER_RE: RegExp;
 export declare const CHANGELOG_SECTIONS: string[];
+export declare function normalizeNewlines(text: string): string;
 export declare function readVersion(pkgPath: string): string;
 export declare function collectVersionProblems(root?: string): string[];
 export declare function checkChangelog(text: string, rootVersion: string): string[];

@@ -124,6 +124,23 @@ describe("release contract: changelog (B5.2)", () => {
     }
   });
 
+  it("validates a CRLF checkout identically (Windows runners materialize CRLF)", () => {
+    // Regression (B5 CI): core.autocrlf on windows-latest checks CHANGELOG.md
+    // out with CRLF while .gitattributes only pins *.sh — the gate must not
+    // depend on the checkout's line-ending policy.
+    const lf = ["# Changelog", "", "## [Unreleased]", "", "### Added", "- x", "", "## [1.2.3] - 2026-09-22", "", "### Fixed", "- y", ""].join("\n");
+    const crlf = lf.replace(/\n/g, "\r\n");
+    assert.deepEqual(checkChangelog(crlf, "1.2.3"), [], "a CRLF changelog must pass");
+    assert.deepEqual(checkChangelog(lf, "1.2.3"), []);
+
+    // And the notes extractor reads through CRLF the same way.
+    const notes = extractReleaseNotes(crlf, "v1.2.3");
+    assert.ok(notes, "notes must extract from a CRLF changelog");
+    assert.match(notes!, /^# WindowRunner v1\.2\.3 \(2026-09-22\)/);
+    assert.ok(notes!.includes("- y"));
+    assert.ok(!notes!.includes("- x"), "the Unreleased section must not leak into the notes");
+  });
+
   it("README and INSTALL link the changelog", () => {
     for (const doc of ["README.md", "docs/INSTALL.md"]) {
       assert.ok(read(doc).includes("CHANGELOG.md"), `${doc} must link CHANGELOG.md`);

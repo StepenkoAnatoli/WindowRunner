@@ -33,6 +33,15 @@ export const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 /** Changelog section names allowed under a version heading (Keep a Changelog). */
 export const CHANGELOG_SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
 
+/**
+ * Normalize line endings before parsing any text file read from disk: git
+ * checkouts differ by platform (core.autocrlf on Windows materializes CRLF),
+ * and .gitattributes only pins *.sh — CHANGELOG.md may arrive either way.
+ */
+export function normalizeNewlines(text) {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 const VERSION_HEADING_RE = /^## \[([0-9A-Za-z.-]+|Unreleased)\](?: - (.+))?$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -61,7 +70,8 @@ function isValidIsoDate(value) {
  */
 export function checkChangelog(text, rootVersion) {
   const problems = [];
-  const lines = text.split("\n");
+  // Newline-agnostic: a CRLF Windows checkout must validate identically.
+  const lines = normalizeNewlines(text).split("\n");
   const first = lines.find((l) => l.trim() !== "");
   if (!first || !/^# .+/.test(first)) {
     return ["CHANGELOG.md must start with a `# Changelog` heading"];
