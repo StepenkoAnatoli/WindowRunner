@@ -13,6 +13,24 @@ import { ProfileError, type ActiveProviderBox } from "./provider-service.js";
 import type { ProviderService } from "./provider-service.js";
 import type { TurnUsageRecord } from "./usage-log.js";
 
+/**
+ * Paths that must serve the main app shell so a refresh or a pasted link
+ * lands in the client route host. Not a SPA catch-all.
+ */
+const CLIENT_APP_ROUTES = new Set([
+  "/providers",
+  "/usage",
+  "/settings/security",
+  "/settings/storage",
+  "/settings/about",
+]);
+
+/** True for an allowlisted client route. Trailing slashes and case are folded. */
+export function isClientAppRoute(pathname: string): boolean {
+  const normalized = (pathname || "/").split("?")[0].replace(/\/+$/, "").toLowerCase() || "/";
+  return CLIENT_APP_ROUTES.has(normalized);
+}
+
 export interface LongRunningThresholds {
   /** active turn duration before considered stuck; default 2h */
   stuckTurnMs?: number;
@@ -337,6 +355,26 @@ export function createApp(deps: AppDeps) {
         },
       })
     );
+  }
+
+  // Deep client routes (B3). The app is a client-side route host, but a
+  // refresh or a pasted link must still receive the shell. This is an
+  // allowlist, not a catch-all: unknown paths, missing assets, /api/*,
+  // /healthz, /dashboard, and /desktop are untouched. GET/HEAD only, so a
+  // POST cannot be answered with HTML. The file is the static index.html —
+  // nothing in the response is interpolated, so a token or provider key
+  // cannot appear here. Registered before the static handler so a missing
+  // file named "providers" cannot win, and after /dashboard and /desktop so
+  // those mounts stay exact.
+  if (deps.webDir) {
+    const appShell = path.join(deps.webDir, "index.html");
+    app.use((req: any, res: any, next: any) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      if (!isClientAppRoute(req.path ?? "")) return next();
+      res.sendFile(appShell, { headers: uiHeaders }, (err: any) => {
+        if (err) next(err);
+      });
+    });
   }
 
   // Static web UI. index.html is never cached so a rebuilt bundle is picked up

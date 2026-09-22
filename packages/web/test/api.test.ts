@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ApiClient, ApiConfigError, ApiRequestError, invalidHeaderCharacter, readSse, loadToken, saveToken, clearToken, getApiClientBootstrap } from "../src/api.js";
+import { ApiClient, ApiConfigError, ApiRequestError, invalidHeaderCharacter, readSse, loadToken, saveToken, clearToken, getApiClientBootstrap, publishApiClientBootstrap } from "../src/api.js";
 
 function sseBody(frames: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -75,6 +75,22 @@ describe("host bootstrap token flow (desktop shell)", () => {
       saveToken("other-token");
       clearToken();
       assert.equal(storage.size, 0);
+    } finally {
+      delete (globalThis as Record<string, unknown>).window;
+      delete (globalThis as Record<string, unknown>).__WINDOWS_RUNNER_BOOTSTRAP__;
+    }
+  });
+
+  it("publishApiClientBootstrap keeps the token in memory and out of the URL and storage", () => {
+    const { win, storage } = fakeWindow("#token=from-fragment");
+    (globalThis as Record<string, unknown>).window = win;
+    try {
+      publishApiClientBootstrap({ baseUrl: "http://127.0.0.1:9", token: "published-token-123456" });
+      assert.equal(loadToken(), "published-token-123456");
+      saveToken("other-token");
+      clearToken();
+      assert.equal(storage.size, 0);
+      assert.equal(win.location.hash, "#token=from-fragment");
     } finally {
       delete (globalThis as Record<string, unknown>).window;
       delete (globalThis as Record<string, unknown>).__WINDOWS_RUNNER_BOOTSTRAP__;

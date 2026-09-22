@@ -5,10 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>Windows Runner</title>
-<link rel="stylesheet" href="./app.css">
+<!-- Root-absolute so a refresh of /providers (or any other deep route that
+     serves this shell) still loads the assets. Relative ./ URLs would resolve
+     under /providers/ and 404. -->
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div id="app"></div>
-<script type="module" src="./app.js"></script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

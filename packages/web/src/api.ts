@@ -449,6 +449,20 @@ export function getApiClientBootstrap(): ApiClientBootstrap | undefined {
 }
 
 /**
+ * Publish a host bootstrap into memory. The desktop shell does this from
+ * `/desktop` before loading the app; a refresh of an allowlisted deep route
+ * loads `index.html` directly (renderer.ts does not run), so the app entry
+ * republishes the preload bridge the same way. Either path keeps `saveToken`
+ * a no-op — the token is never written to the URL or web storage.
+ */
+export function publishApiClientBootstrap(bootstrap: ApiClientBootstrap): void {
+  (globalThis as Record<string, unknown>)[BOOTSTRAP_GLOBAL] = {
+    baseUrl: bootstrap.baseUrl,
+    token: bootstrap.token,
+  };
+}
+
+/**
  * Token comes from, in order: the in-memory host bootstrap (desktop shell),
  * then `#token=…` in the URL fragment (what the banner prints in memory mode;
  * stripped from the address bar immediately and never sent to the server),
