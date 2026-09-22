@@ -619,3 +619,211 @@ describe("provider controller: notices and auth failures on every effect", () =>
     }
   });
 });
+
+/**
+ * B4.2 — one-shot model discovery on the shared controller: transient state
+ * machine, one request at a time, stale-result clearing, and the key rules
+ * (raw key only in the request body; a pasted mask sends nothing; discovery
+ * never saves or activates anything).
+ */
+describe("provider controller: model discovery", () => {
+  const RAW_KEY = "sk-discovery-raw-9876";
+
+  interface Harness {
+    controller: ProviderController;
+    get(): ProviderUiState;
+    calls: Array<{ method: string; url: string; body?: any }>;
+    resolveDiscovery(models: string[]): void;
+    failDiscovery(status: number, payload: unknown): void;
+    authErrors(): number;
+  }
+
+  function harness(): Harness {
+    let state = { ...initialProviderUiState };
+    const calls: Harness["calls"] = [];
+    let pendingDiscovery: ((res: Response) => void) | undefined;
+    const authErrors: number[] = [];
+    const fetchImpl = (async (url: any, init: any) => {
+      const method = init?.method ?? "GET";
+      const entry = { method, url: String(url), body: init?.body ? JSON.parse(init.body) : undefined };
+      calls.push(entry);
+      if (String(url).endsWith("/api/providers/discover-models")) {
+        return await new Promise<Response>((resolve) => {
+          pendingDiscovery = resolve;
+        });
+      }
+      if (method === "GET" && String(url).endsWith("/api/providers")) {
+        return new Response(JSON.stringify({ activeProfileId: null, profiles: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ token: "tok", fetch: fetchImpl });
+    const controller = createProviderController({
+      getClient: () => client,
+      get: () => state,
+      set: (next) => {
+        state = next;
+      },
+      onAuthError: () => {
+        authErrors.push(1);
+      },
+      confirm: () => true,
+    });
+    return {
+      controller,
+      calls,
+      get: () => state,
+      authErrors: () => authErrors.length,
+      resolveDiscovery(models: string[]) {
+        const resolve = pendingDiscovery!;
+        pendingDiscovery = undefined;
+        resolve(new Response(JSON.stringify({ models }), { status: 200 }));
+      },
+      failDiscovery(status: number, payload: unknown) {
+        const resolve = pendingDiscovery!;
+        pendingDiscovery = undefined;
+        resolve(new Response(JSON.stringify(payload), { status }));
+      },
+    };
+  }
+
+  function openFormWithKey(h: Harness): void {
+    h.controller.openCreateForm();
+    h.controller.handleFieldChange("baseUrl", "https://prov.example/v1");
+    h.controller.handleFieldChange("apiKey", RAW_KEY);
+    h.calls.length = 0;
+  }
+
+  it("idle → loading → ready with the server's models; nothing is saved or activated", async () => {
+    const h = harness();
+    h.controller.openCreateForm();
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "idle" });
+    h.controller.handleFieldChange("baseUrl", "https://prov.example/v1");
+    const pending = h.controller.discoverModels();
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "loading" });
+    h.resolveDiscovery(["b", "a"]);
+    await pending;
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "ready", models: ["b", "a"] });
+    // Only the discovery call happened: no profile create/update/activate/list.
+    assert.deepEqual(
+      h.calls.map((c) => `${c.method} ${c.url}`),
+      ["POST /api/providers/discover-models"]
+    );
+    assert.equal(h.get().form?.modelDiscovery.status, "ready");
+    assert.equal(h.get().activeProfileId, null, "discovery never touches the active provider");
+  });
+
+  it("the request body carries current form values; a blank or pasted-mask key sends nothing", async () => {
+    const h = harness();
+    openFormWithKey(h);
+    const pending = h.controller.discoverModels();
+    h.resolveDiscovery([]);
+    await pending;
+    assert.deepEqual(h.calls[0].body, { kind: "openai-compatible", baseUrl: "https://prov.example/v1", apiKey: RAW_KEY });
+
+    const h2 = harness();
+    h2.controller.openCreateForm();
+    h2.controller.handleFieldChange("baseUrl", "https://prov.example/v1");
+    h2.controller.handleFieldChange("apiKey", "**** last4");
+    const pending2 = h2.controller.discoverModels();
+    h2.resolveDiscovery([]);
+    await pending2;
+    assert.deepEqual(h2.calls[0].body, { kind: "openai-compatible", baseUrl: "https://prov.example/v1" }, "pasted mask = no key on the wire");
+
+    const h3 = harness();
+    h3.controller.openEditForm({
+      id: "p", label: "P", kind: "anthropic", model: "m", createdAt: 1, updatedAt: 1,
+    });
+    const pending3 = h3.controller.discoverModels();
+    h3.resolveDiscovery([]);
+    await pending3;
+    assert.deepEqual(h3.calls[0].body, { kind: "anthropic" }, "empty baseUrl is omitted, empty key omitted");
+  });
+
+  it("exactly one discovery request at a time", async () => {
+    const h = harness();
+    openFormWithKey(h);
+    const first = h.controller.discoverModels();
+    await h.controller.discoverModels();
+    assert.equal(h.calls.length, 1, "second click while loading is a no-op");
+    h.resolveDiscovery(["m"]);
+    await first;
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "ready", models: ["m"] });
+  });
+
+  it("changing kind, baseUrl, or apiKey clears results; label/model changes keep them", async () => {
+    const h = harness();
+    openFormWithKey(h);
+    const pending = h.controller.discoverModels();
+    h.resolveDiscovery(["m1", "m2"]);
+    await pending;
+    assert.equal(h.get().form?.modelDiscovery.status, "ready");
+
+    h.controller.handleFieldChange("label", "Renamed");
+    assert.equal(h.get().form?.modelDiscovery.status, "ready", "label is irrelevant to discovery");
+    h.controller.handleFieldChange("model", "typed-model");
+    assert.equal(h.get().form?.modelDiscovery.status, "ready", "typing a model does not clear results");
+
+    h.controller.handleFieldChange("baseUrl", "https://other.example/v1");
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "idle" }, "base URL change clears stale results");
+
+    // Re-fetch, then change kind → cleared again.
+    const pending2 = h.controller.discoverModels();
+    h.resolveDiscovery(["m1"]);
+    await pending2;
+    h.controller.handleFieldChange("kind", "anthropic");
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "idle" });
+
+    // Re-fetch, then change the key → cleared again.
+    const pending3 = h.controller.discoverModels();
+    h.resolveDiscovery(["m1"]);
+    await pending3;
+    h.controller.handleFieldChange("apiKey", RAW_KEY);
+    assert.deepEqual(h.get().form?.modelDiscovery, { status: "idle" });
+  });
+
+  it("an upstream failure lands in modelDiscovery.error; the raw key never enters the state", async () => {
+    const h = harness();
+    openFormWithKey(h);
+    const pending = h.controller.discoverModels();
+    h.failDiscovery(502, { error: "model discovery: the provider answered HTTP 500", code: "DISCOVERY_UPSTREAM" });
+    await pending;
+    const discovery = h.get().form?.modelDiscovery;
+    assert.equal(discovery?.status, "error");
+    assert.ok(discovery && "message" in discovery && discovery.message.includes("HTTP 500"));
+    // The transient form still holds the typed key while open (by design);
+    // the ERROR result, the notices, and the profile list must not.
+    assert.equal(JSON.stringify(discovery).includes(RAW_KEY), false, "error result must be secret-free");
+    assert.equal(JSON.stringify(h.get().notice ?? "").includes(RAW_KEY), false);
+    assert.equal(JSON.stringify(h.get().profiles).includes(RAW_KEY), false);
+    assert.deepEqual(h.calls.map((c) => `${c.method} ${c.url}`), ["POST /api/providers/discover-models"], "no profile mutation on failure");
+  });
+
+  it("a 401 hands control back to the host instead of storing an error", async () => {
+    const h = harness();
+    openFormWithKey(h);
+    const pending = h.controller.discoverModels();
+    h.failDiscovery(401, { error: "bearer token is not valid", code: "AUTH_INVALID" });
+    await pending;
+    assert.equal(h.authErrors(), 1);
+    assert.notEqual(h.get().form?.modelDiscovery.status, "error");
+  });
+
+  it("discovery is a no-op without a form or while submitting", async () => {
+    const h = harness();
+    await h.controller.discoverModels();
+    assert.equal(h.calls.length, 0);
+    h.controller.openCreateForm();
+    h.controller.handleFieldChange("profileId", "p");
+    h.controller.handleFieldChange("label", "L");
+    h.controller.handleFieldChange("model", "m");
+    h.controller.handleFieldChange("baseUrl", "https://prov.example/v1");
+    // A submitting form is ignored (the submit POST is in flight).
+    const original = h.get().form;
+    if (original) original.submitting = true;
+    const stateRef = h.get();
+    Object.defineProperty(stateRef, "form", { value: { ...original } });
+    await h.controller.discoverModels();
+    assert.ok(h.calls.every((c) => !String(c.url).endsWith("/discover-models")));
+  });
+});

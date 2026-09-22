@@ -218,3 +218,33 @@ describe("ApiClient", () => {
     assert.deepEqual(result, { seq: 5, terminal: false, reason: "gave_up" });
   });
 });
+
+describe("ApiClient.discoverModels (B4.2)", () => {
+  it("POSTs the discovery body to /api/providers/discover-models with the bearer header and parses {models}", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchImpl: typeof fetch = async (url: any, init: any) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ models: ["alpha", "zeta"] }), { status: 200 });
+    };
+    const client = new ApiClient({ token: "tok-1", fetch: fetchImpl });
+    const result = await client.discoverModels({ kind: "openai-compatible", baseUrl: "https://prov.example/v1", apiKey: "sk-raw-key" });
+    assert.deepEqual(result, { models: ["alpha", "zeta"] });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "/api/providers/discover-models");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal((calls[0].init.headers as any).authorization, "Bearer tok-1");
+    const body = JSON.parse(calls[0].init.body as string);
+    assert.deepEqual(body, { kind: "openai-compatible", baseUrl: "https://prov.example/v1", apiKey: "sk-raw-key" });
+  });
+
+  it("maps server validation failures to ApiRequestError with the DISCOVERY_* code", async () => {
+    const client = new ApiClient({
+      token: "tok",
+      fetch: (async () => new Response(JSON.stringify({ error: "baseUrl must start with http:// or https://", code: "DISCOVERY_INVALID_REQUEST" }), { status: 400 })) as any,
+    });
+    await assert.rejects(
+      client.discoverModels({ kind: "openai-compatible", baseUrl: "nope" }),
+      (err: unknown) => err instanceof ApiRequestError && err.status === 400 && err.code === "DISCOVERY_INVALID_REQUEST"
+    );
+  });
+});
