@@ -88,7 +88,10 @@ Until a repository admin requires the nine status checks — `CI`,
 least one approval on `main`, a green `CI` run is **informational**: it does not
 block a merge, and "failed CI gates block release" (P1-06) is not true.
 
-**Outstanding admin action:** on `main`, require the nine status checks listed
+**Admin action deferred by owner decision (2026-09-22):** branch protection
+will be configured only at the end of the project — a deliberate deferral,
+not a gap, and not an open item for status tracking before then. When
+configured: on `main`, require the nine status checks listed
 above, plus >= 1 approving review. All nine are required:
 `Browser E2E` is the only job that drives the shipped UI (including `/dashboard`)
 in a real browser, so omitting it would let a merge land that passes every unit
@@ -518,7 +521,7 @@ Acceptance:
 ### [ ] No open release-blocking security issues remain
 ### [x] Release artifacts are tested and verified before publication — B5 (2026-09-22): tag-driven release workflow (`.github/workflows/release.yml`) gates on the tag matching `package.json` + the changelog section, re-runs the packed smokes and the installed-app e2e journey before a DRAFT GitHub Release is created with the installer, CLI tarball, update metadata and `SHA256SUMS.txt`; per-PR the `Desktop installer` job proves install → upgrade → uninstall
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
-### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action) — B5 adds `Desktop signing (windows-latest)` to the intended required set (nine checks)
+### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action) — B5 adds `Desktop signing (windows-latest)` to the intended required set (nine checks); **owner decision 2026-09-22: deferred to the end of the project** (deliberate deferral, not a gap — see "Merge gating is NOT configured")
 ### [x] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays (narrowed to >=22.0.0)
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 ### [x] Versioning: single source of truth — B5 (2026-09-22): `npm run check:release` (CI-enforced) requires the root `package.json` version to be valid semver and all four workspaces to match it; release tags are bound to the tree via `--require-version`
