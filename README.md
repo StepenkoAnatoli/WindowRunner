@@ -134,11 +134,18 @@ npm run package:desktop:win    # → packages/desktop/release/WindowRunner-Setup
 
 Run `WindowRunner-Setup-<version>.exe` for a per-user install (no admin/UAC;
 Start Menu entry under `%LOCALAPPDATA%\Programs\WindowRunner`). User data —
-sessions, provider profiles, logs — lives in `%APPDATA%\WindowRunner` and
-survives uninstall. Automation: silent install/uninstall with `/S`. The
-`Desktop installer (windows-latest)` CI job builds the installer, installs it
-silently, drives the installed app through a mock session, and uninstalls it on
-every push. See [docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app).
+sessions, provider profiles, logs — lives in `%APPDATA%\WindowRunner`,
+survives uninstall, and is preserved across in-place upgrades. Automation:
+silent install/uninstall with `/S`. The `Desktop installer (windows-latest)`
+CI job builds the installer, installs it silently, drives the installed app
+through a mock session, verifies an in-place upgrade keeps user data, and
+uninstalls it on every push. Every installer artifact ships with a
+`SHA256SUMS.txt` sidecar; the `Desktop signing (windows-latest)` job proves
+the Authenticode signing pipeline on every push (official installers stay
+unsigned — and SmartScreen warns — until a production certificate is wired in
+as a repo secret). See
+[docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app) → "Code signing and
+SmartScreen" and "Verifying a download".
 
 ---
 

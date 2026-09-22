@@ -642,11 +642,24 @@ jobs:
         shell: bash
         run: npm run package:desktop:win
 
+      # B5.4 — every installer artifact ships with a checksum sidecar so users
+      # can verify integrity (docs/INSTALL.md -> "Verifying a download").
+      - name: Publish SHA-256 checksums for the installer artifacts
+        shell: bash
+        run: |
+          cd packages/desktop/release
+          node ../../../scripts/checksums.mjs --out . *-Setup-*.exe latest.yml
+          echo "SHA256SUMS.txt:"
+          cat SHA256SUMS.txt
+
       - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
           name: windowrunner-installer
-          path: packages/desktop/release/*-Setup-*.exe
+          path: |
+            packages/desktop/release/*-Setup-*.exe
+            packages/desktop/release/latest.yml
+            packages/desktop/release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 

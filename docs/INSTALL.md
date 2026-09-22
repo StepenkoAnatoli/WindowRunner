@@ -583,13 +583,63 @@ npm run package:desktop:win
 
 CI enforces the whole story on every push: the `Desktop installer
 (windows-latest)` job builds the NSIS installer, installs silently, drives the
-installed app through boot → auto-auth → mock turn → clean shutdown, then
-uninstalls and asserts removal. The installer exe is uploaded as a workflow
-artifact (`windowrunner-installer`).
+installed app through boot → auto-auth → mock turn → clean shutdown, verifies
+an in-place upgrade to a newer build keeps your data (B5.6), then uninstalls
+and asserts removal while user data survives. The installer exe, its
+`latest.yml` update metadata, and a `SHA256SUMS.txt` sidecar are uploaded as a
+workflow artifact (`windowrunner-installer`).
 
-**Known gaps:** the installer is not code-signed (SmartScreen warns on first
-run: "More info → Run anyway") and uses the default Electron icon. Signing and
-branding are separate milestones.
+### Code signing and SmartScreen
+
+**Current status: the signing pipeline is proven, but official installers are
+not yet signed — SmartScreen will warn until a production certificate is
+provided.**
+
+- The build signs automatically when `WIN_CSC_LINK` (a `.pfx`/`.p12` file
+  path, an https URL, or base64 content) and `WIN_CSC_KEY_PASSWORD` are set;
+  without them it builds unsigned (documented in
+  `packages/desktop/electron-builder.yml`). SHA-256 only.
+- The `Desktop signing (windows-latest)` CI job proves the full pipeline on
+  every push: it signs a build with a self-signed test certificate and asserts
+  the app executable and the installer carry an Authenticode signature. This
+  proves cert injection → signtool → signed artifacts; it does **not** create
+  trust — a self-signed chain is untrusted on every machine by design.
+- Release builds use `npm run package:desktop:win:release`, which sets
+  `forceCodeSigning`: a release build that cannot sign **fails** instead of
+  shipping silently unsigned.
+- To ship signed installers, a maintainer adds the repository secrets
+  `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (OV or EV code-signing certificate).
+  Nothing else changes — the release workflow picks them up automatically.
+  With an OV certificate, SmartScreen reputation builds over downloads of the
+  signed artifacts; an EV certificate earns immediate reputation. Until then,
+  Windows SmartScreen shows "Windows protected your PC" on first run — click
+  **More info → Run anyway** if you trust the source, or build from source.
+
+### Verifying a download
+
+Official artifacts come from exactly two places: **GitHub Releases of this
+repository** and the **npm registry tarball** (`windows-runner`). Anything
+else (mirrors, "free download" sites) is not ours. Every release and every
+CI `windowrunner-installer` artifact carries a `SHA256SUMS.txt` sidecar:
+
+```powershell
+# Windows PowerShell
+Get-FileHash .\WindowRunner-Setup-<version>.exe -Algorithm SHA256
+# or: certutil -hashfile .\WindowRunner-Setup-<version>.exe SHA256
+```
+
+```bash
+# Linux / macOS / Git Bash
+sha256sum -c SHA256SUMS.txt   # from the directory holding the artifacts
+```
+
+Compare against the value published with the release. A checksum verifies
+integrity (your download matches what we built), not publisher identity —
+publisher identity is what the code signature above provides once a
+certificate is in place.
+
+**Known gaps:** no production code-signing certificate yet (see above), and
+the app uses the default Electron icon. Branding is a separate milestone.
 
 ### UI limitations (B3)
 

@@ -24,6 +24,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkChangelog, collectVersionProblems, SEMVER_RE } from "../../../scripts/check-release.mjs";
+import { formatSums } from "../../../scripts/checksums.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -164,5 +165,66 @@ describe("release contract: code signing (B5.3)", () => {
     assert.match(yml, /signingHashAlgorithms:\n {6}- sha256\n/);
     assert.ok(!yml.includes("certificateFile"), "no certificate path may be hardcoded in the builder config");
     assert.ok(!yml.includes("certificatePassword"), "no certificate password may be hardcoded in the builder config");
+  });
+});
+
+describe("release contract: artifact checksums (B5.4)", () => {
+  it("formatSums produces a sha256sum -c compatible, sorted, basename-only sidecar", async () => {
+    const { createHash } = await import("node:crypto");
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-sums-"));
+    try {
+      const a = path.join(tmp, "b-file.txt");
+      const b = path.join(tmp, "a-file.txt");
+      await fsp.writeFile(a, "content-a");
+      await fsp.writeFile(b, "content-b");
+      const sums = formatSums([a, b]);
+      const lines = sums.trim().split("\n");
+      assert.equal(lines.length, 2);
+      // Sorted by basename: a-file before b-file.
+      assert.match(lines[0]!, /^[0-9a-f]{64}  a-file\.txt$/);
+      assert.match(lines[1]!, /^[0-9a-f]{64}  b-file\.txt$/);
+      assert.equal(
+        lines[0]!.split("  ")[0],
+        createHash("sha256").update("content-b").digest("hex")
+      );
+      assert.ok(sums.endsWith("\n"), "the sidecar ends with a newline");
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("duplicate basenames are refused (a sidecar must not be ambiguous)", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "wr-sums-"));
+    try {
+      await fsp.writeFile(path.join(tmp, "x", "same.txt"), "one").catch(() => {});
+      await fsp.mkdir(path.join(tmp, "x"), { recursive: true });
+      await fsp.writeFile(path.join(tmp, "x", "same.txt"), "one");
+      await fsp.mkdir(path.join(tmp, "y"), { recursive: true });
+      await fsp.writeFile(path.join(tmp, "y", "same.txt"), "two");
+      await assert.rejects(async () => formatSums([path.join(tmp, "x", "same.txt"), path.join(tmp, "y", "same.txt")]), /duplicate basename/);
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("the installer CI job publishes a SHA256SUMS.txt with every artifact upload", () => {
+    const ci = read(".github/workflows/ci.yml");
+    assert.ok(
+      ci.includes("node ../../../scripts/checksums.mjs --out . *-Setup-*.exe latest.yml"),
+      "the installer job must generate SHA256SUMS.txt for the installer and update metadata"
+    );
+    const uploadBlock = ci.slice(ci.indexOf("name: windowrunner-installer"));
+    assert.ok(
+      uploadBlock.includes("SHA256SUMS.txt"),
+      "the windowrunner-installer artifact must include SHA256SUMS.txt"
+    );
+  });
+
+  it("docs teach verification and name the official download sources", () => {
+    const install = read("docs/INSTALL.md");
+    assert.ok(install.includes("### Verifying a download"), "INSTALL must have a verifying-a-download section");
+    assert.ok(install.includes("Get-FileHash"), "INSTALL must show the PowerShell verification command");
+    assert.ok(install.includes("sha256sum -c SHA256SUMS.txt"), "INSTALL must show the sha256sum verification command");
+    assert.ok(/GitHub Releases of this\s+repository/.test(install), "INSTALL must name the official download sources");
   });
 });
