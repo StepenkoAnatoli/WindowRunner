@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startServer, resolveWebDir, resolveDesktopDir, type StartedServer } from "../src/boot.js";
+import { isClientAppRoute } from "../src/app.js";
 import { loadServerConfig } from "../src/config.js";
 
 const TOKEN = "web-ui-test-token-0123456789abcdef";
@@ -38,11 +39,18 @@ async function fakeWebDir(): Promise<string> {
   return dir;
 }
 
-async function boot(webDir: string | null | undefined, desktopDir?: string | null): Promise<StartedServer> {
+async function boot(webDir: string | null | undefined, desktopDir?: string | null, dashboardDir?: string | null): Promise<StartedServer> {
   const config = loadServerConfig({ HOST: "127.0.0.1", PORT: "0", WINDOWS_RUNNER_AUTH_TOKEN: TOKEN }, { homedir: os.tmpdir() });
-  const h = await startServer(config, { webDir, desktopDir });
+  const h = await startServer(config, { webDir, desktopDir, dashboardDir });
   started.push(h);
   return h;
+}
+
+async function fakeDashboardDir(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wr-dashui-"));
+  tmps.push(dir);
+  await fs.writeFile(path.join(dir, "dashboard.html"), "<!doctype html><title>dash</title>");
+  return dir;
 }
 
 async function fakeDesktopDir(): Promise<string> {
@@ -98,6 +106,7 @@ describe("web UI static serving (P1-07)", () => {
     const h = await boot(null);
     assert.equal(h.webDir, undefined);
     assert.equal((await fetch(`${h.url}/`)).status, 404);
+    assert.equal((await fetch(`${h.url}/providers`)).status, 404);
     assert.equal((await fetch(`${h.url}/healthz`)).status, 200);
     assert.equal((await fetch(`${h.url}/api/health`)).status, 401);
   });
@@ -111,6 +120,69 @@ describe("web UI static serving (P1-07)", () => {
     } else {
       assert.equal(resolved, undefined);
     }
+  });
+});
+
+describe("deep client routes (B3)", () => {
+  it("folds only the allowlisted paths", () => {
+    for (const p of ["/providers", "/Providers/", "/usage", "/settings/security", "/settings/storage/", "/SETTINGS/ABOUT"]) {
+      assert.equal(isClientAppRoute(p), true, p);
+    }
+    for (const p of ["/", "/dashboard", "/desktop", "/api/providers", "/healthz", "/settings", "/settings/nope", "/providers/app.js", "/no-such"]) {
+      assert.equal(isClientAppRoute(p), false, p);
+    }
+  });
+
+  it("serves the main app shell for allowlisted routes and refuses everything else", async () => {
+    const h = await boot(await fakeWebDir(), null, await fakeDashboardDir());
+    const shell = await (await fetch(`${h.url}/`)).text();
+    assert.match(shell, /<title>t<\/title>/);
+
+    for (const route of ["/providers", "/Providers/", "/usage", "/settings/security", "/settings/storage/", "/settings/about"]) {
+      const res = await fetch(`${h.url}${route}`);
+      assert.equal(res.status, 200, route);
+      assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.match(res.headers.get("content-security-policy") ?? "", /script-src 'self'/);
+      assert.equal(await res.text(), shell, `${route} must be the same static shell, not an interpolated page`);
+    }
+
+    const queried = await fetch(`${h.url}/providers?token=${encodeURIComponent(TOKEN)}`);
+    const queriedBody = await queried.text();
+    assert.equal(queried.status, 200);
+    assert.equal(queriedBody, shell);
+    assert.equal(queriedBody.includes(TOKEN), false, "a query string must not be reflected into the HTML");
+
+    const head = await fetch(`${h.url}/usage`, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.match(head.headers.get("content-type") ?? "", /text\/html/);
+
+    const dash = await fetch(`${h.url}/dashboard`);
+    const dashBody = await dash.text();
+    assert.equal(dash.status, 200);
+    assert.match(dashBody, /<title>dash<\/title>/);
+    assert.equal(dashBody.includes("<title>t</title>"), false, "/dashboard must not be swallowed by the app shell");
+
+    const api = await fetch(`${h.url}/api/providers`);
+    const apiBody = await api.text();
+    assert.equal(api.status, 401);
+    assert.equal(apiBody.includes("<title>t</title>"), false);
+
+    const healthz = await fetch(`${h.url}/healthz`);
+    assert.equal(healthz.status, 200);
+    assert.equal((await healthz.json()).status, "ok");
+
+    for (const missing of ["/no-such-page", "/settings", "/settings/nope", "/providers/app.js", "/missing.js", "/desktop"]) {
+      const res = await fetch(`${h.url}${missing}`);
+      assert.equal(res.status, 404, missing);
+      const body = await res.text();
+      assert.equal(body.includes("<title>t</title>"), false, `${missing} must not receive the app shell`);
+    }
+
+    const post = await fetch(`${h.url}/providers`, { method: "POST" });
+    const postBody = await post.text();
+    assert.equal(post.status, 404);
+    assert.equal(postBody.includes("<title>t</title>"), false, "POST must not be answered with the shell");
   });
 });
 
