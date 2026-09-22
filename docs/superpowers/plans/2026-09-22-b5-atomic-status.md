@@ -1,5 +1,20 @@
 # B5 atomic checklist — phase status
 
+> **CLOSING NOTE — 2026-09-22: B5 is merged and the post-merge checks are green.**
+> PR #32 merged into `main` as `84aacd357e0877a377c50a278ce095c270e9128c`
+> ("Merge pull request #32 from StepenkoAnatoli/arena/01a0c893-windowrunner").
+> Post-merge run
+> [35736971857](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35736971857)
+> finished success on that merge commit: all nine checks — `CI`, `Browser
+> E2E`, `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`,
+> `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
+> (windows-latest)`, `Desktop signing (windows-latest)`. A later docs-only
+> merge (PR #30, B3's own merge record) moved `main` to `65d5317`; its
+> post-merge run
+> [35742013439](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35742013439)
+> is green on all nine checks as well. Next step: cut `v0.1.0` per
+> RELEASE_CHECKLIST.md → "Cutting a release".
+
 Durable progress record for B5 (release hardening). Chat history is not
 durable — this file is. Updated at every B5 stop point.
 
@@ -9,10 +24,11 @@ Plan: `docs/superpowers/plans/2026-09-22-b5-release-hardening.md`
 
 ## Status
 
-B5.0–B5.9 implemented; full local gate green. **All nine CI checks green on
-evidence commit `505c2ee`, run
-[35729254359](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35729254359).**
-GO-for-merge is recorded at the end of this file.
+B5.0–B5.9 implemented, full local gate green, **merged**. PR #32 merged as
+`84aacd3`; post-merge run
+[35736971857](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35736971857)
+is green on all nine checks (details in the closing note above). The GO
+verdict that preceded the merge is preserved at the end of this file.
 
 ## Commits
 
@@ -226,7 +242,8 @@ aa179aa — fix(ci): poll for the new version, not exe existence, in the upgrade
 
 ## CI status
 
-PR: https://github.com/StepenkoAnatoli/WindowRunner/pull/32 (open).
+PR: https://github.com/StepenkoAnatoli/WindowRunner/pull/32 (**merged** into
+`main` as `84aacd357e0877a377c50a278ce095c270e9128c`, 2026-09-22).
 
 Four CI rounds ran on the PR. Each failure was diagnosed from the check-run
 annotations plus electron-builder/playwright source and fixed with local
@@ -240,20 +257,30 @@ verification (the sandbox cannot fetch Actions logs/artifacts or run Electron):
 | 35725941413 | 1359116 | 8/9 green | Checksums/upload/install/installed-e2e/upgrade-phase-A green; in-place upgrade step failed: it polled for the exe to EXIST (instantly true — the old install's exe) and compared ProductVersion before the NSIS replacement settled. Now polls for the version itself, up to 120 s, with failure diagnostics. |
 | 35726866348 | aa179aa | 8/9 green | In-place upgrade step green (version polling fix worked) and `Desktop signing` passed on its first execution (cert → signtool → signed exe + installer). `Desktop installer` failed in upgrade phase B: the spec asserted historical-turn REPLAY in the UI, which the app deliberately does not do after reattach (documented B3 limitation; `selectSession` never fetches turn history). Phase B now asserts reattach success (session-id renders) + persistence-layer survival (the phase-A turn log exists on disk and contains the phase-A message and a `turn_completed` event) + a fresh turn. |
 | **35729254359** | **505c2ee** | **9/9 GREEN** | All nine checks pass: `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer (windows-latest)` (build → checksums → silent install → installed-app e2e → upgrade A → in-place upgrade → upgrade B → uninstall with user-data survival), `Desktop signing (windows-latest)`. |
+| **35736971857** | **84aacd3** | **9/9 GREEN** | **Post-merge main run** on the PR #32 merge commit — all nine checks success. B5 is merged and green on `main`. |
 
 (Monitoring of round 35726866348 was cut by a second sandbox credential
 expiry; its result was read after the credential returned.)
 
+After the merge, `main` moved once more: PR #30 (B3's own merge record,
+docs-only) merged as `65d5317`, and its post-merge run
+[35742013439](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35742013439)
+is green on all nine checks too — the release guard tree for `v0.1.0` is
+verified on the current tip.
+
 ## Verdict
 
-B5.9 PASS / **GO — merge PR #32.**
+B5.9 PASS / **complete — merged.** PR #32 merged as `84aacd3`; post-merge run
+[35736971857](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35736971857)
+is green on all nine checks. Follow-on: cut `v0.1.0`
+(RELEASE_CHECKLIST.md → "Cutting a release") and the two maintainer actions
+under Known gaps (production signing certificate, branch protection).
 
-Evidence: all nine checks green on head commit `505c2ee`, run
+The GO that authorized the merge, recorded pre-merge: all nine checks green
+on head commit `505c2ee`, run
 [35729254359](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35729254359).
 The five CI rounds each surfaced a real defect (CRLF changelog parsing, a
 wrong data-dir assumption in the smoke, optional-artifact handling in the
 checksums step, existence-based upgrade polling, and a phase-B
 over-assertion of UI turn replay) — every one fixed with regression coverage
-or a locally-verified mechanism and recorded under Deviations. This docs-only
-status commit starts one more run; the merge proceeds on the evidence above
-(same pattern as the B3/B4 status files).
+or a locally-verified mechanism and recorded under Deviations.
