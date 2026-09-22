@@ -56,6 +56,7 @@ function makeProps(state: ProviderUiState): Recorder {
     onSubmit: () => void called.push("submit"),
     onCancelForm: () => void called.push("cancel"),
     onFieldChange: (field, value) => void called.push(`field:${field}=${value}`),
+    onDiscoverModels: () => void called.push("discover"),
     onDismissNotice: () => void called.push("dismiss"),
     onRefresh: () => void called.push("refresh"),
     onBackToWorkspace: () => void called.push("back"),

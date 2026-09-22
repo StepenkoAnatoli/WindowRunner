@@ -42,6 +42,7 @@ describe("provider form", () => {
       },
       onSubmit: () => void calls.push("submit"),
       onCancel: () => void calls.push("cancel"),
+      onDiscoverModels: () => void calls.push("discover"),
       ...overrides,
     };
   }

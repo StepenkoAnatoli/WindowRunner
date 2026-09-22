@@ -576,6 +576,7 @@ function routeContent(): HTMLElement {
           onSubmit: () => void providersController.submitForm(),
           onCancelForm: () => providersController.closeForm(),
           onFieldChange: (field: ProviderFormField, value: string) => providersController.handleFieldChange(field, value),
+          onDiscoverModels: () => void providersController.discoverModels(),
           onDismissNotice: () => providersController.dismissNotice(),
           onRefresh: () => void providersController.load(true),
           onBackToWorkspace: () => navigateTo({ kind: "workspace" }),

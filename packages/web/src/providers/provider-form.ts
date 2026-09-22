@@ -37,6 +37,8 @@ export interface ProviderFormProps {
   onChange(field: ProviderFormField, value: string): void;
   onSubmit(): void;
   onCancel(): void;
+  /** One-shot "Fetch models" (B4.3); the host wires it to the controller. */
+  onDiscoverModels(): void;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -89,6 +91,57 @@ export function renderProviderForm(props: ProviderFormProps): HTMLElement {
         )
       : null;
 
+  /**
+   * B4.3 model-discovery region. Discovery is never required: the manual
+   * model input above stays visible and enabled in EVERY state. The region
+   * shows the one-shot button (openai-compatible + mock; mock answers its
+   * offline list honestly), the loading indicator, the discovered-model
+   * select, the exact empty-state copy, or a secret-free error. Anthropic
+   * has no live listing yet, so the region says so up front instead of
+   * offering a click that can only fail — and never presents a static list
+   * as live provider data.
+   */
+  const discovery = form.modelDiscovery ?? { status: "idle" as const };
+  const discoverySupported = form.kind === "openai-compatible" || form.kind === "mock";
+  const discoveryBusy = discovery.status === "loading" || form.submitting;
+  const discoveryRegion = el(
+    "div",
+    { class: "provider-discovery", "data-testid": "provider-model-discovery" },
+    discoverySupported
+      ? el(
+          "div",
+          { class: "row" },
+          button("provider-discover-models", discovery.status === "loading" ? "Fetching models…" : "Fetch models", props.onDiscoverModels, "secondary", discoveryBusy),
+          discovery.status === "idle" ? el("span", { class: "hint" }, "optional — or enter the model id manually") : null
+        )
+      : el("span", { class: "hint", "data-testid": "provider-model-discovery-fallback" }, "model discovery unavailable for this provider"),
+    discovery.status === "loading" ? el("p", { class: "hint", "data-testid": "provider-model-discovery-loading" }, "Fetching models…") : null,
+    discovery.status === "ready" && discovery.models.length > 0
+      ? (() => {
+          const select = el(
+            "select",
+            { "data-testid": "provider-model-select", "aria-label": "Discovered models" },
+            el("option", { value: "" }, "Select a model…"),
+            ...discovery.models.map((m) => el("option", { value: m }, m))
+          );
+          // Choosing an option copies the id into the model field; the select
+          // itself is rebuilt from state on the next render, so it returns to
+          // the placeholder and the text field stays the source of truth.
+          select.addEventListener("change", () => {
+            const value = (select as unknown as HTMLSelectElement).value;
+            if (value) props.onChange("model", value);
+          });
+          return select;
+        })()
+      : null,
+    discovery.status === "ready" && discovery.models.length === 0
+      ? el("p", { class: "hint", "data-testid": "provider-model-discovery-empty" }, "No models were returned. Enter the model id manually.")
+      : null,
+    discovery.status === "error"
+      ? el("p", { class: "error small", "data-testid": "provider-model-discovery-error", role: "alert" }, discovery.message)
+      : null
+  );
+
   const form2 = el(
     "form",
     { class: "panel provider-form", "data-testid": "provider-form", novalidate: "true" },
@@ -115,7 +168,14 @@ export function renderProviderForm(props: ProviderFormProps): HTMLElement {
           fieldError("baseUrl")
         )
       : null,
-    el("label", {}, "Model", input("provider-model", "model", { placeholder: "model-id" }), fieldError("model")),
+    el(
+      "label",
+      { "data-testid": "provider-model-manual" },
+      "Model",
+      input("provider-model", "model", { placeholder: "model-id" }),
+      fieldError("model")
+    ),
+    discoveryRegion,
     el(
       "label",
       {},
