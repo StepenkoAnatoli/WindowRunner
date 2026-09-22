@@ -1,5 +1,14 @@
 # B3 atomic checklist — phase status
 
+> **CLOSING NOTE — 2026-09-22: B3 is merged and the post-merge checks are green.**
+> PR #29 merged into `main` as `126f512` ("Merge pull request #29 from
+> StepenkoAnatoli/arena/01a0c761-windowrunner"). Post-merge run
+> [35700641678](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35700641678)
+> finished success on that merge commit: CI, Browser E2E, Docker, Platform
+> windows-latest, Platform macos-latest, Desktop ubuntu-latest, Desktop
+> windows-latest, and Desktop installer windows-latest. B4 is unblocked by
+> that gate and has not been started here.
+
 Durable progress record for B3 (release-quality UI and route hardening). Chat history is not durable — this file is.
 
 Branch: `arena/01a0c761-windowrunner`
@@ -14,7 +23,7 @@ The eight checks were green on `5a0ffc9` and again on the status commit `8b43c46
 
 ## Status
 
-B3.0–B3.6 implemented. **GO for merge of PR #29** on the evidence above. Not merged. B4 has not started.
+B3.0–B3.6 implemented and merged. PR #29 merged as `126f512`. Post-merge run 35700641678 is success on that commit. B4 has not started.
 
 ## Commits
 
@@ -108,8 +117,10 @@ Server allowlist and tests, root-absolute shell assets, desktop bootstrap republ
 ## CI status
 
 Run [35692202945](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692202945) on `5a0ffc9`: all eight checks success.
-Run [35692629309](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692629309) on `8b43c46`: all eight checks success. That is the status-file commit. This follow-up does not cite its own run.
+Run [35692629309](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692629309) on `8b43c46`: all eight checks success.
+Run [35695575112](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35695575112) on `202c72d`: all eight checks success. That was the PR tip that merged.
+Run [35700641678](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35700641678) on merge commit `126f512`: all eight checks success.
 
 ## Go / no-go
 
-**GO** to merge PR #29. **NO-GO** for B4 until that merge is green.
+**B3 is complete.** PR #29 is merged and the merge commit is green. **B4 has not started.**
