@@ -218,21 +218,32 @@ b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
 
 ## CI status
 
-PR: https://github.com/StepenkoAnatoli/WindowRunner/pull/32
-(push succeeded after the sandbox GitHub credential was reconnected; the
-session token had expired mid-session before the first push — recorded above).
+PR: https://github.com/StepenkoAnatoli/WindowRunner/pull/32 (open).
 
-Evidence run: the run for the PR head commit is
-[35721962380](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35721962380)
-(nine checks: `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`,
-`Platform (macos-latest)`, `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`,
-`Desktop installer (windows-latest)` with the new upgrade/uninstall gate,
-`Desktop signing (windows-latest)` — new). Status: in progress at the time of
-this commit; per-check results are appended below when the run completes.
+Four CI rounds ran on the PR. Each failure was diagnosed from the check-run
+annotations plus electron-builder/playwright source and fixed with local
+verification (the sandbox cannot fetch Actions logs/artifacts or run Electron):
+
+| Run | Commit | Result | Root cause |
+| --- | --- | --- | --- |
+| 35722019654 | c21dcbc | 5/9 green | Windows unit tests: `check-release.mjs` parsed CHANGELOG.md LF-only and failed on the CRLF checkout (core.autocrlf; .gitattributes pins only `*.sh`). Ubuntu electron smoke: see next row. |
+| 35723716969 | a0cd37b | 5/9 green | Windows unit tests fixed (newline-agnostic parsers + CRLF regression test). Electron smoke failed on BOTH OSes: the test polled the smoke's temp data dir, but the real app resolves its data dir from `app.getPath("userData")` — test now asks the app (desktop.spec.ts pattern); the rejection→record mechanism was proven locally against an attached inspector session. |
+| 35724895275 | b545afc | 7/9 green | All Desktop/E2E/Platform jobs green. Installer job failed at the checksums step: `latest.yml` is emitted only with a publish provider (verified in app-builder-lib's updateInfoBuilder); the step now requires only the installer exe and attaches update metadata when present (existence-checked — nullglob alone would not drop literal names). |
+| 35725941413 | 1359116 | 8/9 green | Checksums/upload/install/installed-e2e/upgrade-phase-A green; in-place upgrade step failed: it polled for the exe to EXIST (instantly true — the old install's exe) and compared ProductVersion before the NSIS replacement settled. Now polls for the version itself, up to 120 s, with failure diagnostics. |
+| 35726866348 | aa179aa | in progress | Monitoring was cut off by a second sandbox GitHub-credential expiry (401); record the result here once it can be read. |
+
+Everything except `Desktop installer (windows-latest)` and
+`Desktop signing (windows-latest)` has been green on the last completed round;
+`Desktop signing` has not executed yet in any completed round (it first
+reached its turn in round 3+).
 
 ## Verdict
 
-**Pending CI:** every local gate is green (see Tests) and the PR is open.
-The B5 gate requires all nine checks green on the head commit; this file
-records GO the moment that run lands — same pattern as the B3/B4 status
-files (the evidence commit's run is the merge basis).
+**Pending CI (run 35726866348 on head `aa179aa`):** every local gate is green
+and the PR is open. The B5 gate requires all nine checks green on the head
+commit; this file records GO the moment that run lands — same pattern as the
+B3/B4 status files (the evidence commit's run is the merge basis). The four
+preceding rounds each surfaced a real CI-only defect (CRLF parsing, wrong
+data-dir assumption, optional-artifact handling, upgrade polling) — all fixed
+with regression coverage or locally-verified mechanisms, and all recorded
+under Deviations.
