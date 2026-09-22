@@ -196,20 +196,26 @@ test("timeout is visible and recoverable; manual fallback still saves; /dashboar
   await expect(card(IDSLOW).locator(tid("dash-card-model"))).toContainText("hand-typed-model");
 
   // Cancelling never saves: open, type, cancel through the confirm dialog.
-  await page.once("dialog", (dialog) => void dialog.accept());
+  // ONE handler for the whole test — stacked once-handlers would both fire
+  // on the same dialog and the second would throw "already handled".
+  const acceptDialogs = (dialog: { accept(): Promise<void> }) => void dialog.accept();
+  page.on("dialog", acceptDialogs);
   await page.click(tid("providers-add"));
-  await page.locator(tid("provider-id")).fill("dsk-cancelled");
+  await page.locator(tid("provider-id")).fill(`dsk-cancelled-${RUN}`);
   await page.locator(tid("provider-label")).fill("Never Saved");
-  await page.once("dialog", (dialog) => void dialog.accept());
   await page.click(tid("provider-cancel"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card("dsk-cancelled")).toHaveCount(0);
+  await expect(card(`dsk-cancelled-${RUN}`)).toHaveCount(0);
 
   // No activation anywhere in this spec either.
   expect(activationPosts).toBe(0);
 
   // /dashboard compatibility is unchanged: a hard load keeps its own token
   // form (the in-memory desktop token belongs to the /desktop document).
+  // Same path as providers.spec.ts: back to Workspace first, then navigate.
+  await page.click(tid("nav-workspace"));
+  await expect(page.locator(tid("workspace-shell"))).toBeVisible();
   await page.goto(`${backendOrigin}/dashboard`);
   await expect(page.locator(tid("dash-token-form"))).toBeVisible();
+  page.off("dialog", acceptDialogs);
 });
