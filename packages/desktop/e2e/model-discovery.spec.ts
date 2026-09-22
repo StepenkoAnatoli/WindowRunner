@@ -30,6 +30,12 @@ const tid = (id: string) => `[data-testid="${id}"]`;
 const PROJECT_DIR = path.join(os.tmpdir(), "wr-desktop-e2e-discovery-project");
 const RAW_KEY = "sk-desktop-discovery-0123456789abcdef";
 const RAW_KEY_MASK = "****cdef";
+// CI retries re-run a failed test against the SAME app + backend, so saved
+// profile ids must be unique per attempt, and module-level counters must be
+// reset when a test starts.
+const RUN = Date.now().toString(36);
+const ID1 = `dsk-disc-${RUN}`;
+const IDSLOW = `dsk-slow-${RUN}`;
 
 let app: ElectronApplication | undefined;
 let page: Page;
@@ -90,6 +96,9 @@ const card = (id: string) => page.locator(`${tid("providers-list")} [data-testid
 
 test("discovery on the in-memory token: fetch, choose, save masked, boundaries hold", async () => {
   test.setTimeout(180_000);
+  upstreamHits.length = 0;
+  discoveryPosts.length = 0;
+  activationPosts = 0;
 
   // A session exists so the workspace catalog file is real when we assert it.
   await app!.evaluate(({ dialog }, dir) => {
@@ -110,8 +119,8 @@ test("discovery on the in-memory token: fetch, choose, save masked, boundaries h
   // Type kind/base URL/key, fetch once, get sorted deduped options.
   await page.click(tid("providers-add"));
   await page.locator(tid("provider-kind")).selectOption("openai-compatible");
-  await page.locator(tid("provider-id")).fill("dsk-disc");
-  await page.locator(tid("provider-label")).fill("Dsk Disc");
+  await page.locator(tid("provider-id")).fill(ID1);
+  await page.locator(tid("provider-label")).fill(`Dsk ${ID1}`);
   await page.locator(tid("provider-base-url")).fill(`${upstreamBase}/v1`);
   await page.locator(tid("provider-api-key")).fill(RAW_KEY);
   await page.click(tid("provider-discover-models"));
@@ -132,7 +141,7 @@ test("discovery on the in-memory token: fetch, choose, save masked, boundaries h
   await expect(page.locator(tid("provider-model"))).toHaveValue("alpha");
   await page.click(tid("provider-submit"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card("dsk-disc").locator(tid("dash-card-key"))).toHaveText(`key: ${RAW_KEY_MASK}`);
+  await expect(card(ID1).locator(tid("dash-card-key"))).toHaveText(`key: ${RAW_KEY_MASK}`);
 
   // Boundaries: URL, web storage, visible text, workspace catalog file.
   expect(page.url()).not.toContain(RAW_KEY);
@@ -152,18 +161,22 @@ test("discovery on the in-memory token: fetch, choose, save masked, boundaries h
 
   // Discovery never activated anything.
   expect(activationPosts).toBe(0);
-  await expect(page.locator(tid("providers-active"))).toContainText("default");
+  await expect(page.locator(tid("providers-active"))).toContainText("mock (env)");
+  await expect(page.locator(tid("providers-active"))).not.toContainText("Dsk ");
 });
 
 test("timeout is visible and recoverable; manual fallback still saves; /dashboard compatible", async () => {
   test.setTimeout(180_000);
+  upstreamHits.length = 0;
+  discoveryPosts.length = 0;
+  activationPosts = 0;
 
   // A hanging upstream hits the server's 5 s deadline; the error surfaces in
   // the discovery region and the form stays usable.
   await page.click(tid("providers-add"));
   await page.locator(tid("provider-kind")).selectOption("openai-compatible");
-  await page.locator(tid("provider-id")).fill("dsk-slow");
-  await page.locator(tid("provider-label")).fill("Dsk Slow");
+  await page.locator(tid("provider-id")).fill(IDSLOW);
+  await page.locator(tid("provider-label")).fill(`Dsk ${IDSLOW}`);
   await page.locator(tid("provider-base-url")).fill(`${upstreamBase}/v1/slow`);
   await page.locator(tid("provider-api-key")).fill(RAW_KEY);
   await page.click(tid("provider-discover-models"));
@@ -180,7 +193,7 @@ test("timeout is visible and recoverable; manual fallback still saves; /dashboar
   await page.locator(tid("provider-model")).fill("hand-typed-model");
   await page.click(tid("provider-submit"));
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
-  await expect(card("dsk-slow").locator(tid("dash-card-model"))).toContainText("hand-typed-model");
+  await expect(card(IDSLOW).locator(tid("dash-card-model"))).toContainText("hand-typed-model");
 
   // Cancelling never saves: open, type, cancel through the confirm dialog.
   await page.once("dialog", (dialog) => void dialog.accept());
