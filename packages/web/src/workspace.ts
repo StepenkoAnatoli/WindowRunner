@@ -48,13 +48,18 @@ export function renderConversationWorkspace(props: ConversationWorkspaceProps): 
   const form = el(
     "form",
     { class: "composer", "data-testid": "turn-form" },
-    el("textarea", {
-      "data-testid": "message-input",
-      rows: "3",
-      placeholder: "Ask the agent…",
-      required: "true",
-      ...(props.activeTurn ? { disabled: "true" } : {}),
-    }),
+    el(
+      "label",
+      { class: "hint" },
+      "Message",
+      el("textarea", {
+        "data-testid": "message-input",
+        rows: "3",
+        placeholder: "Ask the agent…",
+        required: "true",
+        ...(props.activeTurn ? { disabled: "true" } : {}),
+      })
+    ),
     el(
       "div",
       { class: "row" },

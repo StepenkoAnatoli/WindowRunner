@@ -41,12 +41,17 @@ export function renderProjectSidebar(props: ProjectSidebarProps): HTMLElement {
     : el(
         "form",
         { class: "open-project", "data-testid": "open-project-form" },
-        el("input", {
-          "data-testid": "project-path-input",
-          placeholder: "/home/me/project",
-          autocomplete: "off",
-          ...(blocked ? { disabled: "true" } : {}),
-        }),
+        el(
+          "label",
+          { class: "hint" },
+          "Project folder",
+          el("input", {
+            "data-testid": "project-path-input",
+            placeholder: "/home/me/project",
+            autocomplete: "off",
+            ...(blocked ? { disabled: "true" } : {}),
+          })
+        ),
         button("open-project", "Open project", undefined, "secondary", blocked || props.busy)
       );
   if (!props.desktopAvailable) {

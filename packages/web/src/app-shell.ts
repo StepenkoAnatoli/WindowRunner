@@ -14,6 +14,8 @@ export interface AppShellProps {
   inspector: HTMLElement;
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  /** In-flow notice (never a sticky overlay, never a focus trap). */
+  notice?: HTMLElement | null;
 }
 
 export function renderAppShell(props: AppShellProps): HTMLElement {
@@ -34,5 +36,5 @@ export function renderAppShell(props: AppShellProps): HTMLElement {
     props.workspace,
     props.inspector
   );
-  return el("div", { class: "app-root" }, props.header, shell);
+  return el("div", { class: "app-root" }, props.header, props.notice ?? null, shell);
 }

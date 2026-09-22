@@ -7,6 +7,7 @@ import {
 } from "./app-state.js";
 import { INSPECTOR_APPROVAL_IDS, renderApprovalCard, renderApprovalPreview } from "./approval-view.js";
 import { button, el } from "./dom.js";
+import { installArrowFocus } from "./keyboard-nav.js";
 import { renderToolTimeline } from "./tool-timeline.js";
 import type { InspectorSelection, InspectorTab } from "./workspace-catalog.js";
 
@@ -52,7 +53,7 @@ export const CHANGES_EMPTY_TEXT = "No pending file change preview. Completed fil
 export function renderInspector(props: InspectorProps): HTMLElement {
   const tabs = el(
     "div",
-    { class: "inspector-tabs", role: "tablist" },
+    { class: "inspector-tabs", role: "tablist", "aria-label": "Inspector" },
     ...INSPECTOR_TABS.map((tab) => {
       const pending = tab === "approvals" ? pendingApprovals(props.turn).length : 0;
       const label = pending > 0 ? `${TAB_LABELS[tab]} (${pending})` : TAB_LABELS[tab];
@@ -61,8 +62,10 @@ export function renderInspector(props: InspectorProps): HTMLElement {
         {
           type: "button",
           role: "tab",
+          id: `inspector-tab-${tab}`,
           class: `inspector-tab${props.tab === tab ? " selected" : ""}`,
           "data-testid": `inspector-tab-${tab}`,
+          "aria-controls": "inspector-panel",
           ...(props.tab === tab ? { "aria-selected": "true" } : { "aria-selected": "false" }),
         },
         label
@@ -71,11 +74,19 @@ export function renderInspector(props: InspectorProps): HTMLElement {
       return btn;
     })
   );
+  // Arrow keys move focus only. Enter/Space activate the focused tab through
+  // the native button click. That avoids fighting the coalesced re-render,
+  // which restores focus to the previously focused test id.
+  installArrowFocus(tabs, '[role="tab"]');
   return el(
     "aside",
     { class: "context-inspector", "data-testid": "context-inspector" },
     tabs,
-    el("div", { class: "inspector-body" }, renderTabBody(props))
+    el(
+      "div",
+      { class: "inspector-body", id: "inspector-panel", role: "tabpanel", "aria-labelledby": `inspector-tab-${props.tab}` },
+      renderTabBody(props)
+    )
   );
 }
 

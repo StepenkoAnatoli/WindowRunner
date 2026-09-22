@@ -72,7 +72,12 @@ export function renderUsagePage(props: UsagePageProps): HTMLElement {
             el(
               "table",
               { class: "usage", "data-testid": "usage-table" },
-              el("thead", {}, el("tr", {}, ...["time", "provider", "model", "tokens (in/out)", "cost", "status"].map((h) => el("th", {}, h)))),
+              el("caption", {}, "Recent turns"),
+              el(
+                "thead",
+                {},
+                el("tr", {}, ...["time", "provider", "model", "tokens (in/out)", "cost", "status"].map((h) => el("th", { scope: "col" }, h)))
+              ),
               el("tbody", {}, ...rows)
             )
           )
