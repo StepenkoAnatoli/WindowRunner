@@ -234,6 +234,7 @@ describe("main route host (B2.1 wiring)", () => {
         return Promise.resolve(jsonResponse({ ok: true }));
       }
       if (path === "/api/usage?limit=50") return Promise.resolve(jsonResponse(USAGE_BODY));
+      if (path === "/api/providers/discover-models") return Promise.resolve(jsonResponse({ models: ["alpha", "mid", "zeta"] }));
       return Promise.reject(new Error(`unexpected fetch in main-routes test: ${method} ${path}`));
     };
 
@@ -395,6 +396,29 @@ describe("main route host (B2.1 wiring)", () => {
     assert.equal(sessionStorageStub.getItem("windows-runner.token"), "boot-token-987", "the token is untouched");
   });
 
+  it("picking a discovered model reaches the model field across the re-render (B4 regression)", async () => {
+    await clickAndWait('[data-testid="nav-providers"]');
+    await clickAndWait('[data-testid="providers-add"]');
+    // Type base URL and key like a user (controlled fields push to state).
+    const baseUrl = needEl('[data-testid="provider-base-url"]');
+    baseUrl.value = "https://prov.example/v1";
+    baseUrl.fire("input");
+    const key = needEl('[data-testid="provider-api-key"]');
+    key.value = "sk-regression-key-1234";
+    key.fire("input");
+    await clickAndWait('[data-testid="provider-discover-models"]');
+    const select = needEl('[data-testid="provider-model-select"]');
+    select.value = "mid";
+    select.fire("change");
+    await settle();
+    // The regression: render()'s typed-value restore used to put the stale
+    // empty live value back over the state change made by the select.
+    assert.equal(needEl('[data-testid="provider-model"]').value, "mid", "the picked model lands in the field's live value");
+    // The typed key (which state deliberately does not hold) must survive the
+    // same re-render.
+    assert.equal(needEl('[data-testid="provider-api-key"]').value, "sk-regression-key-1234", "the typed key survives the re-render");
+  });
+
   it("route history never carries tokens or provider secrets", () => {
     assert.ok(historyUrls.length > 0);
     for (const url of historyUrls) {
@@ -407,6 +431,6 @@ describe("main route host (B2.1 wiring)", () => {
     // (health is called twice: the connect credential check and the settings
     // page's one-shot health load).
     const apiPaths = [...new Set(fetchCalls.map((c) => `${c.method} ${c.url}`))].sort();
-    assert.deepEqual(apiPaths, ["GET /api/health", "GET /api/providers", "GET /api/usage?limit=50"]);
+    assert.deepEqual(apiPaths, ["GET /api/health", "GET /api/providers", "GET /api/usage?limit=50", "POST /api/providers/discover-models"]);
   });
 });

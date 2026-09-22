@@ -475,10 +475,15 @@ function inspectorTurn(): TurnView | undefined {
 function render(): void {
   const focused = document.activeElement as HTMLElement | null;
   const focusId = focused?.getAttribute("data-testid") ?? undefined;
-  const inputValues = new Map<string, string>();
+  // Capture each field's live value AND its state-backed default. The live
+  // value alone is not enough: a re-render can be caused by a state change
+  // to a field the user never typed in (picking a discovered model moves the
+  // model field from the select), and restoring the stale live value would
+  // silently undo that change.
+  const inputValues = new Map<string, { value: string; defaultValue: string }>();
   root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea").forEach((el) => {
     const id = el.getAttribute("data-testid");
-    if (id) inputValues.set(id, el.value);
+    if (id) inputValues.set(id, { value: el.value, defaultValue: el.defaultValue });
   });
 
   const children: Array<HTMLElement | null> = [];
@@ -550,9 +555,14 @@ function render(): void {
 
   root.replaceChildren(...children.filter((node): node is HTMLElement => node !== null));
 
-  inputValues.forEach((value, id) => {
+  inputValues.forEach((captured, id) => {
     const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid="${id}"]`);
-    if (el && el.value === el.defaultValue) el.value = value;
+    // Restore the previously-typed live value only when the field's default
+    // (its state-backed attribute) did not move — otherwise STATE changed
+    // the field and the stale live value must lose. This keeps typed values
+    // that state deliberately does not hold (the API-key field) across
+    // re-renders, while a discovered-model pick still reaches the field.
+    if (el && el.defaultValue === captured.defaultValue && el.value !== captured.value) el.value = captured.value;
   });
   if (focusId) root.querySelector<HTMLElement>(`[data-testid="${focusId}"]`)?.focus();
 }
