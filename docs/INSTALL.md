@@ -1,7 +1,8 @@
 # Installation
 
 Status of every install path this repository advertises, verified against the
-current `main`.
+current `main`. Notable changes between versions are in
+[`CHANGELOG.md`](../CHANGELOG.md).
 
 **Verification environment:** Node `v22.22.3`, npm `10.9.8`, git `2.39.5`,
 Linux x86_64, 2026-09-20. Every row below was produced by running the command

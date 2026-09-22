@@ -14,7 +14,8 @@ WindowsRunner is a **Windows-first, local-first coding agent**: parallel local s
 ## 🚀 Installation
 
 Full details, prerequisites, known gaps and troubleshooting:
-**[docs/INSTALL.md](./docs/INSTALL.md)**.
+**[docs/INSTALL.md](./docs/INSTALL.md)**. Notable changes are tracked in
+**[CHANGELOG.md](./CHANGELOG.md)**.
 
 Status below is what was actually executed on Linux (Node 22, npm 10) — not what
 the packaging intends. CI covers Linux (`CI` job), Docker (`Docker` job) and
