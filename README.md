@@ -223,7 +223,35 @@ the UI (same bearer token as the API):
   the recent turns; Settings shows read-only security/storage/about
   information and can reset the locally remembered projects & sessions.
   Arrow keys move focus in the top nav, settings sections, and inspector tabs;
-  Enter or Space activates. There is no model discovery — type the model id.
+  Enter or Space activates.
+- **Fetch models (model discovery, B4).** In the add/edit form, after typing
+  the kind, base URL, and API key, **Fetch models** asks *this server* to
+  probe the provider's model listing once and offers the result in a
+  "Select a model…" dropdown; choosing one copies the id into the model field.
+  The facts that matter:
+  - **One-shot only.** Exactly one request per click — no polling, no
+    auto-selection, no capability/pricing/context-window lookup, and discovery
+    never saves or activates a profile.
+  - **Supported kinds.** `openai-compatible` probes `GET {baseUrl}/models`
+    (OpenAI, OpenRouter, Ollama, LM Studio, gateways — including local
+    loopback endpoints). `mock` answers `["mock"]` offline. `anthropic` has no
+    live listing yet: the form says "model discovery unavailable for this
+    provider" up front and never pretends a static list is live data.
+  - **Manual entry always remains.** Discovery is optional; the model text
+    field is never replaced unless you pick from the dropdown, an empty
+    result says "No models were returned. Enter the model id manually.", and
+    a failed fetch leaves the form fully usable. Results clear when the kind,
+    base URL, or key changes, so stale ids are never offered.
+  - **Timeout.** The upstream probe gets ~5 seconds; timeouts and provider
+    errors surface as secret-free messages in the form. Redirects from the
+    provider are refused, not followed, and huge responses are cut off.
+  - **API-key handling.** The raw key exists only in the open form (tab or
+    desktop-window memory), travels once in the authenticated discovery
+    request to this server (which uses it for the single upstream probe's
+    `Authorization` header), and is never persisted: not in browser storage,
+    the workspace catalog, the URL, logs, errors, or the discovery response.
+    The browser never talks to the provider directly — all provider requests
+    are made by the server.
 - **`/dashboard` stays a compatibility entry point** that renders the same
   provider components (plus the quick chat) for older bookmarks — the URL is
   unchanged, no redirect.

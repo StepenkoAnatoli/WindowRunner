@@ -152,7 +152,7 @@ function assertValid(form: ProviderFormState): void {
 }
 
 /** The trimmed key to send, or undefined for "no key" (empty, or a pasted mask). */
-function apiKeyToSend(form: ProviderFormState): string | undefined {
+export function apiKeyToSend(form: ProviderFormState): string | undefined {
   const key = form.apiKey.trim();
   if (!key || isMaskedApiKey(key)) return undefined;
   return key;

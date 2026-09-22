@@ -14,11 +14,12 @@
  * transient form field while the user types.
  */
 
-import { ApiRequestError, type ApiClient } from "./api.js";
+import { ApiRequestError, type ApiClient, type DiscoverModelsInput } from "./api.js";
 import type { ProviderFormState, ProviderUiState } from "./app-state.js";
 import type { ProviderProfileView } from "./api.js";
 import { describeError } from "./describe-error.js";
 import {
+  apiKeyToSend,
   isMaskedApiKey,
   providerFormIsDirty,
   toCreateProviderInput,
@@ -49,6 +50,12 @@ export interface ProviderController {
   closeForm(): void;
   handleFieldChange(field: ProviderFormFieldName, value: string): void;
   submitForm(): Promise<void>;
+  /**
+   * One-shot model discovery from the CURRENT form values (B4.2). Never
+   * saves, never activates, never reloads the list; exactly one request at a
+   * time; clears stale results when kind/baseUrl/apiKey change.
+   */
+  discoverModels(): Promise<void>;
   activate(profileId: string): Promise<void>;
   /** Reachability test — never activates the profile. */
   test(profileId: string): Promise<void>;
@@ -123,6 +130,7 @@ export function createProviderController(deps: ProviderControllerDeps): Provider
         model: "",
         apiKey: "",
         apiKeyMode: "empty",
+        modelDiscovery: { status: "idle" },
         validationErrors: {},
         submitting: false,
       },
@@ -144,6 +152,7 @@ export function createProviderController(deps: ProviderControllerDeps): Provider
         // the field, never an input value.
         apiKey: "",
         apiKeyMode: "unchanged",
+        modelDiscovery: { status: "idle" },
         validationErrors: {},
         submitting: false,
       },
@@ -174,10 +183,53 @@ export function createProviderController(deps: ProviderControllerDeps): Provider
     // replacement ("replace").
     const typed = next.apiKey.trim();
     next.apiKeyMode = typed === "" || isMaskedApiKey(typed) ? (next.mode === "edit" ? "unchanged" : "empty") : "replace";
+    // Discovered models belong to the kind/baseUrl/key they were fetched
+    // for: any material change clears them instead of showing results that
+    // no longer match the form. Changing the model field itself keeps them.
+    if (field === "kind" || field === "baseUrl" || field === "apiKey") {
+      next.modelDiscovery = { status: "idle" };
+    }
     // Only re-validate once the first submit attempt flagged something, so
     // the form does not shout "required" while the user is still typing.
     next.validationErrors = Object.keys(form.validationErrors).length > 0 ? validateProviderForm(next) : form.validationErrors;
     deps.set({ ...deps.get(), form: next });
+  }
+
+  /**
+   * One-shot model discovery (B4.2). Reads the CURRENT form values — kind,
+   * trimmed base URL, and the typed key via the same rule the save adapters
+   * use (blank or a pasted mask sends nothing). The result only ever lands in
+   * the transient `modelDiscovery` slice: nothing is saved, nothing is
+   * activated, the list is not reloaded, and the typed model text is not
+   * touched — picking a discovered model is a separate, explicit user action.
+   */
+  async function discoverModels(): Promise<void> {
+    const client = deps.getClient();
+    const form = deps.get().form;
+    if (!client || !form || form.submitting) return;
+    // Exactly one discovery request at a time.
+    if (form.modelDiscovery.status === "loading") return;
+    const input: DiscoverModelsInput = { kind: form.kind };
+    const baseUrl = form.baseUrl.trim();
+    if (baseUrl) input.baseUrl = baseUrl;
+    const apiKey = apiKeyToSend(form);
+    if (apiKey) input.apiKey = apiKey;
+    deps.set({ ...deps.get(), form: { ...form, modelDiscovery: { status: "loading" } } });
+    try {
+      const result = await client.discoverModels(input);
+      const current = deps.get().form;
+      if (current) deps.set({ ...deps.get(), form: { ...current, modelDiscovery: { status: "ready", models: result.models } } });
+    } catch (err) {
+      if (isAuthFailure(err)) {
+        deps.onAuthError(err);
+        return;
+      }
+      // describeError output is secret-free by construction (the server
+      // scrubs keys from its own messages and never echoes input).
+      const message = describeFailure(err);
+      const current = deps.get().form;
+      if (current) deps.set({ ...deps.get(), form: { ...current, modelDiscovery: { status: "error", message } } });
+    }
   }
 
   /**
@@ -325,6 +377,7 @@ export function createProviderController(deps: ProviderControllerDeps): Provider
     closeForm,
     handleFieldChange,
     submitForm,
+    discoverModels,
     activate,
     test,
     delete: remove,

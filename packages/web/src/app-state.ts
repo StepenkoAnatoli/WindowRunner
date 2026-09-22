@@ -71,6 +71,16 @@ export interface ProviderFormState {
   apiKey: string;
   /** Distinguishes create-without-key / edit-keep-key / explicit replacement. */
   apiKeyMode: "empty" | "unchanged" | "replace";
+  /**
+   * Transient one-shot model-discovery state for the open form. Results are
+   * cleared (back to idle) whenever kind, baseUrl, or apiKey materially
+   * changes; the raw key never lands here — only the server's model ids do.
+   */
+  modelDiscovery:
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "ready"; models: string[] }
+    | { status: "error"; message: string };
   validationErrors: Record<string, string>;
   submitting: boolean;
 }

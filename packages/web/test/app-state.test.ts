@@ -288,6 +288,7 @@ describe("workspace navigation (B1)", () => {
       model: "m",
       apiKey: "",
       apiKeyMode: "empty" as const,
+      modelDiscovery: { status: "idle" } as const,
       validationErrors: {},
       submitting: false,
     };

@@ -139,6 +139,7 @@ function pageBody(): HTMLElement {
       onSubmit: () => void controller.submitForm(),
       onCancelForm: () => controller.closeForm(),
       onFieldChange: (field: ProviderFormField, value: string) => controller.handleFieldChange(field, value),
+      onDiscoverModels: () => void controller.discoverModels(),
       onDismissNotice: () => controller.dismissNotice(),
       onRefresh: () => void refresh(),
       onBackToWorkspace: () => {

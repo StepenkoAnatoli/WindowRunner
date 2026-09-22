@@ -22,6 +22,7 @@ function form(overrides: Partial<ProviderFormState> = {}): ProviderFormState {
     model: "model-x",
     apiKey: "",
     apiKeyMode: "empty",
+    modelDiscovery: { status: "idle" },
     validationErrors: {},
     submitting: false,
     ...overrides,

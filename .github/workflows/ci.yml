@@ -173,14 +173,14 @@ jobs:
         working-directory: packages/web
         shell: bash
         run: |
-          for spec in ui workspace dashboard providers-workspace accessibility deep-routes responsive; do
+          for spec in ui workspace dashboard providers-workspace accessibility deep-routes responsive model-discovery; do
             test -f "e2e/${spec}.spec.ts" || { echo "::error::B2 browser contract: e2e/${spec}.spec.ts is missing"; exit 1; }
           done
           npx playwright test --list > spec-list.txt
           # Lines look like `  [chromium] › dashboard.spec.ts:33:3 › …` (paths
           # are testDir-relative); anchor on `› name.spec.ts:` so `workspace`
           # cannot match `providers-workspace`.
-          for spec in dashboard providers-workspace accessibility deep-routes responsive; do
+          for spec in dashboard providers-workspace accessibility deep-routes responsive model-discovery; do
             grep -qE "› ${spec}\.spec\.ts:" spec-list.txt || { echo "::error::B2 browser contract: playwright discovers no tests in ${spec}.spec.ts"; exit 1; }
           done
           echo "B2 browser contract inventory OK:"

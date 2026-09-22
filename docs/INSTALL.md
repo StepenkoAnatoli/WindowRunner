@@ -321,6 +321,24 @@ Provider management (identical in the main UI's Providers page and on
   ("Leave blank to keep the existing key") and the UI never sends the mask or
   an unchanged key back. The form lives in tab/desktop-window memory only —
   it is never persisted to `localStorage`, the workspace catalog, or the URL.
+- **Fetch models (model discovery, B4)** — with the kind, base URL, and API
+  key typed, **Fetch models** makes ONE authenticated request to this server,
+  which probes the provider once (`GET {baseUrl}/models` for
+  `openai-compatible`, including local loopback endpoints like Ollama;
+  `mock` answers `["mock"]` offline; `anthropic` reports "model discovery
+  unavailable for this provider" instead of pretending to a live listing).
+  The ids come back deduplicated and sorted into a "Select a model…"
+  dropdown; picking one copies it into the model field. One shot per click:
+  no polling, no auto-selection, and discovery never saves or activates the
+  profile. The upstream probe times out after ~5 seconds (the error is shown
+  and the form stays usable); redirects are refused, oversized responses are
+  cut off, and results clear when the kind, base URL, or key changes. Manual
+  model entry is always available — an empty result says "No models were
+  returned. Enter the model id manually." The typed key rides only in the
+  discovery request body to this server and the single upstream
+  `Authorization` header: it is never stored by the browser, the workspace
+  catalog, the URL, logs, or the discovery response, and the browser never
+  sends any request to the provider itself.
 - **Usage** (main UI route; the same table on `/dashboard`) — the last 50
   usage records (time, provider, model, tokens, status). Cost shows `—`
   unless a price-table entry exists for the exact model id; the bundled table
@@ -577,7 +595,10 @@ branding are separate milestones.
   else (including `/settings` with no section) is a 404, not the app shell.
 - Refresh does not restore the live conversation. The sidebar catalog survives;
   reattach the session to continue.
-- There is no provider model discovery. You type the model id.
+- Model discovery is one-shot and kind-limited: `openai-compatible` (and the
+  offline `mock`) offer a Fetch models dropdown; `anthropic` reports that
+  discovery is unavailable, so you type the model id there. Discovery never
+  runs on its own and never selects a model for you.
 - Keyboard: arrow keys move focus in the top nav, the settings section nav,
   and the inspector tabs. Enter or Space activates. Escape cancels the
   provider form (and dismisses the platform `confirm()` used for delete,

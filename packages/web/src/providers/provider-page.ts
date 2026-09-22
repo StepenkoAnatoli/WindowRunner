@@ -24,6 +24,8 @@ export interface ProviderPageProps {
   onSubmit(): void;
   onCancelForm(): void;
   onFieldChange(field: ProviderFormField, value: string): void;
+  /** One-shot model discovery from the open form's current values (B4.3). */
+  onDiscoverModels(): void;
   onDismissNotice(): void;
   /** Explicit re-fetch of the provider list (the route caches otherwise). */
   onRefresh(): void;
@@ -82,6 +84,7 @@ export function renderProviderPage(props: ProviderPageProps): HTMLElement {
           onChange: props.onFieldChange,
           onSubmit: props.onSubmit,
           onCancel: props.onCancelForm,
+          onDiscoverModels: props.onDiscoverModels,
         })
       : null,
     state.notice
