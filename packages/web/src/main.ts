@@ -1,10 +1,11 @@
-import { ApiClient, ApiRequestError, clearToken, loadToken, saveToken } from "./api.js";
+import { ApiClient, ApiRequestError, clearToken, getApiClientBootstrap, loadToken, publishApiClientBootstrap, saveToken } from "./api.js";
 import type { HealthSummary } from "./api.js";
 import { activeTurn, initialAppState, reduceApp, type AppAction, type AppState, type TurnView } from "./app-state.js";
 import { renderAppShell } from "./app-shell.js";
 import { describeError } from "./describe-error.js";
 import { getDesktopCapabilities, isDesktopAvailable } from "./desktop-bridge.js";
 import { button, el } from "./dom.js";
+import { installArrowFocus } from "./keyboard-nav.js";
 import { renderInspector } from "./inspector.js";
 import { renderProjectSidebar } from "./project-sidebar.js";
 import { renderConversationWorkspace } from "./workspace.js";
@@ -43,12 +44,14 @@ import {
  * There is exactly one visible/active stream (`streamAbort`); switching
  * projects/sessions while a turn is active is blocked, never silent.
  *
- * B2 boundary: routes are client-side (`history.pushState` + `popstate`,
- * parsed by ui-route.ts — no router dependency, no server changes). Provider
- * form state is transient UI memory: it is never persisted, never enters the
- * workspace catalog, and the raw key exists only inside the open form while
- * the user types. Route changes never clear the catalog, the current session,
- * or the token; sign-out drops provider/usage state but keeps the catalog.
+ * B2/B3 boundary: routes are client-side (`history.pushState` + `popstate`,
+ * parsed by ui-route.ts — no router dependency). The server serves this same
+ * shell for the allowlisted deep routes so a refresh stays on the page.
+ * Provider form state is transient UI memory: it is never persisted, never
+ * enters the workspace catalog, and the raw key exists only inside the open
+ * form while the user types. Route changes never clear the catalog, the
+ * current session, or the token; sign-out drops provider/usage state but
+ * keeps the catalog.
  */
 
 let state: AppState = initialAppState;
@@ -478,14 +481,18 @@ function render(): void {
     if (id) inputValues.set(id, el.value);
   });
 
-  const children: HTMLElement[] = [];
+  const children: Array<HTMLElement | null> = [];
+  // In document flow under the header — not a sticky bar over the composer,
+  // and not a dialog (no focus trap, Escape is not swallowed here).
+  const notice = state.error ? errorBanner() : null;
   if (state.auth !== "ok") {
-    children.push(header(), tokenPanel());
+    children.push(header(), notice, tokenPanel());
   } else if (state.route.kind === "workspace") {
     const turn = inspectorTurn();
     children.push(
       renderAppShell({
         header: header(),
+        notice,
         sidebar: renderProjectSidebar({
           catalog: state.workspace.catalog,
           selectedProjectId: state.workspace.selectedProjectId,
@@ -538,11 +545,10 @@ function render(): void {
       })
     );
   } else {
-    children.push(el("div", { class: "app-root" }, header(), routeContent()));
+    children.push(el("div", { class: "app-root" }, header(), notice, routeContent()));
   }
-  if (state.error) children.push(errorBanner());
 
-  root.replaceChildren(...children);
+  root.replaceChildren(...children.filter((node): node is HTMLElement => node !== null));
 
   inputValues.forEach((value, id) => {
     const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid="${id}"]`);
@@ -639,21 +645,23 @@ function header(): HTMLElement {
     : null;
   if (sidebarToggle) sidebarToggle.setAttribute("aria-pressed", String(state.workspace.sidebarOpen));
   if (inspectorToggle) inspectorToggle.setAttribute("aria-pressed", String(state.workspace.inspectorOpen));
+  const nav = state.auth === "ok"
+    ? el(
+        "nav",
+        { class: "top-nav", "data-testid": "top-nav", "aria-label": "Main" },
+        navItem("nav-workspace", "Workspace", { kind: "workspace" }),
+        navItem("nav-providers", "Providers", { kind: "providers" }),
+        navItem("nav-usage", "Usage", { kind: "usage" }),
+        navItem("nav-settings", "Settings", { kind: "settings", section: state.route.kind === "settings" ? state.route.section : "security" })
+      )
+    : null;
+  if (nav) installArrowFocus(nav, "button.nav-link");
   return el(
     "header",
     {},
     el("h1", {}, "Windows Runner"),
     el("span", { class: "muted", "data-testid": "server-info" }, server),
-    state.auth === "ok"
-      ? el(
-          "nav",
-          { class: "top-nav", "data-testid": "top-nav", "aria-label": "Main" },
-          navItem("nav-workspace", "Workspace", { kind: "workspace" }),
-          navItem("nav-providers", "Providers", { kind: "providers" }),
-          navItem("nav-usage", "Usage", { kind: "usage" }),
-          navItem("nav-settings", "Settings", { kind: "settings", section: state.route.kind === "settings" ? state.route.section : "security" })
-        )
-      : null,
+    nav,
     sidebarToggle,
     inspectorToggle,
     state.auth === "ok" ? button("sign-out", "Sign out", signOut, "secondary") : null
@@ -680,7 +688,34 @@ function tokenPanel(): HTMLElement {
 }
 
 function errorBanner(): HTMLElement {
+  // role=alert, not a dialog: Tab moves on, Escape is not captured. Provider
+  // form Escape and native confirm() are the dismissal paths; this banner is
+  // dismissed with its button.
   return el("div", { class: "banner error", role: "alert", "data-testid": "error-banner" }, el("strong", {}, state.error!.code), " ", state.error!.message, " ", button("dismiss-error", "Dismiss", () => dispatch({ type: "error_cleared" }), "link"));
+}
+
+/**
+ * A refresh of `/providers` (and the other allowlisted routes) loads this
+ * document directly — the `/desktop` renderer, which normally publishes the
+ * in-memory token, does not run. Ask the preload bridge once, before
+ * `loadToken()`, so `saveToken` stays a no-op. A missing or malformed
+ * bootstrap is ignored: the browser token form still works.
+ */
+function adoptDesktopBootstrap(): void {
+  if (getApiClientBootstrap()) return;
+  if (typeof window === "undefined") return;
+  const bridge = (window as unknown as {
+    windowRunnerDesktop?: { getBootstrap?: () => { baseUrl?: unknown; token?: unknown } };
+  }).windowRunnerDesktop;
+  if (!bridge || typeof bridge.getBootstrap !== "function") return;
+  let raw: { baseUrl?: unknown; token?: unknown } | undefined;
+  try {
+    raw = bridge.getBootstrap();
+  } catch {
+    return;
+  }
+  if (!raw || typeof raw.baseUrl !== "string" || typeof raw.token !== "string" || raw.token.length === 0) return;
+  publishApiClientBootstrap({ baseUrl: raw.baseUrl, token: raw.token });
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +734,7 @@ function resolveCatalogStore(): WorkspaceCatalogStore {
   return createInMemoryCatalogStore();
 }
 
+adoptDesktopBootstrap();
 const initialToken = loadToken();
 catalogStore = resolveCatalogStore();
 // Apply the boot route before the first render (unknown paths and

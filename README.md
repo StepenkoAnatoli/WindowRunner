@@ -113,7 +113,10 @@ request (the `Docker` job). See [docs/INSTALL.md](./docs/INSTALL.md#docker).
 
 The desktop shell (`packages/desktop`) boots the bundled server as a child
 process (loopback, OS-assigned port, in-memory bearer token) and loads the web
-UI at `/desktop` from the server's own origin. No Node.js install is required at
+UI at `/desktop` from the server's own origin. A refresh of `/providers`,
+`/usage`, or a settings section republishes that in-memory token; it is never
+written to the URL or web storage (the browser keeps its token in
+`sessionStorage` instead). No Node.js install is required at
 runtime: the server runs on Electron's own Node runtime. From a checkout:
 
 ```bash
@@ -210,13 +213,17 @@ messages. Instead of editing env vars for every switch, manage providers in
 the UI (same bearer token as the API):
 
 - **In the main UI** the top navigation is **Workspace | Providers | Usage |
-  Settings** (client-side routes `/providers`, `/usage`,
-  `/settings/security|storage|about` — no page reloads, the attached session
-  and catalog survive moving between pages). The Providers page has the
+  Settings** (routes `/providers`, `/usage`,
+  `/settings/security|storage|about`). In-app moves do not reload the page;
+  a refresh or a pasted link of those routes is served the same app shell
+  (unknown paths stay 404). The attached session's catalog survives a refresh;
+  the live transcript does not — reattach the session. The Providers page has the
   profile cards, the add/edit form, **Use this** (hot-swap: the *next* turn
   runs on the new profile, no restart), **Test**, and **Delete**; Usage lists
   the recent turns; Settings shows read-only security/storage/about
   information and can reset the locally remembered projects & sessions.
+  Arrow keys move focus in the top nav, settings sections, and inspector tabs;
+  Enter or Space activates. There is no model discovery — type the model id.
 - **`/dashboard` stays a compatibility entry point** that renders the same
   provider components (plus the quick chat) for older bookmarks — the URL is
   unchanged, no redirect.

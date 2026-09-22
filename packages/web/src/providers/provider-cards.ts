@@ -29,6 +29,12 @@ export function renderProviderCards(props: ProviderCardsProps): HTMLElement {
   return el("div", { class: "cards", "data-testid": "providers-list" }, ...cards);
 }
 
+/** Accessible name is the action plus the profile label — never a key, masked or raw. */
+function namedAction(node: HTMLElement, name: string): HTMLElement {
+  node.setAttribute("aria-label", name);
+  return node;
+}
+
 function providerCard(p: ProviderProfileView, isActive: boolean, props: ProviderCardsProps): HTMLElement {
   const lt: ProviderLastTest | undefined = p.lastTest;
   const dotState = lt ? (lt.ok ? "ok" : "fail") : "none";
@@ -59,10 +65,10 @@ function providerCard(p: ProviderProfileView, isActive: boolean, props: Provider
     el(
       "div",
       { class: "row" },
-      button("dash-activate", activating ? "Switching…" : "Use this", () => props.onActivate(p), "primary", isActive || activating),
-      button("dash-test", testing ? "Testing…" : "Test", () => props.onTest(p), "secondary", testing),
-      button("dash-edit", "Edit", () => props.onEdit(p), "secondary"),
-      button("dash-delete", deleting ? "Deleting…" : "Delete", () => props.onDelete(p), "danger", deleting)
+      namedAction(button("dash-activate", activating ? "Switching…" : "Use this", () => props.onActivate(p), "primary", isActive || activating), `Use this provider: ${p.label}`),
+      namedAction(button("dash-test", testing ? "Testing…" : "Test", () => props.onTest(p), "secondary", testing), `Test provider: ${p.label}`),
+      namedAction(button("dash-edit", "Edit", () => props.onEdit(p), "secondary"), `Edit provider: ${p.label}`),
+      namedAction(button("dash-delete", deleting ? "Deleting…" : "Delete", () => props.onDelete(p), "danger", deleting), `Delete provider: ${p.label}`)
     )
   );
 }

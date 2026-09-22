@@ -75,6 +75,18 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       !ci.includes(String.raw`Filter "WindowRunner.exe" -Recurse`),
       "the installer gate must use the explicit product path, not search-based discovery"
     );
+    // Docs and the builder comment must name the same directory the CI gate
+    // installs into. The files write the Windows path with escaped
+    // backslashes, so the literal is Programs\\WindowRunner.
+    const repoRoot = path.resolve(desktopRoot, "..", "..");
+    const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
+    const install = fs.readFileSync(path.join(repoRoot, "docs", "INSTALL.md"), "utf8");
+    const needle = String.raw`Programs\WindowRunner`;
+    assert.ok(yml.includes(needle), "electron-builder.yml must name %LOCALAPPDATA%\\Programs\\WindowRunner");
+    assert.ok(readme.includes(needle), "README must name the same install directory");
+    assert.ok(install.includes(needle), "docs/INSTALL.md must name the same install directory");
+    assert.ok(readme.includes("WindowRunner-Setup-"), "README must name the installer artifact");
+    assert.ok(install.includes("WindowRunner-Setup-"), "docs/INSTALL.md must name the installer artifact");
   });
 
   it("package.json entry and scripts support the A2 flow", () => {
@@ -102,6 +114,7 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       "playwright.config.ts",
       "e2e/desktop.spec.ts",
       "e2e/providers.spec.ts",
+      "e2e/deep-routes.spec.ts",
       "e2e/launch.ts",
     ]) {
       assert.ok(fs.existsSync(path.join(desktopRoot, rel)), `missing ${rel}`);

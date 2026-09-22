@@ -140,5 +140,7 @@ describe("usage page", () => {
     const { page } = mount(ready([REC]));
     const headers = page.querySelectorAll("th").map((h) => h.textContent);
     assert.deepEqual(headers, ["time", "provider", "model", "tokens (in/out)", "cost", "status"]);
+    for (const th of page.querySelectorAll("th")) assert.equal(th.getAttribute("scope"), "col");
+    assert.equal(page.querySelector("caption")?.textContent, "Recent turns");
   });
 });

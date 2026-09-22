@@ -292,7 +292,11 @@ describe("dashboard compatibility adapter (B2.4)", () => {
     assert.match(html, /<div id="app">/, "the compatibility root is retained");
     // Contrast: the main app document is the one that uses app.css.
     const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-    assert.match(index, /app\.css/);
+    // Root-absolute: a refresh of /providers must not request /providers/app.js.
+    assert.match(index, /href="\/app\.css"/);
+    assert.match(index, /src="\/app\.js"/);
+    assert.equal(index.includes("./app.css"), false);
+    assert.equal(index.includes("./app.js"), false);
   });
 
   it("page-level notices render and dismiss outside the shared provider page", async () => {

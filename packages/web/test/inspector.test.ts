@@ -85,6 +85,29 @@ describe("inspector", () => {
     assert.deepEqual(p.calls, ["tab:activity"]);
   });
 
+  it("arrow keys move focus between tabs and do not activate them", () => {
+    const p = props({ tab: "approvals" });
+    const inspector = renderInspector(p);
+    const ids = ["approvals", "activity", "context", "changes"];
+    const tabs = ids.map((tab) => q(inspector, `[data-testid="inspector-tab-${tab}"]`));
+    const focused: string[] = [];
+    for (const tab of tabs) {
+      (tab as unknown as { focus: () => void }).focus = () => {
+        focused.push(tab.getAttribute("data-testid") ?? "");
+      };
+    }
+    (tabs[0] as unknown as { fire: (type: string, init?: Record<string, unknown>) => void }).fire("keydown", { key: "ArrowRight" });
+    assert.deepEqual(focused, ["inspector-tab-activity"]);
+    assert.deepEqual(p.calls, [], "arrow keys move focus only; Enter/Space activate the button");
+    assert.equal(tabs[0].getAttribute("role"), "tab");
+    assert.equal(tabs[0].getAttribute("aria-selected"), "true");
+    assert.equal(tabs[1].getAttribute("aria-selected"), "false");
+    assert.equal(tabs[0].getAttribute("aria-controls"), "inspector-panel");
+    const panel = inspector.querySelector("#inspector-panel");
+    assert.equal(panel?.getAttribute("role"), "tabpanel");
+    assert.equal(panel?.getAttribute("aria-labelledby"), "inspector-tab-approvals");
+  });
+
   it("shows pending approvals with the same preview the center card uses", () => {
     const input = { path: "src/a.ts", oldText: "a\nb", newText: "c" };
     const turn = turnWaitingApproval("edit_file", input);

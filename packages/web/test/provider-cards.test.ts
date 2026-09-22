@@ -74,6 +74,12 @@ describe("provider cards", () => {
   it("renders the masked key only — never a raw key field", () => {
     const root = renderProviderCards(props());
     assert.match((q(root, '[data-testid="dash-card-key"]').textContent ?? ""), /key: \*\*\*\*abcd/);
+    for (const id of ["dash-activate", "dash-test", "dash-edit", "dash-delete"]) {
+      const name = q(root, `[data-testid="${id}"]`).getAttribute("aria-label") ?? "";
+      assert.match(name, /OmniRoute/, `${id} names the profile`);
+      assert.equal(name.includes("****"), false, `${id} accessible name must not include a key`);
+      assert.equal(name.includes("abcd"), false, `${id} accessible name must not include the mask`);
+    }
     // A profile without a key renders the em-dash placeholder, not an empty mask.
     const none = renderProviderCards(props({ profiles: [{ ...PROFILE, apiKeyMasked: undefined }] }));
     assert.match((none.querySelector('[data-testid="dash-card-key"]') as HTMLElement).textContent ?? "", /key: —/);

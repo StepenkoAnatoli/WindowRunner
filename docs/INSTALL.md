@@ -284,18 +284,25 @@ written to logs, metrics or health output.
 When the web package is built (`npm run build`), the same origin serves the
 main UI at `/` with a small client-side route host — **Workspace** (the
 three-column B1 workspace), **Providers**, **Usage**, and **Settings**
-(`/providers`, `/usage`, `/settings/security|storage|about`; navigation is
-`history.pushState` + `popstate`, no framework and no new server routes, so a
-hard reload of a deep route falls back to the workspace). The same origin also
-serves `/dashboard` — a **compatibility entry point** that renders the same
+(`/providers`, `/usage`, `/settings/security|storage|about`). In-app moves use
+`history.pushState` + `popstate` (no framework). A refresh or a pasted link
+of those five paths is served the same `index.html` shell — an allowlist in
+`packages/server/src/app.ts`, not a catch-all. Unknown paths, missing assets,
+and `POST` to those paths stay 404. `/api/*` still requires the bearer token.
+`/dashboard` stays a **compatibility entry point** that renders the same
 provider components (plus the quick chat) at its old URL for existing
-bookmarks; it never redirects and stays independently loadable.
+bookmarks; it never redirects and stays independently loadable. A hard load
+of `/dashboard` in the desktop window still shows that page's own token form.
 
 Both use the **same bearer token** as `/api` — in a browser the token arrives
 via the `#token=…` fragment (stripped from the address bar immediately) or the
-token form, and is kept in `sessionStorage` only; in the **desktop app** the
-token is injected into the window's memory by the shell (never written to the
-URL, web storage, or disk). There is no unauthenticated path.
+token form, and is kept in `sessionStorage` only (a refresh of a deep route
+reuses it; it is never put back in the URL); in the **desktop app** the token
+is injected into the window's memory by the shell. A refresh of an allowlisted
+deep route republishes that bootstrap before the app reads it, so the token
+stays in memory and is still never written to the URL, web storage, or disk.
+There is no unauthenticated path to `/api`. Loading the HTML shell itself does
+not require the token (same as `/`).
 
 Provider management (identical in the main UI's Providers page and on
 `/dashboard`):
@@ -361,7 +368,9 @@ The workspace catalog (separate from provider data):
   (`windows-runner.workspace-catalog.v1`), in the desktop app via the shell's
   fixed IPC bridge in the per-user application-data directory. The catalog is
   navigation metadata only — it never contains tokens, provider keys,
-  transcripts, tool input/output, or file contents.
+  transcripts, tool input/output, or file contents. A refresh keeps that
+  catalog (you can reattach a remembered session). It does **not** restore the
+  live transcript — B1 never persisted one.
 - **Reset navigation metadata** (Settings → Storage) clears exactly that
   catalog. It does NOT delete server sessions, provider profiles, or provider
   keys — the sidebar simply starts empty and re-attaching a server session
@@ -560,6 +569,23 @@ artifact (`windowrunner-installer`).
 **Known gaps:** the installer is not code-signed (SmartScreen warns on first
 run: "More info → Run anyway") and uses the default Electron icon. Signing and
 branding are separate milestones.
+
+### UI limitations (B3)
+
+- Deep-route refresh works only for `/providers`, `/usage`,
+  `/settings/security`, `/settings/storage`, and `/settings/about`. Anything
+  else (including `/settings` with no section) is a 404, not the app shell.
+- Refresh does not restore the live conversation. The sidebar catalog survives;
+  reattach the session to continue.
+- There is no provider model discovery. You type the model id.
+- Keyboard: arrow keys move focus in the top nav, the settings section nav,
+  and the inspector tabs. Enter or Space activates. Escape cancels the
+  provider form (and dismisses the platform `confirm()` used for delete,
+  unsaved-form navigation, and catalog reset). Notices are not dialogs and do
+  not trap focus.
+- The desktop shell and the browser load the same `app.css`. At 800px and
+  below, the project sidebar and inspector overlay the conversation and can
+  be collapsed; provider cards are one column.
 
 ## Troubleshooting
 

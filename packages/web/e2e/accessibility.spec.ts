@@ -196,15 +196,52 @@ test("settings tabs announce their state and work from the keyboard", async ({ p
   await expect(page.locator(tid("settings-nav-about"))).toHaveAttribute("aria-current", "page");
 });
 
+test("arrow keys move focus in the top nav and inspector without activating", async ({ page }) => {
+  await signIn(page);
+
+  // Project-folder field is a real label (browser shell; desktop uses Choose folder).
+  const folder = page.locator(tid("project-path-input"));
+  await expect(folder).toBeVisible();
+  const folderLabel = await folder.evaluate((el: HTMLInputElement) =>
+    Array.from(el.labels ?? []).map((l) => l.textContent ?? "").join(" ")
+  );
+  expect(folderLabel).toContain("Project folder");
+
+  await page.locator(tid("nav-workspace")).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator(tid("nav-providers"))).toBeFocused();
+  // Arrow moves focus only — the route does not change until Enter.
+  expect(new URL(page.url()).pathname).toBe("/");
+  await expect(page.locator(tid("nav-workspace"))).toHaveAttribute("aria-current", "page");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(tid("providers-page"))).toBeVisible();
+
+  await page.click(tid("nav-workspace"));
+  await expect(page.locator(tid("workspace-shell"))).toBeVisible();
+  // The loaded workspace view selects Context, not Approvals. Start from
+  // whatever tab is selected so the assertion does not depend on that default.
+  const selected = page.locator(`${tid("context-inspector")} [role="tab"][aria-selected="true"]`);
+  await expect(selected).toHaveCount(1);
+  const selectedId = await selected.getAttribute("data-testid");
+  expect(selectedId).toBeTruthy();
+  await selected.focus();
+  await page.keyboard.press("ArrowRight");
+  const focusedId = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
+  expect(focusedId.startsWith("inspector-tab-")).toBe(true);
+  expect(focusedId).not.toBe(selectedId);
+  await expect(page.locator(tid(selectedId!))).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(tid(focusedId))).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#inspector-panel")).toHaveAttribute("aria-labelledby", focusedId);
+});
+
 test("B2 routes reflow without horizontal scrolling at narrow and wide viewports", async ({ page }) => {
   await signIn(page);
 
   // app.css: "the page never scrolls horizontally" — pin it at a phone width
   // and at the route-page measure for the providers, usage, and settings
   // routes (plan: "no horizontal overflow; responsive providers page").
-  // In-app navigation only: hard reloads of app routes are a documented
-  // limitation (the server serves HTML for `/` and `/dashboard` only — plan
-  // appendix 5), so route changes go through the shell's nav controls.
+  // In-app navigation: deep-route hard loads are covered by deep-routes.spec.ts.
   // Nav clicks happen at a wide viewport — below 800px the B1 rails become
   // fixed overlays over the header (app.css) — then the window narrows and the
   // route must reflow without horizontal scrolling (the real resize scenario).

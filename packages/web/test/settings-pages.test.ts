@@ -52,6 +52,29 @@ describe("settings shell", () => {
     assert.equal(selected, "about");
   });
 
+  it("arrow keys move focus in the section nav without turning it into tabs", () => {
+    let selected = "";
+    const root = renderSettingsShell({
+      section: "security",
+      onSelect: (s) => {
+        selected = s;
+      },
+      content: el("div"),
+    });
+    const security = q(root, '[data-testid="settings-nav-security"]');
+    const storage = q(root, '[data-testid="settings-nav-storage"]');
+    const focused: string[] = [];
+    (storage as unknown as { focus: () => void }).focus = () => {
+      focused.push("storage");
+    };
+    (security as unknown as FakeElement).fire("keydown", { key: "ArrowRight" });
+    assert.deepEqual(focused, ["storage"]);
+    assert.equal(selected, "", "arrow keys do not navigate; Enter activates");
+    assert.equal(security.getAttribute("aria-current"), "page");
+    assert.equal(security.getAttribute("role"), null, "settings nav stays page navigation, not a tablist");
+    assert.equal(q(root, '[data-testid="settings-nav"]').getAttribute("role"), null);
+  });
+
   it("security page is read-only information (no buttons, no inputs) and never renders a token", () => {
     const TOKEN = "super-secret-token-abc";
     const root = renderSecurityPage({ health: health(), server: { securityMode: "token", persistenceMode: "file" } });

@@ -2,11 +2,12 @@
  * The B2 client-side route model — a tiny sum type plus three pure helpers.
  *
  * Deliberately not a router: there is no dependency, no matcher table, and no
- * framework. The server serves the app bundle at `/` (and the compatibility
- * dashboard at `/dashboard`); every other route below is reached in-app via
- * `history.pushState` and survived back/forward through `popstate`. A hard
- * reload of a deep link (`/providers`, …) is NOT served by the server in B2 —
- * the route host treats unknown paths as the workspace when it does load.
+ * framework. The server serves this shell at `/` and, as an allowlist, at the
+ * deep routes below (`/providers`, `/usage`, `/settings/security|storage|about`)
+ * so a refresh or a pasted link loads the same document. `/dashboard` is a
+ * separate page. Unknown paths are not served; if a shell does load on one,
+ * it falls back to the workspace. In-app moves use `history.pushState` and
+ * back/forward uses `popstate`.
  *
  * Route values never carry secrets: no tokens, no API keys, no provider data,
  * no project roots. The `#token=…` authentication fragment is handled by
