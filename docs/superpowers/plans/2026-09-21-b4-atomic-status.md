@@ -53,6 +53,22 @@ existing outbound SSRF policy to hook); anthropic discovery is the documented
 refusal instead of bounded redirects; `provider-model-manual` wraps the
 existing input rather than renaming it.
 
+Review corrections applied to B4.0 (plan-only, before B4.1):
+
+1. Final-gate command fixed: `npm smoke:start` → `npm run smoke:start` (the
+   repo defines no `smoke` script; `smoke:start` is an npm script).
+2. Raw-key data-path wording corrected: the key does not exist in "exactly two
+   places" — during discovery it also travels in the authenticated
+   browser-to-server request body and sits in server request-handling memory.
+   The rule is now: the raw key is transient only (open form + in-flight
+   request memory; sent in the client-to-server body and the upstream
+   `Authorization` header), and must never enter a response, URL, logs,
+   metrics, browser storage, workspace catalog, rendered post-save UI, or
+   persisted provider form state. Wording/security-audit fix, not a design
+   change.
+3. Commit index corrected to list both B4.0 commits explicitly (`743066c`,
+   `f3cb728`) instead of describing the plan commit as "this commit".
+
 ## Known gaps
 
 - Anthropic users have no live model listing yet (documented fallback).

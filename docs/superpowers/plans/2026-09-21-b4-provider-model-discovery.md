@@ -139,7 +139,8 @@ async discoverModels(input: DiscoverModelsInput): Promise<ModelDiscoveryResult>;
 ```
 
 POSTs `/api/providers/discover-models` with the same bearer headers as every
-other call. The key rides only in this request body; nothing stores it.
+other call. The key rides only in this request body (and, upstream, the probe's
+`Authorization` header); nothing stores it.
 
 `packages/web/src/app-state.ts` — transient form field:
 
