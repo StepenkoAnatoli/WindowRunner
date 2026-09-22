@@ -12,12 +12,12 @@ section names below are allowed.
 
 ### Added
 
-- Nothing yet. Work toward the first tagged release accumulates here.
+- Nothing yet. Changes toward the next release accumulate here.
 
 ## [0.1.0] - 2026-09-22
 
-First packaged state of the project (pending the first tagged release — the
-0.1.0 artifacts cut from this tree are the first installable ones).
+First tagged release of the project — the 0.1.0 artifacts (CLI tarball and
+Windows installer) cut from this tree are the first installable ones.
 
 ### Added
 
