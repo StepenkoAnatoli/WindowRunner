@@ -339,6 +339,20 @@ describe("release contract: release workflow (B5.7)", () => {
     assert.ok(release.includes("scripts/release-notes.mjs"), "the release notes must come from the changelog");
     assert.ok(release.includes("SHA-256 checksums"), "the checksums must be visible in the release body");
   });
+
+  it("builds before the guard's unit tests (the packaging contract runs the built bundle)", () => {
+    // Regression (v0.1.0 tag push): the guard ran `npm test` on a fresh,
+    // never-built checkout, and the server packaging contract failed with
+    // "packages/server/dist/index.cjs must exist (run build first)" — the
+    // same ordering the CI job already gets right.
+    const guardJob = release.slice(release.indexOf("  guard:"), release.indexOf("  cli:"));
+    const build = guardJob.indexOf("run: npm run build");
+    const unitTests = guardJob.indexOf("run: npm test");
+    assert.ok(
+      build >= 0 && unitTests >= 0 && build < unitTests,
+      "the guard must run `npm run build` before `npm test` — the packaging contract executes packages/server/dist/index.cjs"
+    );
+  });
 });
 
 describe("release contract: release notes (B5.7)", () => {
