@@ -9,10 +9,10 @@ Plan: `docs/superpowers/plans/2026-09-22-b5-release-hardening.md`
 
 ## Status
 
-B5.0–B5.9 implemented; full local gate green. Pushed and opened as a PR; the
-nine CI checks (eight existing + the new `Desktop signing`) are the remaining
-gate before merge. The verdict below flips to GO once they are green on the
-head commit.
+B5.0–B5.9 implemented; full local gate green. **All nine CI checks green on
+evidence commit `505c2ee`, run
+[35729254359](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35729254359).**
+GO-for-merge is recorded at the end of this file.
 
 ## Commits
 
@@ -27,7 +27,15 @@ head commit.
 b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
 2f67d5c — feat(release): tag-driven draft releases with checksums and changelog notes
 34fb94d — docs(security): add the reporting policy and the B5 security review
-(this commit) — docs + gate: B5.9 final docs, AGENTS/README, this status
+e696677 — docs: close B5 — final docs, gate runs, atomic status
+b768322 — docs(status): record the CI blocker (sandbox GitHub credential expired)
+c21dcbc — docs(status): open the B5 pull request
+a0cd37b — fix(release): make the gates newline-agnostic and the crash smoke CI-proof
+b545afc — fix(desktop): read the crash-smoke logs dir from the app's real userData
+1359116 — fix(ci): require only the installer exe in the checksums step
+aa179aa — fix(ci): poll for the new version, not exe existence, in the upgrade step
+618b023 — docs(status): record the four CI fix rounds and the pending evidence run
+505c2ee — fix(desktop): assert upgrade data survival at the persistence layer
 ```
 
 ## Files changed
@@ -230,20 +238,22 @@ verification (the sandbox cannot fetch Actions logs/artifacts or run Electron):
 | 35723716969 | a0cd37b | 5/9 green | Windows unit tests fixed (newline-agnostic parsers + CRLF regression test). Electron smoke failed on BOTH OSes: the test polled the smoke's temp data dir, but the real app resolves its data dir from `app.getPath("userData")` — test now asks the app (desktop.spec.ts pattern); the rejection→record mechanism was proven locally against an attached inspector session. |
 | 35724895275 | b545afc | 7/9 green | All Desktop/E2E/Platform jobs green. Installer job failed at the checksums step: `latest.yml` is emitted only with a publish provider (verified in app-builder-lib's updateInfoBuilder); the step now requires only the installer exe and attaches update metadata when present (existence-checked — nullglob alone would not drop literal names). |
 | 35725941413 | 1359116 | 8/9 green | Checksums/upload/install/installed-e2e/upgrade-phase-A green; in-place upgrade step failed: it polled for the exe to EXIST (instantly true — the old install's exe) and compared ProductVersion before the NSIS replacement settled. Now polls for the version itself, up to 120 s, with failure diagnostics. |
-| 35726866348 | aa179aa | in progress | Monitoring was cut off by a second sandbox GitHub-credential expiry (401); record the result here once it can be read. |
+| 35726866348 | aa179aa | 8/9 green | In-place upgrade step green (version polling fix worked) and `Desktop signing` passed on its first execution (cert → signtool → signed exe + installer). `Desktop installer` failed in upgrade phase B: the spec asserted historical-turn REPLAY in the UI, which the app deliberately does not do after reattach (documented B3 limitation; `selectSession` never fetches turn history). Phase B now asserts reattach success (session-id renders) + persistence-layer survival (the phase-A turn log exists on disk and contains the phase-A message and a `turn_completed` event) + a fresh turn. |
+| **35729254359** | **505c2ee** | **9/9 GREEN** | All nine checks pass: `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer (windows-latest)` (build → checksums → silent install → installed-app e2e → upgrade A → in-place upgrade → upgrade B → uninstall with user-data survival), `Desktop signing (windows-latest)`. |
 
-Everything except `Desktop installer (windows-latest)` and
-`Desktop signing (windows-latest)` has been green on the last completed round;
-`Desktop signing` has not executed yet in any completed round (it first
-reached its turn in round 3+).
+(Monitoring of round 35726866348 was cut by a second sandbox credential
+expiry; its result was read after the credential returned.)
 
 ## Verdict
 
-**Pending CI (run 35726866348 on head `aa179aa`):** every local gate is green
-and the PR is open. The B5 gate requires all nine checks green on the head
-commit; this file records GO the moment that run lands — same pattern as the
-B3/B4 status files (the evidence commit's run is the merge basis). The four
-preceding rounds each surfaced a real CI-only defect (CRLF parsing, wrong
-data-dir assumption, optional-artifact handling, upgrade polling) — all fixed
-with regression coverage or locally-verified mechanisms, and all recorded
-under Deviations.
+B5.9 PASS / **GO — merge PR #32.**
+
+Evidence: all nine checks green on head commit `505c2ee`, run
+[35729254359](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35729254359).
+The five CI rounds each surfaced a real defect (CRLF changelog parsing, a
+wrong data-dir assumption in the smoke, optional-artifact handling in the
+checksums step, existence-based upgrade polling, and a phase-B
+over-assertion of UI turn replay) — every one fixed with regression coverage
+or a locally-verified mechanism and recorded under Deviations. This docs-only
+status commit starts one more run; the merge proceeds on the evidence above
+(same pattern as the B3/B4 status files).
