@@ -136,11 +136,15 @@ jobs:
       # runs with forceCodeSigning and cannot ship unsigned; when they do not,
       # the build is unsigned and the draft release carries an explicit
       # warning. One config, no code changes — adding the secrets flips it.
+      # The secret itself is never interpolated into shell code — only the
+      # yes/no decision crosses the step boundary (HAS_CERT env).
       - name: Decide the signing mode
         id: signing
         shell: bash
+        env:
+          HAS_CERT: ${{ secrets.WIN_CSC_LINK != '' && 'yes' || 'no' }}
         run: |
-          if [ -n "${{ secrets.WIN_CSC_LINK }}" ]; then
+          if [ "$HAS_CERT" = "yes" ]; then
             echo "mode=signed" >> "$GITHUB_OUTPUT"
           else
             echo "mode=unsigned" >> "$GITHUB_OUTPUT"

@@ -76,6 +76,15 @@ jobs:
       - name: Release consistency gate
         run: npm run check:release
 
+      # B5.8 security gate: the shipped artifact must not grow a vulnerable
+      # runtime dependency unnoticed. Today the product has zero runtime npm
+      # dependencies (the server bundle is self-contained; the desktop app
+      # ships compiled .cjs files) — this step exists so that staying true
+      # keeps being enforced, not assumed. Dev-only tooling is deliberately
+      # not audited here.
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
       # Asserts the packed tarball matches the manifest contract: dist/ only, no
       # sources, no tests, and bin points to existing files.
       - name: Packed-artifact smoke test

@@ -22,14 +22,21 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-Four jobs. Triggers: `push` to `main` and every `pull_request`. Concurrency
-cancels superseded runs on the same ref; each job has a 20-minute timeout; a
-diagnostics artifact is uploaded on failure. `CI` (`ubuntu-latest`) and
-`Platform` (`windows-latest` + `macos-latest` matrix, after `CI`) pin Node
-exactly to `22.23.2`; the `Docker` job (also after `CI`) builds
-`node:22-alpine` images and needs no runner Node at all; `Browser E2E`
-(`ubuntu-latest`, after `CI`) installs Chromium via Playwright and drives the
-web UI against the real server with a scripted offline provider.
+Updated 2026-09-22 (B5). Nine jobs on every `push` to `main` and every
+`pull_request`. Concurrency cancels superseded runs on the same ref; each job
+has a 20–40-minute timeout; a diagnostics artifact is uploaded on failure.
+`CI` (`ubuntu-latest`) and `Platform` (`windows-latest` + `macos-latest`
+matrix, after `CI`) pin Node exactly to `22.23.2`; the `Docker` job (also
+after `CI`) builds `node:22-alpine` images and needs no runner Node at all;
+`Browser E2E` (`ubuntu-latest`, after `CI`) installs Chromium via Playwright
+and drives the web UI against the real server with a scripted offline
+provider; the `Desktop` matrix (after `CI`) typechecks/tests/smokes the
+Electron shell and runs its e2e; `Desktop installer` and `Desktop signing`
+(after `Desktop`) exercise the NSIS installer and the code-signing pipeline
+on `windows-latest`. Tag pushes `vX.Y.Z` run the separate release workflow
+(`release.yml`): tag-bound guard → CLI tarball smokes → signed-or-warned
+installer with the installed-app journey → draft GitHub Release with
+checksums and changelog notes.
 
 | Check | Command |
 | --- | --- |
@@ -37,6 +44,8 @@ web UI against the real server with a scripted offline provider.
 | Typecheck — shared, server, web | `npm run typecheck` |
 | Build — emits `packages/*/dist` | `npm run build` |
 | Full test suite | `npm test` |
+| Release consistency — version single-source + changelog format (B5) | `npm run check:release` |
+| Production-dependency audit — zero runtime deps today, enforced (B5) | `npm audit --omit=dev --audit-level=high` |
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
@@ -44,6 +53,9 @@ web UI against the real server with a scripted offline provider.
 | Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
+| Desktop shell — typecheck, unit tests, page + Electron smokes, unpacked-app e2e | `Desktop` matrix (`ubuntu-latest`, `windows-latest`) |
+| NSIS installer — build, checksums, silent install, installed-app e2e, **in-place upgrade with data preservation (B5.6)**, silent uninstall with user-data survival | `Desktop installer` (`windows-latest`) |
+| Code-signing pipeline — self-signed test certificate → signed app exe + installer (B5.3) | `Desktop signing` (`windows-latest`) |
 
 `npm ci` runs without `--ignore-scripts` because `scripts/postinstall.mjs` now
 exists and verifies the workspace tree. Skipping lifecycle scripts was a
@@ -57,7 +69,8 @@ this checklist tracks.
 | Installer fresh-clone + interactive modes | Both installers run in CI only in checkout mode with `--no-start`/`-NoStart`. Cloning from a URL and the interactive start prompt are untested on every OS. |
 | `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
 | Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
-| Electron desktop build | `packages/desktop` does not exist (gap G-04's neighbour). |
+| Electron desktop build | **Implemented and enforced since PR A/A2, extended by B5** — see the `Desktop`, `Desktop installer` and `Desktop signing` rows above. (This row previously claimed `packages/desktop` did not exist; it has since B1's base.) |
+| Production code signing | The pipeline is CI-proven with a test certificate (B5.3) and release builds fail loudly without credentials; **no production certificate exists yet** — installers stay unsigned until the `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` secrets are added (maintainer action, documented in docs/INSTALL.md). |
 | Real-model evaluation runs (P2-02) | Deliberately manual: they cost money and are not reproducible. `eval/README.md`. |
 | Matrix of supported Node versions | One exact version. `engines.node` advertises `>=22.0.0` (narrowed from `>=20.10` since Node 20 is past its security-fix window). |
 
@@ -65,23 +78,31 @@ this checklist tracks.
 
 Branch protection on `main` is not set. The automation token used to open and
 merge these PRs is refused read *and* write access to the protection rules
-(HTTP 403), so it could not enable them and could not verify whether they exist.
-Until a repository admin requires the `CI`, `Browser E2E`, `Docker`,
-`Platform (windows-latest)`, and `Platform (macos-latest)` status checks and at
+(HTTP 403, re-verified 2026-09-22 during B5), so it could not enable them and
+could not verify whether they exist.
+Until a repository admin requires the nine status checks — `CI`,
+`Browser E2E`, `Docker`, `Platform (windows-latest)`,
+`Platform (macos-latest)`, `Desktop (ubuntu-latest)`,
+`Desktop (windows-latest)`, `Desktop installer (windows-latest)`, and
+`Desktop signing (windows-latest)` — and at
 least one approval on `main`, a green `CI` run is **informational**: it does not
 block a merge, and "failed CI gates block release" (P1-06) is not true.
 
-**Outstanding admin action:** on `main`, require the five status checks `CI`,
-`Browser E2E`, `Docker`, `Platform (windows-latest)`, and
-`Platform (macos-latest)`, plus >= 1 approving review. All five are required:
+**Outstanding admin action:** on `main`, require the nine status checks listed
+above, plus >= 1 approving review. All nine are required:
 `Browser E2E` is the only job that drives the shipped UI (including `/dashboard`)
 in a real browser, so omitting it would let a merge land that passes every unit
-and server test while breaking the page users actually open. This is the only
+and server test while breaking the page users actually open; the installer and
+signing jobs are the only proof that the shipped Windows artifacts install,
+upgrade, uninstall and sign. This is the only
 item in this section that cannot be done from a pull request.
 
 The exact check names are the job `name:` values in `.github/workflows/ci.yml`
-(`CI`, `Browser E2E`, `Docker`, `Platform (${{ matrix.os }})`); the platform legs
-appear as `Platform (windows-latest)` and `Platform (macos-latest)`.
+(`CI`, `Browser E2E`, `Docker`, `Platform (${{ matrix.os }})`,
+`Desktop (${{ matrix.os }})`, `Desktop installer (windows-latest)`,
+`Desktop signing (windows-latest)`); the platform legs
+appear as `Platform (windows-latest)` and `Platform (macos-latest)`, the
+desktop legs as `Desktop (ubuntu-latest)` and `Desktop (windows-latest)`.
 
 ### Latent risk — not a defect today
 
@@ -263,8 +284,16 @@ Acceptance criteria:
 
 ---
 
-### [ ] P1-03: Add retention, deletion, and user review for crash reports and sessions
+### [~] P1-03: Add retention, deletion, and user review for crash reports and sessions
 Title: Add retention, deletion, and user review for persisted diagnostics
+
+**2026-09-22 (B5) progress:** the desktop shell now has local crash records
+with retention — Crashpad minidumps (never uploaded, pruned to 10) and
+redacted bounded `logs/crash-*.log` records (pruned to 20), both documented in
+`docs/INSTALL.md` → "Crash reports and logs" and deletable by the user at any
+time. Session-store retention was already handled by Phase 7 (retention
+preserving active sessions, quarantine, `/api/diagnostics`). Still open: an
+in-UI review/delete surface for crash records, and export warnings.
 
 Files to inspect:
 - `packages/server/src/error-reporter.ts`
