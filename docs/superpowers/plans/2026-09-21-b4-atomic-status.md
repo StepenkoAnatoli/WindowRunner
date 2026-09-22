@@ -31,6 +31,11 @@ c701c9e — docs: correct B4 model discovery gate and key-path contract
 f357981 — test(web): cover model discovery browser journeys
 8b78422 — test(desktop): verify provider model discovery in Electron
 60ce0c5 — docs: describe model discovery limits and key handling
+817d934 — docs(status): record B4.2-B4.6 and the local gate
+236719b — fix(web): let a picked discovered model reach the model field
+169ee33 — test(web): make the discovery journey retry-safe
+907902b — test(desktop): make the discovery journey retry-safe
+cbeab3a — test(desktop): unstack dialog handlers before the dashboard navigation
 ```
 
 (Sandbox note: between B4.1 and B4.2 the workspace's `.git` was reset to a
@@ -120,8 +125,8 @@ README.md, docs/INSTALL.md, plan + this status file.
 | `npm run smoke:packed:start` | pass |
 | `npm run smoke:start` | pass |
 | `npm run eval` | pass (5/5) |
-| `npm run e2e` | not runnable in this sandbox (playwright CDN ECONNRESET, same as B3) — covered by CI Browser E2E; specs verified via `--list` (42 tests total) and an API-level rehearsal of the whole journey against the real fixture server |
-| `npm run e2e:desktop` | not runnable in this sandbox (Electron binary download blocked) — covered by the Desktop CI jobs; specs verified via `--list` |
+| `npm run e2e` | not runnable in this sandbox (playwright CDN ECONNRESET, same as B3) — **pass in CI** (Browser E2E, run 35710922400) after two real failures found and fixed (see Deviations) |
+| `npm run e2e:desktop` | not runnable in this sandbox (Electron binary download blocked) — **pass in CI** (Desktop ubuntu + windows + installer, run 35710922400) after the same hardening |
 
 ## Acceptance criteria
 
@@ -182,9 +187,15 @@ README.md, docs/INSTALL.md, plan + this status file.
 
 ## CI status
 
-Eight checks on the head commit (`60ce0c5`): recorded below after the run.
+All eight checks green on evidence commit `cbeab3a`, run
+[35710922400](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35710922400):
+CI, Browser E2E, Docker, Platform (windows-latest), Platform (macos-latest),
+Desktop (ubuntu-latest), Desktop (windows-latest),
+Desktop installer (windows-latest). The installer job installed the built app,
+ran both desktop specs against it, and uninstalled. This docs-only status
+commit starts one more run; the merge proceeds on the evidence above (same
+pattern as the B3 status file).
 
 ## Verdict
 
-B4.6 PASS — merge gate: all eight CI checks green on the PR head, then merge
-PR #31. Final GO recorded after the run links land.
+B4.6 PASS / GO — merge PR #31.
