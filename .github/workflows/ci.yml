@@ -66,6 +66,13 @@ jobs:
       - name: Test
         run: npm test
 
+      # B5.1 release gate: the root package.json version is the single source
+      # of truth; every workspace must agree (the desktop installer embeds the
+      # workspace version, the web bundle injects the root version). The
+      # changelog checks (B5.2) ride in the same script.
+      - name: Release consistency gate
+        run: npm run check:release
+
       # Asserts the packed tarball matches the manifest contract: dist/ only, no
       # sources, no tests, and bin points to existing files.
       - name: Packed-artifact smoke test

@@ -51,6 +51,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/server && npm run build --workspace packages/web",
+    "check:release": "node scripts/check-release.mjs",
     "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
     "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web",
     "build:desktop": "npm run build --workspace packages/desktop",
