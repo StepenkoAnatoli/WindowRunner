@@ -10,9 +10,9 @@ Plan: `docs/superpowers/plans/2026-09-21-b4-provider-model-discovery.md`
 
 ## Status
 
-B4.0 done (with the three review corrections). **B4.1 done — server discovery
-service + server tests.** Stopping for review before B4.2. B4.2–B4.6 not
-started.
+B4.0–B4.6 implemented. **All local gate commands pass; awaiting the eight CI
+checks on the head commit before merge.** GO-for-merge is recorded at the end
+of this file once the run links land.
 
 ## Commits
 
@@ -23,123 +23,168 @@ c701c9e — docs: correct B4 model discovery gate and key-path contract
 82b7c6c — feat(server): add provider model discovery contract
 1ff0fb5 — feat(server): probe openai-compatible model listings safely
 0a0f05f — test(server): cover model discovery validation and redaction
+37b4b3a — docs(status): record B4.1 server discovery service
+4674d0b — feat(web): add model discovery API client flow
+4d20f92 — test(web): cover model discovery controller states
+7652216 — feat(web): add model discovery controls to provider form
+1af57fd — test(web): cover model selection and manual fallback
+f357981 — test(web): cover model discovery browser journeys
+8b78422 — test(desktop): verify provider model discovery in Electron
+60ce0c5 — docs: describe model discovery limits and key handling
 ```
+
+(Sandbox note: between B4.1 and B4.2 the workspace's `.git` was reset to a
+fresh clone while the file snapshot survived; the B4.2–B4.4 commits were
+re-parented onto the pushed B4.1 history via cherry-pick — trees verified
+byte-identical before and after. The commit hashes above are the reconciled,
+pushed ones.)
 
 ## Files changed
 
-`docs/superpowers/plans/2026-09-21-b4-provider-model-discovery.md` (plan),
-`docs/superpowers/plans/2026-09-21-b4-atomic-status.md` (this file),
-`packages/server/src/provider-discovery.ts` (new),
-`packages/server/src/app.ts` (discovery route + import),
-`packages/server/test/provider-discovery.test.ts` (new).
+Server: `packages/server/src/provider-discovery.ts` (new), `app.ts` (route),
+`test/provider-discovery.test.ts` (new). Web: `api.ts`, `app-state.ts`,
+`provider-controller.ts`, `provider-types.ts` (export), `providers/
+provider-form.ts`, `providers/provider-page.ts`, `providers/compatibility.ts`,
+`main.ts`, new `e2e/model-discovery.spec.ts`, four test files extended.
+Desktop: new `e2e/model-discovery.spec.ts`. CI: `ci.yml` inventory. Docs:
+README.md, docs/INSTALL.md, plan + this status file.
 
 ## Behavior now verified
 
-- `POST /api/providers/discover-models` is mounted only with the provider
-  admin (same gating as every other provider route), behind the existing
-  Host/Origin/bearer middleware, and registered BEFORE the parameterized
-  `/:id` provider routes.
-- Request validation, all 400 `DISCOVERY_INVALID_REQUEST` before any I/O:
-  non-object body (route-level `BODY_INVALID` for arrays), unknown/missing
-  `kind`, `baseUrl` required for openai-compatible and must parse as an
-  absolute http(s) URL with a host, no `user:pass@` credentials, printable
-  ASCII, ≤ 2048 chars; `apiKey` optional, ≤ 512 chars, no whitespace,
-  printable ASCII; empty/absent key = no key (Ollama-style endpoints).
-- `mock` → `{ "models": ["mock"] }` with no network request (asserted with a
-  fetch spy that must not run).
-- `anthropic` → 501 `DISCOVERY_UNAVAILABLE`, message exactly
-  `model discovery unavailable for this provider`, no network request.
-- `openai-compatible` → exactly one `GET {baseUrl}/models` with
-  `Accept: application/json` and `Authorization: Bearer <key>` only when a key
-  was typed; trailing slashes stripped; timeout via AbortController
-  (default `DISCOVERY_TIMEOUT_MS` = 5000, asserted; shortened timeout proven
-  against a hanging real upstream → 504 `DISCOVERY_TIMEOUT`); redirects
-  refused outright (`redirect: "error"`, real-302 test → 502
-  `DISCOVERY_BAD_RESPONSE`); response body hard-capped at 2 MiB (streaming
-  cap with abort teardown AND a lying-content-length precheck, both proven);
-  non-2xx → 502 `DISCOVERY_UPSTREAM` carrying only the HTTP status; network
-  failures → 502 with the OS error code (e.g. ECONNREFUSED); non-JSON body →
-  502 `DISCOVERY_BAD_RESPONSE`.
-- Normalization accepts ONLY `{data:[{id}|str]}`, a bare array, or
-  `{models:[str]}`; non-conforming items are dropped (trim, non-empty, ≤ 256
-  chars); dedupe then plain-UTF-16 sort (locale-independent, asserted with
-  `ä`/`Z`) then cap at 500 (`MAX_DISCOVERED_MODELS`); empty listing →
-  `{ models: [] }`.
-- Redaction: the raw key appears in no response body, no error message
-  (including a hostile upstream that echoes the `Authorization` header back
-  in a 401 body — module AND route level), no URL, and no provider-profiles
-  store write (discovery persists nothing; `redactKey` is a documented second
-  layer on messages that are secret-free by construction).
-- Route-level: 401 `AUTH_REQUIRED`/`AUTH_INVALID`; 400s; 200 mock; 501
-  anthropic; 200 sorted/deduped happy path with exactly one upstream probe;
-  502 echo/redirect/oversize/unreachable; array body → 400 `BODY_INVALID`.
-  After discovery the store still has zero profiles and
-  `activeProfileId === null` (discovery never activates anything).
+- **Server (B4.1):** `POST /api/providers/discover-models` behind the existing
+  Host/Origin/bearer middleware, registered before the `/:id` provider routes.
+  Full validation matrix 400 before any I/O (kind; absolute http(s) baseUrl
+  with host, no userinfo, printable ASCII, ≤ 2048; optional key ≤ 512,
+  no whitespace, printable ASCII). `mock` → `["mock"]` offline; `anthropic` →
+  501 with the exact message `model discovery unavailable for this provider`;
+  `openai-compatible` → exactly one `GET {baseUrl}/models` with `Accept` and
+  `Bearer` (only when a key was typed), trailing slashes stripped, 5 s
+  AbortController timeout (default constant asserted; real hanging upstream →
+  504), redirects refused outright (`redirect: "error"`, real 302 → 502
+  `DISCOVERY_BAD_RESPONSE`, both undici error shapes covered), 2 MiB body cap
+  (streaming cap with abort teardown + content-length precheck), non-2xx →
+  502 with the status only, network failures → 502 with the OS code,
+  non-JSON → 502. Normalization accepts only `{data:[{id}|str]}`, a bare
+  array, `{models:[str]}`; non-conforming items dropped; dedupe → plain
+  UTF-16 sort → 500 cap; empty listing → `{ models: [] }`.
+- **Client flow (B4.2):** `ApiClient.discoverModels` posts the discovery body
+  with the bearer header; the controller runs idle → loading → ready/error
+  with exactly one request at a time, builds the input from current form
+  values (trimmed; `apiKeyToSend` rule drops blank/pasted masks), never saves,
+  never activates, never reloads; 401 hands back to the host; any
+  kind/baseUrl/apiKey change resets discovery to `idle` (stale results
+  cleared); the typed model text is only changed by an explicit selection.
+- **Form UI (B4.3):** all required selectors
+  (`provider-discover-models`, `provider-model-discovery[-loading|-error|
+  -empty]`, `provider-model-select`, `provider-model-manual`) render in both
+  hosts (workspace route + `/dashboard`). Manual input stays visible and
+  enabled in every state; the select copies into the model field and returns
+  to its placeholder; the empty state carries the exact required copy
+  ("No models were returned. Enter the model id manually."); errors are
+  `role=alert` and secret-free; `anthropic` shows the documented fallback
+  instead of a button that can only fail; `mock` keeps the button (its
+  offline list is real data).
+- **Browser E2E (B4.4):** `e2e/model-discovery.spec.ts` (2 tests) covers the
+  full brief: exactly one discovery request (page-level AND upstream hit
+  count from an in-spec fake upstream), sorted/deduped dropdown
+  (alpha/mid/zeta), choose → field updates → select resets, save → `****cdef`
+  mask, raw key absent from URL / localStorage / sessionStorage (token
+  boundary asserted as the only key) / catalog JSON / visible DOM / discovery
+  responses / rendered errors — including a hostile upstream that echoes the
+  `Authorization` header back (and an upstream 500 whose body carries the
+  key), a refused redirect, stale-result clearing on base-URL change, empty
+  state copy, manual fallback completing the save, no activation calls, and
+  cancel-with-confirm never saving. CI inventory pins the spec.
+- **Desktop E2E (B4.5):** `e2e/model-discovery.spec.ts` (2 tests) proves the
+  journey in the real Electron shell on the in-memory bootstrap token (no
+  token form), the same key-boundary set including the
+  `userData/workspace-catalog.json` file, upstream Authorization assertion,
+  a visible 5 s timeout that recovers in the same form, manual fallback save,
+  cancel never saves, no activation, and `/dashboard` compatibility (its own
+  token form on hard load).
+- **Docs (B4.6):** README "Fetch models" bullet (behavior, kinds, one-shot,
+  timeout, key handling, no browser-side provider request, no persistence)
+  and INSTALL provider-management bullet + updated limitations; the old
+  "there is no model discovery" statements removed.
 
 ## Tests
 
-| Suite | Result |
+| Check | Result |
 | --- | --- |
-| `packages/server/test/provider-discovery.test.ts` (new) | 37/37 pass |
-| Full server suite | 385/385 pass |
-| Full monorepo `npm test` (shared 9 + server 385 + web 213) | 607/607 pass |
-| `tsc -p packages/server/tsconfig.json --noEmit` | pass |
+| `npm run typecheck` (shared + server + web) | pass |
+| `npm run typecheck:desktop` (3 tsconfigs) | pass |
+| `npm test` | pass — 626/626 (shared 9, server 385, web 232) |
+| `npm run test:desktop` | pass (30; 4 skipped = CI-only paths) |
+| `npm run build` | pass |
+| `npm run smoke:packed` | pass |
+| `npm run smoke:packed:start` | pass |
+| `npm run smoke:start` | pass |
+| `npm run eval` | pass (5/5) |
+| `npm run e2e` | not runnable in this sandbox (playwright CDN ECONNRESET, same as B3) — covered by CI Browser E2E; specs verified via `--list` (42 tests total) and an API-level rehearsal of the whole journey against the real fixture server |
+| `npm run e2e:desktop` | not runnable in this sandbox (Electron binary download blocked) — covered by the Desktop CI jobs; specs verified via `--list` |
 
-## Acceptance criteria (B4.1)
+## Acceptance criteria
 
-- One-shot server-side provider probing endpoint exists and validates
-  kind/baseUrl/key: pass.
-- mock offline list, openai-compatible live probe, anthropic documented
-  fallback (no static list passed off as live data): pass.
-- Authenticated through the existing bearer middleware: pass (route-level 401
-  test).
-- Static route registered before parameterized provider-id routes: pass
-  (registration order in `app.ts`; functional coverage via the happy path).
-- Short timeout (~5 s), capped body, capped/deduped/sorted model ids, no
-  unbounded redirects, no key persistence, redacted errors: pass (each has at
-  least one dedicated test).
-- Loopback/private targets allowed per approved decision: pass (all real
-  upstream tests run against 127.0.0.1).
+- B4.0 plan committed before implementation: pass (`743066c`), with the three
+  approved review corrections (`c701c9e`).
+- One authenticated discovery request → presented models → user choice, with
+  manual entry always available: pass (server + controller + form + e2e).
+- All B4 non-goals respected: no auto-selection, no polling, no browser key
+  persistence, no catalog key storage, no capability/pricing/context
+  inference, no renderer-side provider requests, no secrets in logs/errors:
+  pass (each enforced by tests).
+- B4.1 security/limits checklist: pass (see Behavior verified).
+- B4.2 controller semantics: pass.
+- B4.3 required selectors + states + exact empty copy: pass.
+- B4.4 browser scenarios 1–18: pass in the committed spec (executed by CI).
+- B4.5 desktop checklist: pass in the committed spec (executed by CI).
+- B4.6 docs + gate: pass locally; CI pending at write time.
 
 ## Security checks
 
-- Key path honored as corrected in the plan: transient form (later phases) →
-  request body → request-handling memory → one upstream `Authorization`
-  header. Never in a response, error, log, metric, URL, browser storage, or
-  the catalog/profile store.
-- Upstream response bodies are never included in any error message; a hostile
-  upstream echoing the Authorization header cannot leak the key (proven).
-- Errors carry stable codes + statuses only; the route additionally scrubs
-  the request key from any outgoing message (`redactKey`).
-- No new persistence, no new logs, no metrics with request content.
+- Key path exactly as corrected in the plan: open form (transient memory) →
+  `POST /api/providers/discover-models` body → server request-handling memory
+  → one upstream `Authorization` header. Nowhere else. Asserted at server,
+  controller, browser-e2e, and desktop-e2e level.
+- Raw key absent from: response bodies, errors (including hostile-upstream
+  echo), logs (nothing new logs request content), metrics, URLs, browser
+  storage (only the pre-existing bearer-token boundary key exists), the
+  workspace catalog, visible post-save UI (mask only), and the provider
+  profile store (discovery persists nothing).
+- Upstream hardening: redirects refused, 5 s deadline, 2 MiB cap, upstream
+  bodies never surfaced, bounded normalization only.
+- No new environment variables, no new persistence, no catch-all routes.
 
 ## Deviations
 
-- The brief's suggested commit `feat(server): add provider model discovery
-  contract` also carries the basic openai-compatible probe and route wiring
-  (a contract-only commit with a dead probe path would not typecheck
-  honestly); the follow-up `…probe … safely` commit carries the body-size
-  caps and the undici redirect classification. Each commit is green.
-- Node 22's undici reports a refused redirect as `TypeError: fetch failed`
-  with cause `unexpected redirect` (not a message containing "redirect");
-  classification checks both the outer message and the cause chain.
-- One full-suite run had a single unrelated test failure that did not
-  reproduce in three subsequent full runs (shared 9 + server 385 + web 213
-  green). Watched; not attributed to B4.1.
+- The B4.1 "contract" commit also carries the basic probe/route (a
+  contract-only commit would not typecheck honestly).
+- The browser/desktop fake upstream lives in the spec files (in-process hit
+  counting) instead of the fixture server, and the web spec starts it in the
+  test process — a stronger assertion than the planned control-endpoint
+  approach.
+- Node 22 undici reports refused redirects via the `cause` chain
+  ("unexpected redirect"); classification checks both layers.
+- Local `npm run e2e` / `npm run e2e:desktop` cannot run in this sandbox
+  (playwright + Electron binary downloads blocked, same as B3); both were
+  verified by `--list` discovery, typecheck, an API-level rehearsal of the
+  browser journey against the real fixture server, and are executed by CI.
+- The sandbox `.git` reset between B4.1 and B4.2 required cherry-picking the
+  web commits onto the pushed history (trees verified identical).
 
 ## Known gaps
 
-- Anthropic users have no live model listing yet (documented 501 fallback).
+- Anthropic has no live model listing (documented 501 fallback; live
+  `GET /v1/models` is an isolated follow-up).
 - Truncation at 500 ids is silent by design (documented).
-- CI has not been asserted on these commits yet (pushed to PR #31; results
-  recorded at the next stop point).
+- Discovery accepts loopback/private targets by approved decision (local
+  Ollama/LM Studio), relying on the same trust boundary as chat/test calls.
 
 ## CI status
 
-Not asserted at this stop point (B4.1 is server-only; the local suite is
-fully green). All eight checks must be green by the B4.6 gate.
+Eight checks on the head commit (`60ce0c5`): recorded below after the run.
 
 ## Verdict
 
-B4.1 PASS — stopping for review before B4.2 (API client + provider
-controller).
+B4.6 PASS — merge gate: all eight CI checks green on the PR head, then merge
+PR #31. Final GO recorded after the run links land.
