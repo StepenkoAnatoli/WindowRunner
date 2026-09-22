@@ -172,8 +172,14 @@ describe("desktop shell smoke (unpacked Electron)", () => {
   });
 
   it("writes a redacted crash log for a main-process unhandled rejection and keeps running (B5.5)", async () => {
-    const logsDir = path.join(dataDir, "logs");
-    assert.ok(fs.existsSync(path.join(logsDir, "README.txt")), "logs README must exist");
+    // The app resolves its data dir from app.getPath("userData") — Electron's
+    // REAL per-user location (e.g. ~/.config/WindowRunner), not this suite's
+    // WINDOWS_RUNNER_DESKTOP_DATA_DIR temp dir (that override only affects the
+    // electron-stub flow and paths.defaultAppDataDir). Ask the app itself,
+    // the same way desktop.spec.ts locates the workspace catalog.
+    const userDataDir = await app!.evaluate(({ app: electronApp }) => electronApp.getPath("userData"));
+    const logsDir = path.join(userDataDir, "logs");
+    assert.ok(fs.existsSync(path.join(logsDir, "README.txt")), `logs README must exist at ${logsDir}`);
 
     type Bridge = { getBootstrap(): { token: string } };
     const token = await page!.evaluate(() => {
@@ -211,7 +217,7 @@ describe("desktop shell smoke (unpacked Electron)", () => {
       }
       if (recorded === "") await new Promise((r) => setTimeout(r, 100));
     }
-    assert.ok(recorded !== "", "an unhandled rejection must produce a crash log naming the error");
+    assert.ok(recorded !== "", `an unhandled rejection must produce a crash log in ${logsDir} naming the error`);
     assert.match(recorded, /kind: unhandledRejection/);
     assert.ok(!recorded.includes(token), "the crash log must not contain the bearer token");
 
