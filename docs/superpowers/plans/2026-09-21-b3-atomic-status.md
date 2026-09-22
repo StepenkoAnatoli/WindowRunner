@@ -7,8 +7,10 @@ PR: https://github.com/StepenkoAnatoli/WindowRunner/pull/29
 Base: `main` @ `8367e3a4941f48364a1a7244385138c484e9afbb`
 Evidence head: `5a0ffc942c056abede3532fe1efe8d3ae8931a61`
 Evidence run: https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692202945
+Status-commit head: `8b43c4689089ec428a2ae7d5b76f3e012fc342ac`
+Status-commit run: https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692629309
 
-This status commit is documentation only. The eight checks below were green on `5a0ffc9`. A push of this file starts a new run; do not treat that later run as green until GitHub says so.
+The eight checks were green on `5a0ffc9` and again on the status commit `8b43c46` (run 35692629309, completed success). This follow-up only records that finished run. It does not claim a result for the run this commit itself starts.
 
 ## Status
 
@@ -105,7 +107,8 @@ Server allowlist and tests, root-absolute shell assets, desktop bootstrap republ
 
 ## CI status
 
-Run [35692202945](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692202945) on `5a0ffc9`: all eight checks success. Do not cite a later run of this status commit as green until that run has actually finished.
+Run [35692202945](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692202945) on `5a0ffc9`: all eight checks success.
+Run [35692629309](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35692629309) on `8b43c46`: all eight checks success. That is the status-file commit. This follow-up does not cite its own run.
 
 ## Go / no-go
 
