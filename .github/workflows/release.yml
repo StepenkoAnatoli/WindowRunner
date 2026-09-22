@@ -213,9 +213,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Update metadata for the future auto-updater (nothing consumes it yet;
-      # shipped so releases are complete). The blockmap is generated for NSIS
-      # when differential updates are possible; optional here.
+      # Update metadata for the future auto-updater (nothing consumes it yet).
+      # electron-builder emits latest.yml/blockmap only when a publish
+      # provider is configured, which this repo does not have yet — so this
+      # upload is optional and simply skips when there is nothing to attach.
       - name: Upload the update metadata
         uses: actions/upload-artifact@v4
         with:

@@ -544,7 +544,7 @@ Acceptance:
    installer (signed with the production certificate when
    `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` secrets exist, else explicitly
    unsigned; installed, e2e-driven, uninstalled) → DRAFT GitHub Release with
-   the installer, tarball, `latest.yml`, `SHA256SUMS.txt` and the
+   the installer, tarball, update metadata (when present), `SHA256SUMS.txt` and the
    changelog-derived notes.
 5. A human reviews the draft (checksums, notes, signing status) and publishes.
 

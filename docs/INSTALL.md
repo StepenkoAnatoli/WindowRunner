@@ -588,9 +588,10 @@ CI enforces the whole story on every push: the `Desktop installer
 (windows-latest)` job builds the NSIS installer, installs silently, drives the
 installed app through boot → auto-auth → mock turn → clean shutdown, verifies
 an in-place upgrade to a newer build keeps your data (B5.6), then uninstalls
-and asserts removal while user data survives. The installer exe, its
-`latest.yml` update metadata, and a `SHA256SUMS.txt` sidecar are uploaded as a
-workflow artifact (`windowrunner-installer`).
+and asserts removal while user data survives. The installer exe and a
+`SHA256SUMS.txt` sidecar are uploaded as a workflow artifact
+(`windowrunner-installer`; electron-builder update metadata joins it when
+present — it is emitted only once a publish provider is configured).
 
 ### Code signing and SmartScreen
 

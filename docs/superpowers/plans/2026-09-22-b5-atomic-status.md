@@ -103,7 +103,8 @@ b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
   changelog binding + unit tests) → CLI tarball (packed smokes) → installer
   (production-secret signing with forceCodeSigning, or explicitly-unsigned
   with a warning banner; install → e2e → uninstall inside the workflow) →
-  DRAFT GitHub Release with installer, tarball, `latest.yml`, blockmap,
+  DRAFT GitHub Release with installer, tarball, update metadata (when
+  present — electron-builder emits latest.yml only with a publish provider),
   `SHA256SUMS.txt` and changelog-derived notes (`scripts/release-notes.mjs`).
   Minimal permissions (`contents: write` only on the publishing job);
   secrets never interpolated into shell code (programmatically verified).
@@ -186,6 +187,18 @@ b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
 - Sandbox limits (Electron binary + playwright CDN blocked) — same
   substitution strategy as B3/B4: unit + contract + page-smoke locally,
   everything Electron/browser/Windows in CI.
+- Three CI-only defects were found and fixed on the PR (each invisible to the
+  local LF sandbox): (1) `check-release.mjs` parsed CHANGELOG.md LF-only and
+  failed on a Windows CRLF checkout — line endings are now normalized inside
+  the pure parsers, with a CRLF regression test; (2) the electron smoke polled
+  `WINDOWS_RUNNER_DESKTOP_DATA_DIR`, but the real app resolves its data dir
+  from `app.getPath("userData")` — the test now asks the app (the same
+  pattern desktop.spec.ts uses), and the rejection→record mechanism was
+  verified locally against an attached inspector session (Playwright's
+  evaluate transport); (3) the installer checksums step hard-required
+  `latest.yml`, which electron-builder emits only with a publish provider —
+  the step now requires the installer exe and attaches update metadata when
+  present.
 
 ## Known gaps
 
@@ -193,7 +206,9 @@ b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
   `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD`; SmartScreen warns until then) —
   documented in INSTALL, SECURITY, CHANGELOG, and the release draft banner.
 - Auto-update client deliberately absent (needs a published feed + stable
-  signatures; `latest.yml` already ships with releases).
+  signatures; update metadata — `latest.yml` — is emitted by electron-builder
+  only once a publish provider is configured, so releases carry it when
+  present and the workflows attach it conditionally).
 - Branch protection still not configurable by this token (admin action,
   now listing nine checks).
 - Installer fresh-clone/interactive modes remain untested (pre-existing

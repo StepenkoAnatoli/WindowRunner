@@ -228,8 +228,19 @@ describe("release contract: artifact checksums (B5.4)", () => {
   it("the installer CI job publishes a SHA256SUMS.txt with every artifact upload", () => {
     const ci = read(".github/workflows/ci.yml");
     assert.ok(
-      ci.includes("node ../../../scripts/checksums.mjs --out . *-Setup-*.exe latest.yml"),
-      "the installer job must generate SHA256SUMS.txt for the installer and update metadata"
+      ci.includes('node ../../../scripts/checksums.mjs --out . "${files[@]}"'),
+      "the installer job must generate SHA256SUMS.txt for the installer artifacts"
+    );
+    // The installer exe is the required artifact; latest.yml/blockmap are
+    // optional (electron-builder emits update info only with a publish
+    // provider, which this repo does not configure).
+    assert.ok(
+      ci.includes("no *-Setup-*.exe produced"),
+      "the checksums step must fail loudly when no installer was produced"
+    );
+    assert.ok(
+      ci.includes("shopt -s nullglob"),
+      "optional update metadata must not fail the checksums step when absent"
     );
     const uploadBlock = ci.slice(ci.indexOf("name: windowrunner-installer"));
     assert.ok(

@@ -660,11 +660,27 @@ jobs:
 
       # B5.4 — every installer artifact ships with a checksum sidecar so users
       # can verify integrity (docs/INSTALL.md -> "Verifying a download").
+      # The installer exe is REQUIRED; latest.yml / the blockmap appear only
+      # when electron-builder emits update info (it needs a publish provider,
+      # which this repo does not configure yet), so they join the sidecar
+      # when present and are skipped otherwise.
       - name: Publish SHA-256 checksums for the installer artifacts
         shell: bash
         run: |
+          set -euo pipefail
           cd packages/desktop/release
-          node ../../../scripts/checksums.mjs --out . *-Setup-*.exe latest.yml
+          shopt -s nullglob
+          installers=( *-Setup-*.exe )
+          if [ ${#installers[@]} -eq 0 ]; then
+            echo "::error::no *-Setup-*.exe produced in packages/desktop/release"
+            ls -la
+            exit 1
+          fi
+          files=( "${installers[@]}" )
+          for optional in latest.yml *.exe.blockmap; do
+            [ -f "$optional" ] && files+=( "$optional" )
+          done
+          node ../../../scripts/checksums.mjs --out . "${files[@]}"
           echo "SHA256SUMS.txt:"
           cat SHA256SUMS.txt
 
