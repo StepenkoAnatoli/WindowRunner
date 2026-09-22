@@ -63,10 +63,13 @@ npm run smoke:packed                            # tarball contents against manif
 npm run smoke:packed:start                      # unpack tarball and boot npm start outside repo
 npm run smoke:start                             # boot the built server, run a turn, restart, SIGTERM
 npm start                                       # http://127.0.0.1:7634 (mock provider, no tools)
+npm run check:release                           # version + changelog consistency gate
 npm run typecheck:desktop                       # desktop workspace (3 tsconfigs)
 npm run test:desktop                            # desktop unit + contract tests
 npm run smoke:desktop                           # desktop page smoke + Electron smoke
 npm run e2e:desktop                             # desktop user journey (real Electron)
+npm run package:desktop:win                     # NSIS installer (unsigned unless WIN_CSC_* set)
+npm run package:desktop:win:release             # installer, forceCodeSigning (fails unsigned)
 ```
 
 `npm start` rebuilds automatically when `dist/` is missing or older than `src/`

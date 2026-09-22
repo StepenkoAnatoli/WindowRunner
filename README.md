@@ -567,6 +567,15 @@ claim: `express` is the only runtime dependency, with `typescript`, `tsx` and
 `diff` or `picomatch` in `package-lock.json`. Verify with
 `npm ls --all --depth=0`.
 
+## Security
+
+Found a security problem? Do not open a public issue — see
+[SECURITY.md](./SECURITY.md) for the private reporting path and the trust
+model. Download verification and code-signing status are in
+[docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app) → "Code signing and
+SmartScreen" / "Verifying a download". The B5 security review lives at
+[docs/research/2026-09-22-b5-security-review.md](./docs/research/2026-09-22-b5-security-review.md).
+
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).
