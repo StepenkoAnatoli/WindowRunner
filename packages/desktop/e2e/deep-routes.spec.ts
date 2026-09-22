@@ -89,7 +89,12 @@ test("direct deep routes and reload stay authenticated without putting the token
   await expect(page.locator(tid("dash-card")).first()).toBeVisible();
   await page.click(tid("providers-add"));
   await expect(page.locator(tid("provider-form"))).toBeVisible();
-  await page.locator(tid("provider-form")).press("Escape");
+  // Escape is listened for on the form and bubbles from a focused field.
+  // Pressing it on the form element itself does not move focus inside, so
+  // Electron never delivers the key to the handler. A dirty form confirms;
+  // accepting discards it.
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator(tid("provider-label")).press("Escape");
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
 
   await page.click(tid("nav-workspace"));

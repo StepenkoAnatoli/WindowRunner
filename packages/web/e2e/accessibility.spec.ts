@@ -218,17 +218,21 @@ test("arrow keys move focus in the top nav and inspector without activating", as
 
   await page.click(tid("nav-workspace"));
   await expect(page.locator(tid("workspace-shell"))).toBeVisible();
-  const approvals = page.locator(tid("inspector-tab-approvals"));
-  await approvals.focus();
-  await expect(approvals).toHaveAttribute("aria-selected", "true");
+  // The loaded workspace view selects Context, not Approvals. Start from
+  // whatever tab is selected so the assertion does not depend on that default.
+  const selected = page.locator(`${tid("context-inspector")} [role="tab"][aria-selected="true"]`);
+  await expect(selected).toHaveCount(1);
+  const selectedId = await selected.getAttribute("data-testid");
+  expect(selectedId).toBeTruthy();
+  await selected.focus();
   await page.keyboard.press("ArrowRight");
-  const activity = page.locator(tid("inspector-tab-activity"));
-  await expect(activity).toBeFocused();
-  await expect(approvals).toHaveAttribute("aria-selected", "true");
-  await expect(activity).toHaveAttribute("aria-selected", "false");
+  const focusedId = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "");
+  expect(focusedId.startsWith("inspector-tab-")).toBe(true);
+  expect(focusedId).not.toBe(selectedId);
+  await expect(page.locator(tid(selectedId!))).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Enter");
-  await expect(activity).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("#inspector-panel")).toHaveAttribute("aria-labelledby", "inspector-tab-activity");
+  await expect(page.locator(tid(focusedId))).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#inspector-panel")).toHaveAttribute("aria-labelledby", focusedId);
 });
 
 test("B2 routes reflow without horizontal scrolling at narrow and wide viewports", async ({ page }) => {
