@@ -128,3 +128,41 @@ describe("release contract: changelog (B5.2)", () => {
     }
   });
 });
+
+describe("release contract: code signing (B5.3)", () => {
+  const ci = read(".github/workflows/ci.yml");
+
+  it("CI proves the signing pipeline with a test certificate on every PR", () => {
+    assert.ok(ci.includes("name: Desktop signing (windows-latest)"), "the Desktop signing job must exist");
+    // The proof must be the real credential path, not a parallel mechanism.
+    assert.ok(ci.includes("WIN_CSC_LINK: ${{ env.WR_CI_PFX }}"), "the signing job must inject the certificate via WIN_CSC_LINK");
+    assert.ok(ci.includes("WIN_CSC_KEY_PASSWORD: wr-ci-signing-proof"), "the signing job must pass the password via WIN_CSC_KEY_PASSWORD");
+    // forceCodeSigning: a build that cannot sign must fail, not skip.
+    assert.ok(ci.includes("npm run package:desktop:win:release"), "the signing job must build via the forceCodeSigning release script");
+    // The assertion must detect both "not signed at all" and "signed by the
+    // wrong certificate".
+    assert.ok(ci.includes("-eq \"NotSigned\""), "the signing gate must fail on unsigned output");
+    assert.ok(ci.includes("WindowRunner CI Signing Proof"), "the signing gate must pin the expected signer subject");
+    // The test certificate is timestamp-free on purpose: no external service
+    // in the proof path.
+    assert.ok(ci.includes("ELECTRON_BUILDER_OFFLINE: \"true\""), "the signing proof must not depend on a timestamp server");
+  });
+
+  it("the test-signed installer is never published as a releasable artifact", () => {
+    // The diagnostics upload must be failure-only; there is no unconditional
+    // upload step in the signing job.
+    const signingJob = ci.slice(ci.indexOf("  desktop-signing:"));
+    const uploadSteps = signingJob.match(/- name: Upload[^\n]*/g) ?? [];
+    assert.ok(uploadSteps.length > 0, "the signing job must upload diagnostics on failure");
+    for (const step of uploadSteps) {
+      assert.match(step, /on failure/, "signing-job artifact uploads must be failure-only");
+    }
+  });
+
+  it("the builder config keeps signing env-driven (no certificate material in the repo)", () => {
+    const yml = fs.readFileSync(path.join(desktopRoot, "electron-builder.yml"), "utf8").replace(/\r\n/g, "\n");
+    assert.match(yml, /signingHashAlgorithms:\n {6}- sha256\n/);
+    assert.ok(!yml.includes("certificateFile"), "no certificate path may be hardcoded in the builder config");
+    assert.ok(!yml.includes("certificatePassword"), "no certificate password may be hardcoded in the builder config");
+  });
+});

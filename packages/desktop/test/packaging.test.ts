@@ -107,6 +107,32 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       /^\d+\.\d+\.\d+$/,
       "electron must be pinned to an exact version (electron-builder requirement)"
     );
+    // B5.3: the installer build is reproducible — electron-builder is pinned
+    // exactly too (the lockfile would pin it anyway; the manifest states it).
+    assert.match(
+      pkg.devDependencies?.["electron-builder"] ?? "",
+      /^\d+\.\d+\.\d+$/,
+      "electron-builder must be pinned to an exact version (release reproducibility)"
+    );
+  });
+
+  it("configures env-driven code signing with a fail-loud release path (B5.3)", () => {
+    // SHA-256 only: the electron-builder default dual-signs with legacy SHA-1.
+    assert.match(yml, /signtoolOptions:\n {4}# SHA-256 only\./);
+    assert.match(yml, /signingHashAlgorithms:\n {6}- sha256\n/);
+    // The activation contract is env-driven and must stay documented in the
+    // config itself, next to the knobs.
+    assert.match(yml, /WIN_CSC_LINK \(or CSC_LINK\) \+ WIN_CSC_KEY_PASSWORD/);
+    assert.match(yml, /forceCodeSigning/);
+    assert.match(yml, /rfc3161TimeStampServer/);
+    // The release script must fail instead of shipping silently unsigned.
+    const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+    assert.equal(
+      pkg.scripts?.["package:win:release"],
+      "electron-builder --win nsis --config electron-builder.yml -c.forceCodeSigning=true"
+    );
+    const rootPkg = JSON.parse(read("../../package.json")) as { scripts?: Record<string, string> };
+    assert.equal(rootPkg.scripts?.["package:desktop:win:release"], "npm run package:win:release --workspace packages/desktop");
   });
 
   it("ships the desktop e2e harness", () => {

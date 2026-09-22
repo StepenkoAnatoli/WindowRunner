@@ -1,5 +1,6 @@
-# The eight required checks of the B2 merge gate (plan B2.5.4) — every PR run
-# must land all eight green before merge:
+# The nine required checks of the merge gate — every PR run must land all nine
+# green before merge. The first eight are the B2 merge gate (plan B2.5.4); the
+# ninth (Desktop signing) was added by B5 to prove the code-signing pipeline:
 #   1. CI
 #   2. Browser E2E
 #   3. Docker
@@ -7,7 +8,9 @@
 #   5. Platform (macos-latest)
 #   6. Desktop (ubuntu-latest)
 #   7. Desktop (windows-latest)
-#   8. Desktop installer (windows-latest)
+#   8. Desktop installer (windows-latest)  (B5 also verifies in-place upgrade
+#      and data-surviving uninstall here)
+#   9. Desktop signing (windows-latest)
 # The two inventory steps below ("Enforce B2 browser contract inventory",
 # "Enforce B2 desktop contract inventory") fail the run if the B2 spec files
 # are deleted, renamed, or stop being discovered — the coverage cannot shrink
@@ -721,5 +724,124 @@ jobs:
             packages/desktop/release/*-Setup-*.exe
             packages/desktop/release/latest.yml
             packages/desktop/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # B5.3 — proves the code-signing pipeline on every PR. Generates a
+  # self-signed CodeSigningCert on the runner (exported to a PFX — the exact
+  # shape a production WIN_CSC_LINK secret provides), builds the installer
+  # with forceCodeSigning, and asserts the produced artifacts carry an
+  # Authenticode signature from that certificate.
+  #
+  # What this job does NOT prove: trust. A self-signed chain is untrusted by
+  # any customer machine (Get-AuthenticodeSignature reports UnknownError, not
+  # Valid) — the assertion below is "signed by the pipeline", which is the
+  # part that can regress in this repository. Production trust (SmartScreen
+  # reputation) comes from a real OV/EV certificate wired through the same
+  # WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD secrets in the release workflow; see
+  # docs/INSTALL.md -> "Code signing and SmartScreen".
+  desktop-signing:
+    name: Desktop signing (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    needs: [desktop]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      # Deliberately no ELECTRON_SKIP_BINARY_DOWNLOAD: the packaging step
+      # needs the Electron runtime to build the installer.
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Build the desktop shell
+        run: npm run build:desktop
+
+      # Throwaway certificate: valid a few hours, private key never leaves the
+      # runner (CurrentUser store -> PFX under RUNNER_TEMP, store entry removed
+      # immediately after export). The password is not a secret — the artifact
+      # it protects is destroyed with the runner.
+      - name: Generate a self-signed code-signing test certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $password = "wr-ci-signing-proof"
+          $secure = ConvertTo-SecureString -String $password -Force -AsPlainText
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=WindowRunner CI Signing Proof" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddHours(4)
+          try {
+            $pfx = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $password)
+            [System.IO.File]::WriteAllBytes("$env:RUNNER_TEMP\wr-ci-signing-proof.pfx", $pfx)
+          } finally {
+            Remove-Item -Path "Cert:\CurrentUser\My\$($cert.Thumbprint)" -ErrorAction SilentlyContinue
+          }
+          Write-Host "test certificate exported (thumbprint $($cert.Thumbprint), expires $($cert.NotAfter.ToString('u')))"
+          "WR_CI_PFX=$env:RUNNER_TEMP\wr-ci-signing-proof.pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # ELECTRON_BUILDER_OFFLINE=true: skip the RFC 3161 timestamp server —
+      # the throwaway certificate needs no counter-signature, and the proof
+      # must not depend on an external timestamp service. Release builds with
+      # a real certificate DO timestamp (electron-builder default server).
+      - name: Build the installer signed (forceCodeSigning, test certificate)
+        shell: bash
+        env:
+          WIN_CSC_LINK: ${{ env.WR_CI_PFX }}
+          WIN_CSC_KEY_PASSWORD: wr-ci-signing-proof
+          ELECTRON_BUILDER_OFFLINE: "true"
+        run: npm run package:desktop:win:release
+
+      - name: "Assert the app executable and the installer are signed"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "packages\desktop\release\win-unpacked\WindowRunner.exe"
+          $setup = Get-ChildItem "packages\desktop\release" -Filter "*-Setup-*.exe" | Select-Object -First 1
+          if (!$setup) { throw "no installer produced" }
+          foreach ($file in @($exe, $setup.FullName)) {
+            if (!(Test-Path $file)) { throw "missing build output: $file" }
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            Write-Host "$file -> status=$($sig.Status) signer=$($sig.SignerCertificate.Subject)"
+            if ($sig.Status -eq "NotSigned") {
+              throw "NOT SIGNED: $file — the signing pipeline is broken (forceCodeSigning should have failed the build first)"
+            }
+            if ($sig.SignerCertificate -eq $null -or $sig.SignerCertificate.Subject -notmatch "WindowRunner CI Signing Proof") {
+              throw "WRONG SIGNER: $file — signed by something other than the CI test certificate"
+            }
+          }
+          Write-Host "ASSERT PASS: app exe and installer are Authenticode-signed by the pipeline test certificate (status 'UnknownError' is expected: the test chain is untrusted by design)"
+          Write-Host "::notice title=signing gate::ASSERT PASS: installer + app exe signed by the CI test certificate"
+
+      - name: Collect signing diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "== release dir =="
+            ls -la packages/desktop/release 2>/dev/null || true
+            echo "== win-unpacked =="
+            ls -la packages/desktop/release/win-unpacked 2>/dev/null | head -n 20 || true
+          } > signing-diagnostics.txt
+
+      # The test-signed installer is uploaded ONLY on failure, as a diagnostic.
+      # It is signed by an untrusted throwaway certificate and must never be
+      # mistaken for a releasable artifact.
+      - name: Upload signing diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-signing-diagnostics
+          path: |
+            signing-diagnostics.txt
+            packages/desktop/release/*-Setup-*.exe
+            packages/desktop/release/latest.yml
           if-no-files-found: ignore
           retention-days: 7

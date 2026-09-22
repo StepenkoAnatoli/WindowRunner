@@ -12,10 +12,12 @@ on `windows-latest` and `macos-latest`. See
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md) → "CI enforcement status" for
 which platform checks exist and which do not.
 
-**PR checks (all eight required green before merge):** `CI`, `Browser E2E`,
+**PR checks (all nine required green before merge):** `CI`, `Browser E2E`,
 `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop
 (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
-(windows-latest)` — named in `.github/workflows/ci.yml`, whose two B2
+(windows-latest)` (which also verifies in-place upgrade and uninstall data
+survival), and `Desktop signing (windows-latest)` — named in
+`.github/workflows/ci.yml`, whose two B2
 inventory steps fail the run if the browser or desktop E2E specs are deleted,
 renamed, or stop being discovered. Per-phase B2 evidence (run ids and commit
 index) lives in
