@@ -203,17 +203,25 @@ b8851f0 — ci(desktop): verify in-place upgrade and data-surviving uninstall
 
 ## CI status
 
-Pushed as PR (see Commits for the head); the run links and the per-check
-results for the head commit are recorded here once available. Checks expected:
-`CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`,
-`Platform (macos-latest)`, `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`,
+**Not run: the sandbox GitHub credential expired mid-session.** The token
+worked at session start (branch/PR queries succeeded) and began returning
+401 "Bad credentials" before the first push, so the branch has not been
+pushed, no PR exists yet, and no CI run has executed. All B5 work is
+committed locally on `arena/01a0c893-windowrunner` (12 commits, clean tree).
+Next step: reconnect the GitHub credential (Arena), then
+`git push origin arena/01a0c893-windowrunner`, open the PR, and record the
+nine-check run here. Checks expected: `CI`, `Browser E2E`, `Docker`,
+`Platform (windows-latest)`, `Platform (macos-latest)`,
+`Desktop (ubuntu-latest)`, `Desktop (windows-latest)`,
 `Desktop installer (windows-latest)` (now with the upgrade/uninstall gate),
 `Desktop signing (windows-latest)` (new).
 
 ## Verdict
 
-**STOP — conditional, self-clearing:** every local gate is green and nothing
-blocks review, but the B5 gate as defined in the plan requires all nine CI
-checks green on the head commit. This file records GO the moment that run
-lands (same pattern as the B3/B4 status files: the evidence commit's run is
-the merge basis).
+**STOP — infrastructure, not code:** every local gate is green (see Tests)
+and nothing blocks review, but the B5 gate as defined in the plan requires
+all nine CI checks green on the head commit, and the CI run could not be
+started because the sandbox GitHub credential expired before the first push.
+This file records GO once the branch is pushed (credential reconnected), the
+PR is open, and the nine checks are green on the head commit — same pattern
+as the B3/B4 status files (the evidence commit's run is the merge basis).
