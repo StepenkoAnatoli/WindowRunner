@@ -179,6 +179,7 @@ describe("dashboard compatibility adapter (B2.4)", () => {
       if (path === "/api/health") return Promise.resolve(jsonResponse({ status: "ok", security: { mode: "token" }, persistence: { mode: "memory" } }));
       if (path === "/api/providers" && method === "GET") return Promise.resolve(jsonResponse({ activeProfileId: "p1", profiles: PROFILES }));
       if (path === "/api/usage?limit=50") return Promise.resolve(jsonResponse(USAGE));
+      if (path === "/api/providers/discover-models") return Promise.resolve(jsonResponse({ models: ["mock", "mock-2"] }));
       if (path.startsWith("/api/providers/")) return Promise.resolve(jsonResponse({ ok: true }));
       return Promise.reject(new Error(`unexpected fetch in provider-compatibility test: ${method} ${path}`));
     };
@@ -328,5 +329,19 @@ describe("dashboard compatibility adapter (B2.4)", () => {
     const link = needEl('[data-testid="providers-main-link"]');
     link.fire("click", { button: 0 });
     assert.deepEqual(assignedUrls, ["/"], "a plain left click navigates to the main UI document");
+  });
+
+  it("model discovery (B4.3) works on the dashboard through the shared controller", async () => {
+    await clickAndWait('[data-testid="providers-add"]');
+    assert.ok(el('[data-testid="provider-model-discovery"]'), "the discovery region renders inside the shared form");
+    assert.ok(el('[data-testid="provider-model-manual"]'), "manual model entry renders on the dashboard too");
+    await clickAndWait('[data-testid="provider-discover-models"]');
+    assert.equal(callsTo("/api/providers/discover-models", "POST"), 1, "one-shot discovery through the shared client");
+    const call = fetchCalls.find((c) => c.url === "/api/providers/discover-models");
+    assert.equal((call?.body as Record<string, unknown>).kind, "openai-compatible", "discovery reads the CURRENT form values");
+    assert.ok(el('[data-testid="provider-model-select"]'), "discovered models render as a select");
+    await clickAndWait('[data-testid="provider-cancel"]');
+    assert.equal(el('[data-testid="provider-form"]'), null, "cancelling closes the form without saving");
+    assert.equal(callsTo("/api/providers", "POST"), 0, "discovery never creates a profile");
   });
 });
