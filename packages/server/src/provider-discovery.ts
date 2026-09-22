@@ -203,6 +203,45 @@ export async function discoverModels(input: unknown, options: ModelDiscoveryOpti
 }
 
 /**
+ * Read the upstream body with a hard byte cap. The moment the stream exceeds
+ * MAX_DISCOVERY_BODY_BYTES the probe's AbortController fires (tearing down the
+ * socket) and the probe fails DISCOVERY_BAD_RESPONSE — a huge or endless body
+ * can never buffer unbounded into memory. A mid-body connection failure maps
+ * to DISCOVERY_UPSTREAM, not a raw fetch error.
+ */
+async function readBodyCapped(res: Response, controller: AbortController): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_DISCOVERY_BODY_BYTES) {
+        controller.abort();
+        throw new DiscoveryError(
+          "DISCOVERY_BAD_RESPONSE",
+          502,
+          `model discovery: the provider response exceeded the body-size limit (${MAX_DISCOVERY_BODY_BYTES} bytes)`
+        );
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } catch (err) {
+    if (err instanceof DiscoveryError) throw err;
+    throw new DiscoveryError("DISCOVERY_UPSTREAM", 502, "model discovery: the provider connection failed before the body was complete");
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+}
+
+/**
  * `GET {baseUrl}/models` with a short timeout and `redirect: "error"` — a
  * redirect is refused outright rather than followed (even once), so a base
  * URL can never bounce the key somewhere the user did not type. Maps every
@@ -230,20 +269,27 @@ async function probeOpenAICompatibleModels(baseUrl: URL, apiKey: string | undefi
       if (timedOut || controller.signal.aborted) {
         throw new DiscoveryError("DISCOVERY_TIMEOUT", 504, `model discovery timed out after ${timeoutMs}ms`);
       }
-      if (err instanceof TypeError && /redirect/i.test(String((err as Error).message ?? ""))) {
+      if (err instanceof TypeError) {
+        // Node's undici reports a refused redirect as `TypeError: fetch
+        // failed` with the real reason in the cause chain ("unexpected
+        // redirect"), so the classification looks at both.
+        const cause = (err as { cause?: unknown })?.cause;
+        const causeMessage = cause instanceof Error ? cause.message : String((cause as { message?: unknown })?.message ?? "");
+        if (/redirect/i.test(String((err as Error).message ?? "")) || /redirect/i.test(causeMessage)) {
+          throw new DiscoveryError(
+            "DISCOVERY_BAD_RESPONSE",
+            502,
+            "model discovery: the provider answered with a redirect; redirects are not followed"
+          );
+        }
+        const code = typeof (cause as { code?: unknown })?.code === "string" && /^[A-Z0-9_-]{1,64}$/.test((cause as { code: string }).code) ? (cause as { code: string }).code : undefined;
         throw new DiscoveryError(
-          "DISCOVERY_BAD_RESPONSE",
+          "DISCOVERY_UPSTREAM",
           502,
-          "model discovery: the provider answered with a redirect; redirects are not followed"
+          code ? `model discovery: the provider could not be reached (${code})` : "model discovery: the provider could not be reached"
         );
       }
-      const cause = (err as { cause?: { code?: unknown } })?.cause;
-      const code = typeof cause?.code === "string" && /^[A-Z0-9_-]{1,64}$/.test(cause.code) ? cause.code : undefined;
-      throw new DiscoveryError(
-        "DISCOVERY_UPSTREAM",
-        502,
-        code ? `model discovery: the provider could not be reached (${code})` : "model discovery: the provider could not be reached"
-      );
+      throw new DiscoveryError("DISCOVERY_UPSTREAM", 502, "model discovery: the provider could not be reached");
     }
     if (!res.ok) {
       try {
@@ -251,7 +297,14 @@ async function probeOpenAICompatibleModels(baseUrl: URL, apiKey: string | undefi
       } catch {}
       throw new DiscoveryError("DISCOVERY_UPSTREAM", 502, `model discovery: the provider answered HTTP ${res.status}`);
     }
-    const text = await res.text();
+    const declared = Number(res.headers.get("content-length") ?? "");
+    if (Number.isFinite(declared) && declared > MAX_DISCOVERY_BODY_BYTES) {
+      try {
+        await res.body?.cancel();
+      } catch {}
+      throw new DiscoveryError("DISCOVERY_BAD_RESPONSE", 502, `model discovery: the provider response exceeded the body-size limit (${MAX_DISCOVERY_BODY_BYTES} bytes)`);
+    }
+    const text = await readBodyCapped(res, controller);
     let payload: unknown;
     try {
       payload = JSON.parse(text);
