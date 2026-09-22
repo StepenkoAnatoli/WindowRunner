@@ -116,7 +116,9 @@ test("narrow widths collapse the rails, stack provider cards, and keep the form 
   await expect(page.locator(tid("provider-label"))).toBeVisible();
   await expect(page.locator(tid("provider-submit"))).toBeVisible();
   await noHorizontalOverflow(page);
-  await page.locator(tid("provider-form")).press("Escape");
+  // Escape is handled on the form and only arrives if focus is inside it.
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator(tid("provider-label")).press("Escape");
   await expect(page.locator(tid("provider-form"))).toHaveCount(0);
 });
 
