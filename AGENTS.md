@@ -127,6 +127,6 @@ and to the tables in `docs/INSTALL.md` and `README.md`.
 servers. Follow that pattern rather than adding tests that need real keys.
 The `mock` provider is also useful for manual end-to-end checks, and
 `npm run eval -- --expect-pass` drives the full server (real HTTP, scripted
-provider, tools, approvals) through five tasks with hidden checks.
+provider, tools, approvals) through six tasks with hidden checks.
 The skills loader mentioned in older docs does not exist; there is no skills
 system in this checkout.

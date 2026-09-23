@@ -14,6 +14,16 @@ then verifies the working copy. A JSON report is written to `eval/results/`.
 | `refactor` | refactor | extract `readEnv` used by three getters | source assertions (`process.env` read once) + behaviour |
 | `build-failure` | build failure | run `npm run build`, read the syntax error, fix it | build passes, `package.json` unchanged |
 | `multi-file` | multi-file change | rename `fetchUser` → `loadUser` across three files | no stale name, call sites work |
+| `skills` | project skills | read the `release-code` skill and implement `bumpVersion` to its rules | assertions on the suffix and error rules, which exist only inside `SKILL.md` |
+
+`skills` is the only task that exercises the skills system end to end. Its fixture
+ships two skills: `release-code` (valid) and `deploy-runbook` (frontmatter never
+closed). The valid one is the only entry in the auto-injected index, and the exact
+behaviour `check.js` asserts — the pre-release suffix rule and the
+`invalid version: <input>` error contract — appears nowhere but in that skill's
+body, so a run that never calls `read_skill` cannot pass. The broken skill is
+excluded from the index yet still readable by name, which is what the scripted
+solution tries first; it is the task's single expected `toolFailures`.
 
 Each task dir has `project/` (the fixture copied to a temp dir), `task.json`
 (prompt), `check.js` (never inside the project root, so the model cannot read
@@ -54,7 +64,7 @@ by your provider's rate.
 
 ## Limits
 
-Five small Node.js tasks with no external dependencies. They are a smoke-level
+Six small Node.js tasks with no external dependencies. They are a smoke-level
 benchmark for "can this agent actually edit a project safely", not a coding
 leaderboard. Larger, dependency-heavy tasks belong in a separate suite with
 its own time budget.

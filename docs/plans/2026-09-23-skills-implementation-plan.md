@@ -185,7 +185,19 @@ The stub also gained `removeAttribute()` and a `parentElement` getter, both used
 
 A scripted end-to-end task driving a real turn through a skill against the real server.
 
-**Verify:** `npm run eval -- --expect-pass`
+**Status: DONE.** The fixture ships `src/version.js` plus two skills under `.windowrunner/skills/`: `release-code` (valid) and `deploy-runbook` (frontmatter never closed).
+
+The task is built so that it cannot pass without the skills path working:
+
+- The exact behaviour `check.js` asserts — the pre-release suffix rule (`"1.2.3-rc.1"` → `"1.2.4"`) and the `invalid version: <input>` error contract — exists **only** inside `release-code`'s body. Neither `bumpVersion` nor that rule appears in the prompt, in `src/`, or in the check.
+- The index injected into the first user message was verified with the real loader over the real fixture: it lists `release-code` and nothing else, and does not contain `bumpVersion` or the suffix rule, so there is no shortcut around `read_skill`.
+- `deploy-runbook` is excluded from the index with `missing_frontmatter` and a repo-relative `file`, yet the scripted solution still reads it by name and gets a clean `ok: false` — that is the task's one expected `toolFailures`, and it pins that an unindexed skill stays readable.
+
+`--approve deny` is expected to fail this task, like `feature` and `build-failure`: `edit_file` requires approval, and a denied edit cannot produce the file `check.js` reads.
+
+**Verify:** `npm run eval -- --task skills` → PASS; `npm run eval -- --expect-pass` → **6/6 passed**, exit 0 (was 5/5). `eval/results/scripted-*.json` is gitignored, so the report stays untracked.
+
+Also updated the now-inaccurate "five tasks" counts in `eval/README.md`, `AGENTS.md:130` and `RELEASE_CHECKLIST.md:54`, plus the task-category list at `RELEASE_CHECKLIST.md:444`.
 
 ---
 

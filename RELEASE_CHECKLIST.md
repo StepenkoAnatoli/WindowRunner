@@ -51,7 +51,7 @@ checksums and changelog notes.
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
-| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; five tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
+| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; six tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
 | Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` (`windows-latest`): same commands as `CI`, plus `install.ps1 -NoStart` |
@@ -441,7 +441,7 @@ Files to inspect:
 - `.github/workflows/ci.yml` (scripted run)
 
 Acceptance criteria:
-- [x] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
+- [x] Evaluation set includes bug fix, feature work, refactor, build failure, multi-file change, and project-skills tasks.
 - [x] Each task uses hidden or independent checks where practical. *(`check.js` lives outside the project root the agent is confined to.)*
 - [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior. *(Completion, interventions, tokens, elapsed, steps, tool failures: yes. Cost and regressions: no — no committed real-model baseline yet.)*
 - [x] Evaluation results identify model version, task fixture, limits, and failure modes.

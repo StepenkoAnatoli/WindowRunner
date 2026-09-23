@@ -1,0 +1,6 @@
+{
+  "id": "skills",
+  "category": "project skills",
+  "prompt": "Add and export a `bumpVersion` function in src/version.js. It bumps one part of a semantic version string. Follow this project's own documented versioning conventions rather than inventing your own rules.",
+  "check": "node check.js"
+}
