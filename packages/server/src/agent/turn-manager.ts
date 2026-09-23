@@ -10,6 +10,11 @@ import {
 } from "@windows-runner/shared";
 import { InMemoryTurnLogStore } from "./turn-log-store.js";
 
+/** Event types after which a turn emits nothing else. See appendAsync: these are
+ *  applied in-memory even when durability is unavailable, so a turn always
+ *  converges to a terminal state. */
+const TERMINAL_EVENT_TYPES = new Set(["turn_completed", "turn_cancelled", "turn_failed"]);
+
 export type EventListener = (event: StreamEvent) => void;
 
 export interface TurnLog {
@@ -18,6 +23,8 @@ export interface TurnLog {
   seqCounter: number;
   listeners: Set<EventListener>;
   abortController?: AbortController;
+  /** When this log entered in-memory state (created here or recovered at boot). Fallback age reference for turns whose first event was never recorded (e.g. durable write failed at seq 1). */
+  createdAt: number;
 }
 
 export interface TurnManagerDeps {
@@ -55,6 +62,7 @@ export class TurnManager {
         state,
         seqCounter: 0,
         listeners: new Set(),
+        createdAt: this.now(),
       };
       this.logs.set(turnId, log);
     }
@@ -150,6 +158,29 @@ export class TurnManager {
       try {
         await this.store.append(turnId, sequenced);
       } catch (err) {
+        // A terminal event is the turn's last word. If it cannot be made
+        // durable, throwing would leave the turn non-terminal in memory
+        // forever — it could not even record its own failure, and would ride
+        // along as a zombie through every /api/health check and every
+        // shutdown drain. Fold the terminal event in-memory instead: the
+        // store has already recorded the persistence failure
+        // (persistenceFailures + warning + metric), so nothing is lost
+        // silently. Non-terminal events keep the strict contract: throw,
+        // never emit before durable.
+        if (TERMINAL_EVENT_TYPES.has(sequenced.type)) {
+          const terminalState = reduceTurnState(log.state, sequenced);
+          log.events.push(sequenced);
+          log.state = terminalState;
+          for (const listener of log.listeners) {
+            try {
+              listener(sequenced);
+            } catch {
+              // ignore
+            }
+          }
+          console.error(`Terminal event ${turnId} seq ${sequenced.seq} (${sequenced.type}) could not be persisted; applied in-memory only`, err);
+          return sequenced;
+        }
         // Rollback seqCounter on failure to keep monotonic but allow retry
         log.seqCounter -= 1;
         console.error(`Failed to persist event ${turnId} seq ${sequenced.seq} before notify (durable mode, not emitting SSE)`, err);
@@ -273,7 +304,11 @@ export class TurnManager {
     const stuck: Array<{ turnId: TurnId; sessionId: SessionId; durationMs: number; startedAt: number }> = [];
     for (const [turnId, log] of this.logs.entries()) {
       if (log.state.isTerminal) continue;
-      const startedAt = log.state.startedAt ?? log.state.updatedAt ?? now;
+      // `updatedAt` is 0 until the first event is folded in (createInitialTurnState);
+      // 0 would otherwise age the turn from the Unix epoch. Fall back to the log's
+      // in-memory creation time for turns whose first event was never recorded
+      // (e.g. the durable write of turn_started failed).
+      const startedAt = log.state.startedAt ?? (log.state.updatedAt > 0 ? log.state.updatedAt : log.createdAt);
       const duration = now - startedAt;
       if (duration > thresholdMs) {
         stuck.push({ turnId, sessionId: log.state.sessionId, durationMs: duration, startedAt });
@@ -282,11 +317,22 @@ export class TurnManager {
     return stuck;
   }
 
+  /**
+   * Recovery counts from the last boot(). FileTurnLogStore.getDiagnostics()
+   * returns a fresh copy on every call, so values mutated onto that copy during
+   * boot() would be lost; the corrected figures are kept here so the live
+   * endpoints (getStoreDiagnostics, /api/health, /api/diagnostics/persistence)
+   * report the real recovered/RESTART counts instead of the store's zero defaults.
+   */
+  private bootStats?: { turnsLoaded: number; turnsWithRestart: number };
+
   // Expose store diagnostics if available for metrics integration
   getStoreDiagnostics(): any {
     const s: any = this.store as any;
-    if (typeof s.getDiagnostics === "function") return s.getDiagnostics();
-    return undefined;
+    if (typeof s.getDiagnostics !== "function") return undefined;
+    const d = s.getDiagnostics();
+    if (this.bootStats) return { ...d, turnsLoaded: this.bootStats.turnsLoaded, turnsWithRestart: this.bootStats.turnsWithRestart };
+    return d;
   }
 
   // For restart recovery — handles FileTurnLogStore corruption cases via readAll
@@ -312,6 +358,7 @@ export class TurnManager {
         state,
         seqCounter,
         listeners: new Set(),
+        createdAt: this.now(),
       };
 
       // If not terminal, append exactly one RESTART failure at maxSeq+1
@@ -345,6 +392,7 @@ export class TurnManager {
       diagnostics.turnsLoaded = turnsLoaded;
       diagnostics.turnsWithRestart = turnsWithRestart;
     }
+    this.bootStats = { turnsLoaded, turnsWithRestart };
 
     return { turnsLoaded, turnsWithRestart, diagnostics };
   }

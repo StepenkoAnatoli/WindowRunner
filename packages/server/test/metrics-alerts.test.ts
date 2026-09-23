@@ -586,6 +586,22 @@ describe("Metrics/alerts — required adjustments", () => {
       app.close();
     });
 
+    it("turn with no recorded events ages from log creation, not the Unix epoch", async () => {
+      // Regression: createInitialTurnState sets updatedAt=0. Before the fix, a
+      // log whose first event was never folded in (e.g. the durable write of
+      // turn_started failed) aged from the epoch and was instantly flagged as
+      // a ~56-year-old stuck turn.
+      const clock = new FakeClock(1_000_000);
+      const manager = new TurnManager({ store: new InMemoryTurnLogStore(), now: () => clock.now() });
+      manager.ensureLog("sess_zero", "t_no_events");
+      clock.advance(60 * 60 * 1000);
+      assert.equal(manager.getStuckTurns(clock.now(), 2 * 60 * 60 * 1000).length, 0, "1h-old turn without events is not stuck");
+      clock.advance(2 * 60 * 60 * 1000);
+      const stuck = manager.getStuckTurns(clock.now(), 2 * 60 * 60 * 1000);
+      assert.equal(stuck.length, 1, "3h-old turn without events is stuck");
+      assert.ok(stuck[0].durationMs < 4 * 60 * 60 * 1000, `duration should age from log creation, got ${stuck[0].durationMs}ms`);
+    });
+
     it("approval wait duration flagged separately", async () => {
       const clock = new FakeClock(0);
       const metrics = new MetricsRegistry({ now: () => clock.now() });

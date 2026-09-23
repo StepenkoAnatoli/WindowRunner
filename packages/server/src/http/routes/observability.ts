@@ -142,7 +142,13 @@ export function registerObservabilityRoutes(app: Express, rt: AppRuntime): void 
   // GET /api/diagnostics/persistence — detailed persistence failures and quarantine
   app.get("/api/diagnostics/persistence", (_req: Request, res: Response) => {
     const store = deps.manager.getStore() as FileStoreLike;
-    const diagnostics = (store.getDiagnostics ? store.getDiagnostics() : { warnings: [], persistenceFailures: [] }) as Record<string, unknown>;
+    // Prefer the manager's view: it merges the boot recovery counts (turnsLoaded /
+    // turnsWithRestart) that the raw store's fresh-copy diagnostics cannot carry.
+    const diagnostics = (deps.getPersistenceDiagnostics
+      ? deps.getPersistenceDiagnostics()
+      : store.getDiagnostics
+        ? store.getDiagnostics()
+        : { warnings: [], persistenceFailures: [] }) as Record<string, unknown>;
     res.json({
       ...diagnostics,
       persistenceFailures: store.getPersistenceFailures ? store.getPersistenceFailures() : diagnostics.persistenceFailures || [],

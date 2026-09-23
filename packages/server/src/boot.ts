@@ -121,9 +121,17 @@ export interface BootDiagnostics {
   providers?: { active: string | null; count: number; file: string; firstBoot: boolean };
 }
 
+/** Advisory single-instance record for a data dir (file mode only). */
+export interface InstanceLock {
+  lockFile: string;
+  /** True when this process wrote the lock (release it on clean shutdown). */
+  owned: boolean;
+}
+
 export interface Runtime {
   config: ServerConfig;
   app: AppHandle;
+  instanceLock?: InstanceLock;
   manager: TurnManager;
   approvals: ApprovalRegistry;
   sessionManager: SessionManager;
@@ -261,10 +269,12 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
   };
 
   let trust: ProjectTrustRegistry;
+  let instanceLock: InstanceLock | undefined;
   if (config.persistence.mode === "file") {
     const { dataDir, fsync, durableBeforeNotify } = config.persistence;
     await ensureDataDir(dataDir);
     boot.dataDir = dataDir;
+    instanceLock = await acquireInstanceLock(dataDir, log);
     trust = new ProjectTrustRegistry({ now, dataDir });
     boot.trust = await trust.boot();
 
@@ -410,6 +420,7 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     tools,
     approvals,
     sessionManager,
+    getPersistenceDiagnostics: () => manager.getStoreDiagnostics(),
     allowedRoots: config.allowedRoots,
     limits: { maxSteps: config.model.maxSteps, modelCallTimeoutMs: config.model.callTimeoutMs },
     now,
@@ -424,7 +435,73 @@ export async function createRuntime(config: ServerConfig, overrides: RuntimeOver
     },
   });
 
-  return { config, app, manager, approvals, sessionManager, provider, activeProvider: activeBox, providers: providerService, usageLog, tools, trust, boot, authToken, webDir, dashboardDir, desktopDir };
+  return { config, app, manager, approvals, sessionManager, provider, activeProvider: activeBox, providers: providerService, usageLog, tools, trust, instanceLock, boot, authToken, webDir, dashboardDir, desktopDir };
+}
+
+/**
+ * Best-effort single-instance record: `<dataDir>/.instance-lock` holding this
+ * process's PID. Strictly ADVISORY — a failed or stale lock never blocks boot
+ * (a SIGKILL'd server leaves a lock that must not wedge recovery); it only
+ * produces a loud warning when a live, foreign instance already owns the data
+ * dir, because multi-process writers corrupt the per-turn JSONL logs.
+ */
+export async function acquireInstanceLock(dataDir: string, log: (line: string) => void): Promise<InstanceLock> {
+  const lockFile = path.join(dataDir, ".instance-lock");
+  const readLockPid = async (): Promise<number | undefined> => {
+    try {
+      const pid = Number.parseInt((await fs.readFile(lockFile, "utf8")).trim(), 10);
+      return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const pidAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err: any) {
+      return err?.code === "EPERM"; // exists, but not ours to signal
+    }
+  };
+
+  const existing = await readLockPid();
+  if (existing !== undefined && existing !== process.pid && pidAlive(existing)) {
+    log(`warning:     another instance (pid ${existing}) appears to be using data dir ${dataDir} — multi-process writers are UNSUPPORTED (no file lock); run one server instance per data dir`);
+    return { lockFile, owned: false };
+  }
+  if (existing !== undefined && existing !== process.pid) {
+    log(`reclaimed stale instance lock from dead pid ${existing}`);
+  }
+  try {
+    await fs.writeFile(lockFile, `${process.pid}\n`, { mode: 0o600, flag: "wx" });
+    return { lockFile, owned: true };
+  } catch (err: any) {
+    if (err?.code === "EEXIST") {
+      // Lost a race; re-check ownership as above.
+      const contender = await readLockPid();
+      if (contender !== undefined && contender !== process.pid && pidAlive(contender)) {
+        log(`warning:     another instance (pid ${contender}) appears to be using data dir ${dataDir} — multi-process writers are UNSUPPORTED (no file lock); run one server instance per data dir`);
+        return { lockFile, owned: false };
+      }
+      await fs.writeFile(lockFile, `${process.pid}\n`, { mode: 0o600 });
+      return { lockFile, owned: true };
+    }
+    // The lock is advisory; any other error (permissions on the data dir are
+    // already checked by ensureDataDir) just means we skip it.
+    log(`warning:     could not write instance lock ${lockFile} (${err?.code ?? err?.message ?? err})`);
+    return { lockFile, owned: false };
+  }
+}
+
+/** Release the instance lock on clean shutdown (only when we own it). */
+export async function releaseInstanceLock(lock: InstanceLock | undefined): Promise<void> {
+  if (!lock || !lock.owned) return;
+  try {
+    const current = (await fs.readFile(lock.lockFile, "utf8")).trim();
+    if (current === String(process.pid)) await fs.unlink(lock.lockFile);
+  } catch {
+    // Best effort: a leftover lock is reclaimed by the next boot.
+  }
 }
 
 export async function startServer(config: ServerConfig, overrides: RuntimeOverrides = {}): Promise<StartedServer> {
@@ -509,7 +586,9 @@ function listen(server: http.Server, port: number, host: string): Promise<void> 
 }
 
 export function formatUrl(host: string, port: number): string {
-  const h = host.includes(":") ? `[${host}]` : host;
+  // Tolerate an already-bracketed IPv6 host (HOST=[::1]).
+  const bare = host.replace(/^\[|\]$/g, "");
+  const h = bare.includes(":") ? `[${bare}]` : bare;
   return `http://${h}:${port}`;
 }
 
@@ -533,6 +612,9 @@ async function drain(runtime: Runtime, server: http.Server, graceMs: number, rea
     server.closeAllConnections();
     await closed;
   }
+
+  // Clean shutdown: hand the data dir back (advisory lock only).
+  await releaseInstanceLock(runtime.instanceLock);
 
   return { abortedTurns, forced };
 }

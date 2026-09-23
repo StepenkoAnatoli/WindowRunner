@@ -239,9 +239,13 @@ export function describeConfig(config: ServerConfig): string[] {
     : config.allowRemote
       ? " (non-loopback; remote access explicitly enabled)"
       : " (non-loopback; requires " + ENV.allowRemote + "=1)";
+  // IPv6 hosts need brackets, otherwise host and port are ambiguous (`::1:7634`).
+  // Tolerate an already-bracketed HOST (isLoopbackHost accepts `[::1]`).
+  const bareHost = config.host.replace(/^\[|\]$/g, "");
+  const bindTarget = `${bareHost.includes(":") ? `[${bareHost}]` : bareHost}:${config.port}`;
   // The auth line is printed by boot.ts once the token source is known.
   const lines = [
-    `bind:        ${config.host}:${config.port}${bindNote}`,
+    `bind:        ${bindTarget}${bindNote}`,
     `provider:    ${config.provider}${config.provider === "mock" ? " (offline; no model calls are made)" : ` model=${config.model.model} base=${config.model.baseUrl} key=${config.model.apiKey ? "set" : "none"} retries=${config.model.maxRetries} maxSteps=${config.model.maxSteps} callTimeout=${config.model.callTimeoutMs}ms`}`,
     `persistence: ${config.persistence.mode}${config.persistence.mode === "memory" ? " (sessions and turns are lost on restart)" : ""}`,
   ];

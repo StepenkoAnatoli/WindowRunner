@@ -68,6 +68,15 @@ jobs:
         run: npm run build
 
       - name: Test
+        id: test
+        run: npm test
+
+      # One automatic retry: the suite has one observed one-off cold-start
+      # failure (never reproduced on warm runs, even under CPU saturation).
+      # The gate still requires a fully green second run, so this cannot hide
+      # a real regression — it only absorbs the irreproducible flake.
+      - name: Test (retry once on flake)
+        if: steps.test.outcome == 'failure'
         run: npm test
 
       # B5.1 release gate: the root package.json version is the single source

@@ -53,6 +53,7 @@
     "build": "npm run build --workspace packages/shared && npm run build --workspace packages/server && npm run build --workspace packages/web",
     "check:release": "node scripts/check-release.mjs",
     "typecheck": "npm run typecheck --workspace packages/shared && npm run typecheck --workspace packages/server && npm run typecheck --workspace packages/web",
+    "pretest": "node scripts/check-test-env.mjs && node scripts/ensure-built.mjs",
     "test": "npm run test --workspace packages/shared && npm run test --workspace packages/server && npm run test --workspace packages/web && npm run test --workspace packages/desktop",
     "build:desktop": "npm run build --workspace packages/desktop",
     "typecheck:desktop": "npm run typecheck --workspace packages/desktop",
