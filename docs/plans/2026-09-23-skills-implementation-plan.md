@@ -130,15 +130,24 @@ The bodies are adversarial on purpose: they claim pre-approval, blanket consent 
 **Modified:** `packages/shared/src/index.ts` only if a new event proves necessary (it should not)
 **Test:** loop tests with the scripted provider
 
-Index is names + descriptions only, never bodies, wrapped in framing that marks it as untrusted project-supplied content. Capped; oversized index truncated with a visible notice.
+**DONE 2026-09-23.** `renderSkillsIndex()` + `MAX_INDEX_SKILLS` in `skills.ts`; injection in `loop.ts` after `turn_started`; `packages/server/test/skills-index.test.ts` (8 tests). Server suite 429 → 437.
 
-- [ ] No skills → no index text, no framing, byte-identical message
-- [ ] With skills → index present, bodies absent
-- [ ] Cap exceeded → truncated with a notice
-- [ ] Index recomputed per turn, so mid-session edits take effect next turn
-- [ ] **No new `StreamEvent`** — `read_skill` rides `tool_started` / `tool_completed`, so `packages/web/src/app-state.ts` needs no change
+Index is names + descriptions only, never bodies, in framing that labels it untrusted repository content rather than system instructions.
 
-**Verify:** `npm run test --workspace packages/server`, `npm run eval -- --expect-pass`
+- [x] No skills → `renderSkillsIndex` returns `undefined`, nothing is injected, message is byte-identical
+- [x] With skills → index present, bodies absent (asserted on the exact string the provider receives)
+- [x] Cap exceeded → capped at `MAX_INDEX_SKILLS` (40), omission count stated; at exactly the cap, no omission notice
+- [x] Recomputed per turn — a skill added between turns appears on the next one
+- [x] Injected **after** `turn_started`, so the persisted transcript and the UI still show what the user typed, not the augmented message
+- [x] Gated on `read_skill` being in the tool map — an index pointing at a tool the loop cannot execute would only invite a failed call
+- [x] A skills failure cannot fail the turn: `loadSkills` reports rather than throws, and the injection is wrapped for the unexpected
+- [x] **No new `StreamEvent`** — `read_skill` rides `tool_started` / `tool_completed`, so `packages/web/src/app-state.ts` needed no change
+
+**Gap closed while here:** `read_skill` called `loadSkills` with no `reservedNames`, so a skill directory named `read_skill` would have loaded through the tool while the tool of that name shadowed it — exactly the ambiguity the reserved check exists to refuse. It now resolves reserved names from `createBuiltinTools()`, matching the route.
+
+**Verify:** `npx tsx --test packages/server/test/skills-index.test.ts` → 8/8; full `npm test` → 760 pass / 0 fail; `npm run typecheck` clean; `check:release` OK; `npm run smoke:start` passes.
+
+**Note:** `packages/server/test/packaging.test.ts` fails on a fresh `npm ci` because it executes `packages/server/dist/index.cjs` and `dist/` is gitignored — the desktop `pretest` hook normally builds it, but server tests run *before* desktop. `npm run build` first, or run the suite twice. Pre-existing, unrelated to skills.
 
 ---
 

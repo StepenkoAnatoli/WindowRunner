@@ -433,7 +433,12 @@ function readSkillTool(): ToolDefinition {
         );
       }
 
-      const { skills, diagnostics } = await loadSkills(ctx.projectRoot);
+      // Reserved names come from the real registry rather than a hardcoded list,
+      // so a skill can never take a tool's name — including `read_skill`'s own.
+      // Without this, a skill directory named `read_skill` would load here while
+      // the tool of that name shadows it, which is exactly the ambiguity the
+      // reserved check exists to refuse.
+      const { skills, diagnostics } = await loadSkills(ctx.projectRoot, { reservedNames: createBuiltinTools().keys() });
       const skill = skills.find((s) => s.name === name);
       if (skill) return { ok: true, output: skill.body };
 
