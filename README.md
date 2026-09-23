@@ -25,7 +25,7 @@ Status below is what was actually executed — not what the packaging intends. F
 | Windows desktop app (NSIS installer) | **Built, installed, exercised, upgraded and uninstalled by CI on `windows-latest`** (unsigned — see code signing below) |
 | Clone + `npm ci` / `npm run setup` / `npm test` / `npm start` | **Verified** (Linux dev runners and `windows-latest` CI) |
 | `npm start` (HTTP API on `127.0.0.1:7634`, offline mock provider) | **Verified** |
-| Packed tarball (`npm pack` → clean dir → `npm start`) | **Verified** (`smoke:packed`, `smoke:packed:start`); registry publication is open (gap G-05) |
+| Packed tarball (`npm pack` → clean dir → `npm start`) | **Verified** (`smoke:packed`, `smoke:packed:start`); registry publication has a workflow (`npm-publish.yml`, dry-run by default) but nothing is published yet — `npx windows-runner` still 404s (gap G-05) |
 | Docker (server-bundle verification in CI) | **Verified** — development/CI infrastructure, not a supported user platform |
 | macOS / Linux as end-user platforms | **Set aside** — no installers, no CI legs, no claims |
 

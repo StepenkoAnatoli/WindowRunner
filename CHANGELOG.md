@@ -10,6 +10,23 @@ section names below are allowed.
 
 ## [Unreleased]
 
+### Added
+
+- **An npm publication workflow** (`.github/workflows/npm-publish.yml`),
+  narrowing gap G-05. The Release workflow has always built and proven the CLI
+  tarball but never published it, so the documented `npx windows-runner` path
+  404'd. Publication is a separate, manually dispatched workflow rather than a
+  step in `release.yml`, because that workflow is draft-only by design and npm
+  has no draft: a published version can never be re-published. It re-proves the
+  tarball exactly as the Release workflow does (tag-bound consistency gate,
+  unit suite, both packed smokes, `npm pack`), computes the dist-tag instead of
+  letting npm infer it (prereleases go to `next`, never `latest`), defaults to
+  `dry_run: true`, and verifies the credential with `npm whoami` before
+  publishing — `npm publish --dry-run` exits 0 even with no token, so a dry run
+  proves the tarball and nothing about auth. Contract-tested in
+  `release-contract.test.ts`. Publishing still needs a maintainer to add the
+  `NPM_TOKEN` secret and re-run with `dry_run` set to `false`.
+
 ### Changed
 
 - **Windows-only product scope.** The macOS and Linux user-platform claims,

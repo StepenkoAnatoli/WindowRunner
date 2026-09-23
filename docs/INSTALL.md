@@ -47,7 +47,7 @@ not read that single red run as a broken `main`.
 | Clone + `npm start` | **Verified** (Linux) | Boots `packages/server/dist/index.cjs` on `127.0.0.1:7634` (builds first when `dist/` is missing or stale); see "Running the server" |
 | Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
 | `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
-| `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** | Bin launchers exist; publication to npm registry is open (gap G-05) |
+| `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped, not yet published** | Bin launchers exist and `.github/workflows/npm-publish.yml` can publish them; nothing is on the registry yet, so `npx windows-runner` still 404s (gap G-05) |
 | `install.ps1` | **Experimental** | Executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive-prompt modes untested |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Superseded** | Replaced by the `packages/desktop` workspace — see the desktop rows below (gap G-04 closed; G-07 for the installer) |
@@ -500,9 +500,25 @@ zero runtime dependency on `node_modules` or monorepo workspace symlinks,
 verified by running the bundle outside the source tree in an isolated directory
 and by `npm run smoke:packed:start`.
 
-**G-05 — not published.** `npm view windows-runner` returns `E404`. Any README
-sentence presenting the npm/npx path as verified describes a state that does not
-exist today.
+**G-05 — not published; the publish path now exists.** `npm view
+windows-runner` still returns `E404` — nothing has been published. What
+changed is that the missing machinery is no longer missing:
+`.github/workflows/npm-publish.yml` is a manually dispatched workflow that
+proves the tarball exactly as `release.yml` does (tag-bound consistency gate,
+unit suite, both packed smokes, `npm pack`) and then publishes it. It defaults
+to `dry_run: true`, computes the dist-tag instead of letting npm infer it (a
+prerelease goes to `next`, never `latest`), and checks the credential with
+`npm whoami` before publishing — because `npm publish --dry-run` exits 0 even
+with no token, so a dry run proves the tarball and nothing about auth.
+
+It is kept out of `release.yml` on purpose: that workflow is draft-only
+("publishing is a human action"), and npm has no draft — a published version
+can never be re-published, so publication is a separate, explicitly
+dispatched act. **Publication still requires a maintainer** to add the
+`NPM_TOKEN` repository secret (an npm *automation* token, so it works without
+2FA interaction) and run the workflow with `dry_run` set to `false`. Until
+that first run, `npx windows-runner` keeps returning E404 and no README
+sentence may present the npm/npx path as verified.
 
 **G-06 — no Windows or macOS verification. Closed 2026-09-20; rescoped 2026-09-23.**
 The `Platform` CI leg runs the full lifecycle (install, typecheck, build, test,
@@ -667,7 +683,9 @@ Nothing here is ever uploaded — crash reporting is strictly local (no
 token and truncated; old crash logs (beyond 20) and minidumps (beyond 10) are
 pruned on every boot. You can delete any of these files at any time.
 
-**Known gaps:** no production code-signing certificate yet (see above), and
+**Known gaps:** no production code-signing certificate yet (see above), the
+package is not published to npm yet (gap G-05 — add the `NPM_TOKEN` repository
+secret and run the `npm publish` workflow with `dry_run` set to `false`), and
 the app uses the default Electron icon. Branding is a separate milestone.
 
 ### UI limitations (B3)

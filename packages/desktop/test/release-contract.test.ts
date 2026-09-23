@@ -14,6 +14,7 @@
  *   - installer checksums (B5.4)
  *   - upgrade/uninstall gate in the installer CI job (B5.6)
  *   - release workflow contract (B5.7)
+ *   - npm publication contract (G-05)
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -353,6 +354,81 @@ describe("release contract: release workflow (B5.7)", () => {
       build >= 0 && unitTests >= 0 && build < unitTests,
       "the guard must run `npm run build` before `npm test` — the packaging contract executes packages/server/dist/index.cjs"
     );
+  });
+});
+
+describe("release contract: npm publication (G-05)", () => {
+  // Gap G-05: the CLI tarball was built, proven and attached to the draft
+  // release, but nothing ever published it to the registry, so the
+  // documented `npx windows-runner` path 404'd. Publication lives in its
+  // OWN workflow rather than in release.yml for two reasons: the Release
+  // workflow is deliberately draft-only ("publishing is a human action",
+  // release.yml header), and npm has no draft — a published version can
+  // never be re-published. So publication is a separate, explicitly
+  // dispatched, human-initiated act that defaults to a dry run.
+  const publish = read(".github/workflows/npm-publish.yml");
+
+  it("is dispatch-only: publication is a deliberate human action, never a tag side effect", () => {
+    assert.match(publish, /^on:\n {2}workflow_dispatch:/m, "the publish workflow must only run on demand");
+    assert.ok(!/^on:\n {2}push:/m.test(publish), "publishing must not be triggered by a push or tag");
+  });
+
+  it("defaults to a dry run, because a published version can never be re-published", () => {
+    assert.match(publish, /dry_run:/, "the workflow must expose a dry_run control");
+    assert.match(publish, /default: true/, "dry_run must default to true — publishing is opt-in");
+    assert.match(publish, /version:/, "the version to publish must be an explicit input, not inferred");
+  });
+
+  it("is gated on the NPM_TOKEN secret and degrades loudly when it is absent", () => {
+    assert.ok(publish.includes("secrets.NPM_TOKEN"), "publication must be driven by the NPM_TOKEN secret");
+    // Same discipline as the signing job (release.yml:151): the secret is
+    // never interpolated into shell code, only the yes/no decision is.
+    assert.match(publish, /HAS_TOKEN: \$\{\{ secrets\.NPM_TOKEN != '' && 'yes' \|\| 'no' \}\}/, "only the yes/no decision may cross the step boundary");
+    assert.match(publish, /::(warning|notice) title=/, "a skipped publication must say so, not pass silently");
+  });
+
+  it("never lets npm infer the dist-tag, so a prerelease cannot claim `latest`", () => {
+    // check-release.mjs's SEMVER_RE accepts prereleases, so a version like
+    // 1.0.0-rc.1 can reach this workflow. `npm publish` would move `latest`
+    // onto it by default; the dist-tag is computed instead. Both publish
+    // invocations pin it explicitly — the dry run too, so the dry run proves
+    // the command that will actually ship.
+    assert.ok(publish.includes("DIST_TAG=next"), "prereleases must go to the `next` dist-tag");
+    assert.ok(publish.includes("DIST_TAG=latest"), "final releases go to `latest`");
+    assert.ok(
+      publish.includes('npm publish --dry-run --tag "${{ steps.dist_tag.outputs.dist_tag }}"'),
+      "the dry run must pin the same explicit dist-tag"
+    );
+    assert.ok(
+      publish.includes('npm publish --tag "${{ steps.dist_tag.outputs.dist_tag }}"'),
+      "the real publish must pin an explicit --tag rather than let npm move `latest`"
+    );
+  });
+
+  it("proves the tarball the same way the Release workflow does before shipping it", () => {
+    assert.match(publish, /check:release -- --require-version/, "the published version must be bound to the tree");
+    const smoke = publish.indexOf("npm run smoke:packed");
+    const dryRun = publish.indexOf("npm publish --dry-run");
+    const real = publish.indexOf('npm publish --tag "${{');
+    assert.ok(smoke >= 0, "the packed smokes must run at all");
+    assert.ok(dryRun > smoke, "the dry run must come after the packed smokes");
+    assert.ok(real > smoke, "the real publish must come after the packed smokes");
+  });
+
+  it("checks the credential explicitly before publishing, because the dry run cannot", () => {
+    // `npm publish --dry-run` exits 0 with no token at all (it only warns), so
+    // the dry run proves the tarball and nothing about auth. `npm whoami` is
+    // the explicit gate on the real path.
+    assert.ok(publish.includes("npm whoami"), "the real publish must verify the credential up front");
+    const whoami = publish.indexOf("npm whoami");
+    const real = publish.indexOf('npm publish --tag "${{');
+    assert.ok(whoami >= 0 && real > whoami, "the credential check must run before the publish");
+  });
+
+  it("leaves the draft-only Release workflow untouched", () => {
+    const release = read(".github/workflows/release.yml");
+    assert.ok(!release.includes("npm publish"), "release.yml stays draft-only; it must not publish to npm");
+    assert.ok(!release.includes("NPM_TOKEN"), "the Release workflow holds no registry credential");
   });
 });
 
