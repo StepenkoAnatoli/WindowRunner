@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { TurnRunner } from "../../agent/loop.js";
 import type { StreamEvent } from "@windows-runner/shared";
 import type { AppRuntime } from "../runtime.js";
+import { sendSessionError } from "./sessions.js";
 import { bodyObject, isPathString, MAX_MESSAGE_CHARS, MAX_PATH_CHARS, MAX_REASON_CHARS, requireSessionId, requireTurnId } from "../validate.js";
 
 /**
@@ -55,14 +56,14 @@ export function registerTurnRoutes(app: Express, rt: AppRuntime): void {
       try {
         session = await sessionManager.getOrCreateSession(sessionId, cwd, deps.allowedRoots);
       } catch (err) {
-        return sendTurnSessionError(res, err, "failed to create session");
+        return sendSessionError(res, err, sessionId, "failed to create session");
       }
     } else {
       if (typeof cwd === "string") {
         try {
           await sessionManager.getOrCreateSession(sessionId, cwd, deps.allowedRoots);
         } catch (err) {
-          return sendTurnSessionError(res, err, "failed to validate root");
+          return sendSessionError(res, err, sessionId, "failed to validate root");
         }
       }
     }
@@ -280,20 +281,4 @@ export function registerTurnRoutes(app: Express, rt: AppRuntime): void {
 
     res.status(204).end();
   });
-}
-
-/** Turn-start session errors reuse the session error mapping minus session-exists. */
-function sendTurnSessionError(res: Response, err: unknown, fallbackMessage: string): Response {
-  const code = (err as { code?: unknown }).code;
-  if (code === "ROOT_MISMATCH") {
-    return res.status(400).json({ error: (err as Error).message, code: "ROOT_MISMATCH", details: (err as { details?: unknown }).details });
-  }
-  if (code === "PATH_ESCAPES_ROOT") {
-    return res.status(403).json({ error: (err as Error).message, code: "PATH_ESCAPES_ROOT" });
-  }
-  if (code === "PATH_NOT_FOUND") {
-    return res.status(400).json({ error: (err as Error).message, code: "PATH_NOT_FOUND" });
-  }
-  console.error(err);
-  return res.status(500).json({ error: fallbackMessage });
 }

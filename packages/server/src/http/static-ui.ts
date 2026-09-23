@@ -26,7 +26,7 @@ export function isClientAppRoute(pathname: string): boolean {
 }
 
 /** Security headers shared by every static UI (main app, dashboard, desktop). */
-export function uiSecurityHeaders(): Record<string, string> {
+function uiSecurityHeaders(): Record<string, string> {
   return {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
@@ -97,7 +97,8 @@ export function registerStaticUi(app: Express, rt: AppRuntime): void {
   // directory can never shadow or answer for an API route.
   if (deps.webDir) {
     const protectedPrefixes = security?.protectedPrefixes ?? ["/api/"];
-    const serveStatic = staticWithHeaders(deps.webDir, withHeaders, { index: "index.html", etag: true });    app.use((req: Request, res: Response, next: NextFunction) => {
+    const serveStatic = staticWithHeaders(deps.webDir, withHeaders, { index: "index.html", etag: true });
+    app.use((req: Request, res: Response, next: NextFunction) => {
       const p: string = req.path ?? "";
       if (p === "/healthz" || protectedPrefixes.some((prefix) => p.startsWith(prefix))) return next();
       return serveStatic(req, res, next);

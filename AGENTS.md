@@ -105,8 +105,9 @@ npm run package:desktop:win:release             # installer, forceCodeSigning (f
 ```
 
 `npm start` rebuilds automatically when `dist/` is missing or older than
-`src/` (`scripts/ensure-built.mjs`); `npm run test:desktop` does the same for
-the desktop shell (`packages/desktop/scripts/ensure-built.mjs`). Any new
+`src/` (`scripts/ensure-built.mjs`); `npm run test:desktop` runs the same hook
+with `--desktop`, which also checks the desktop shell under
+`packages/desktop`. Any new
 environment variable the server reads must be added to `ENV` in `config.ts`
 and to the tables in `docs/INSTALL.md` and `README.md`.
 

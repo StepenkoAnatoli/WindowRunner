@@ -21,7 +21,6 @@ import type { LLMProvider } from "./providers/types.js";
 import { ProviderStore, defaultProfileFromConfig, type ProviderProfile } from "./provider-profiles.js";
 import { ActiveProviderBox, ProviderService } from "./provider-service.js";
 import { UsageLog, estimateCostUsd } from "./usage-log.js";
-import type { TurnResult } from "./agent/loop.js";
 import type { ToolDefinition } from "./agent/tools/types.js";
 import { createBuiltinTools } from "./agent/tools/builtin.js";
 

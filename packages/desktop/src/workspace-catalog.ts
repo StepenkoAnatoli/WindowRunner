@@ -12,15 +12,7 @@
 import * as fsp from "node:fs/promises";
 import { validateWorkspaceCatalog, type WorkspaceCatalog } from "@windows-runner/shared";
 
-export {
-  MAX_CATALOG_PROJECTS,
-  MAX_CATALOG_SESSIONS,
-  WORKSPACE_CATALOG_VERSION,
-  emptyWorkspaceCatalog,
-  parseWorkspaceCatalogLenient,
-  validateWorkspaceCatalog,
-} from "@windows-runner/shared";
-export type { ProjectCatalogEntry, SessionCatalogEntry, WorkspaceCatalog } from "@windows-runner/shared";
+export { emptyWorkspaceCatalog, validateWorkspaceCatalog } from "@windows-runner/shared";
 
 export const WORKSPACE_CATALOG_FILE = "workspace-catalog.json";
 

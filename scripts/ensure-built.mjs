@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 /**
- * windows-runner — `prestart` hook.
+ * windows-runner — build-freshness hook for `npm start` and the desktop tests.
  *
- * `npm start` runs the self-contained server bundle, packages/server/dist/index.cjs.
- * This hook makes that command work on a fresh checkout without a separate
- * build step, and refuses to start stale code after `src/` changes:
+ * Default mode (`prestart`): `npm start` runs the self-contained server bundle,
+ * packages/server/dist/index.cjs. This hook makes that command work on a fresh
+ * checkout without a separate build step, and refuses to start stale code after
+ * `src/` changes:
  *
  *   - build outputs missing            -> run `npm run build`
  *   - any src/**\/*.ts newer than dist  -> run `npm run build`
  *   - up to date                       -> exit 0 silently
+ *
+ * `--desktop` (the desktop workspace's `pretest`): the same check for the root
+ * outputs the desktop tests boot (shared + the server bundle), then for the
+ * desktop shell under packages/desktop that they load.
  *
  * It only ever *builds*; it never starts anything. In an installed package
  * (no src/, no TypeScript) a missing dist/ is reported as an error instead of
@@ -23,6 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(path.join(repoRoot, "package.json"));
+const withDesktop = process.argv.includes("--desktop");
 
 /** Build outputs `npm start` needs, in dependency order. */
 const OUTPUTS = [
@@ -44,6 +50,10 @@ const SOURCES = [
   "packages/web/src",
   "packages/web/public",
 ];
+
+/** The desktop shell its own tests load (paths below packages/desktop). */
+const DESKTOP_OUTPUTS = ["dist/main.cjs", "dist/preload.cjs", "dist/renderer.js"];
+const DESKTOP_SOURCES = ["src"];
 
 function isTrackedSource(filename) {
   if (/\.[cm]?[jt]sx?$/.test(filename) && !/\.d\.ts$/.test(filename)) return true;
@@ -69,15 +79,20 @@ function newestMtime(dir) {
   return newest;
 }
 
-function reason() {
-  const missing = OUTPUTS.filter((o) => !existsSync(path.join(repoRoot, o)));
+/**
+ * Why `root`'s outputs are stale, or null when they are current. A tree with no
+ * source directory (an installed package) has nothing to compare against, so its
+ * outputs are reported as current.
+ */
+function reason(root, outputs, sources) {
+  const missing = outputs.filter((o) => !existsSync(path.join(root, o)));
   if (missing.length > 0) return `build output missing: ${missing.join(", ")}`;
 
-  const sourceDirs = SOURCES.filter((s) => existsSync(path.join(repoRoot, s)));
-  if (sourceDirs.length === 0) return null; // installed package: nothing to compare against
+  const sourceDirs = sources.filter((s) => existsSync(path.join(root, s)));
+  if (sourceDirs.length === 0) return null;
 
-  const newestSource = Math.max(...sourceDirs.map((s) => newestMtime(path.join(repoRoot, s))));
-  const oldestOutput = Math.min(...OUTPUTS.map((o) => statSync(path.join(repoRoot, o)).mtimeMs));
+  const newestSource = Math.max(...sourceDirs.map((s) => newestMtime(path.join(root, s))));
+  const oldestOutput = Math.min(...outputs.map((o) => statSync(path.join(root, o)).mtimeMs));
   if (newestSource > oldestOutput) return "sources changed since the last build";
   return null;
 }
@@ -93,31 +108,49 @@ function canBuild() {
   return true;
 }
 
-function main() {
-  const why = reason();
-  if (why === null) return 0;
-
-  if (!canBuild()) {
-    console.error(`windows-runner: ${why}, and no TypeScript toolchain is installed to rebuild.`);
-    console.error("  In a source checkout run `npm ci` first. In an installed package this means");
-    console.error("  the artifact is incomplete — see docs/INSTALL.md, \"Known packaging gaps\".");
-    return 1;
-  }
-
-  console.log(`windows-runner: ${why}; running npm run build…`);
+/** `npm run build` in `cwd`; returns the exit code the hook should use. */
+function runBuild(cwd, label) {
   const build = spawnSync("npm", ["run", "build"], {
-    cwd: repoRoot,
+    cwd,
     stdio: "inherit",
     shell: process.platform === "win32",
   });
   if (build.error) {
-    console.error(`windows-runner: could not run npm: ${build.error.message}`);
+    console.error(`${label}: could not run npm: ${build.error.message}`);
     return 1;
   }
   if (build.status !== 0) {
-    console.error(`windows-runner: build failed (exit ${build.status}); not starting.`);
+    console.error(`${label}: build failed (exit ${build.status}); not starting.`);
     return build.status ?? 1;
   }
+  return 0;
+}
+
+function main() {
+  /** Root first: the desktop build consumes the server bundle the root build emits. */
+  const targets = [
+    { root: repoRoot, outputs: OUTPUTS, sources: SOURCES, label: "windows-runner" },
+    ...(withDesktop
+      ? [{ root: path.join(repoRoot, "packages", "desktop"), outputs: DESKTOP_OUTPUTS, sources: DESKTOP_SOURCES, label: "windows-runner desktop" }]
+      : []),
+  ];
+
+  for (const target of targets) {
+    const why = reason(target.root, target.outputs, target.sources);
+    if (why === null) continue;
+
+    if (!canBuild()) {
+      console.error(`${target.label}: ${why}, and no TypeScript toolchain is installed to rebuild.`);
+      console.error("  In a source checkout run `npm ci` first. In an installed package this means");
+      console.error("  the artifact is incomplete — see docs/INSTALL.md, \"Known packaging gaps\".");
+      return 1;
+    }
+
+    console.log(`${target.label}: ${why}; running npm run build…`);
+    const status = runBuild(target.root, target.label);
+    if (status !== 0) return status;
+  }
+
   return 0;
 }
 

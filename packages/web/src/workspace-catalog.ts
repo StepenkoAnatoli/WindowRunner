@@ -37,7 +37,6 @@ import {
 export {
   MAX_CATALOG_PROJECTS,
   MAX_CATALOG_SESSIONS,
-  WORKSPACE_CATALOG_VERSION,
   emptyWorkspaceCatalog,
   parseWorkspaceCatalogLenient,
   sessionsForProject,
