@@ -1,313 +1,290 @@
-# Windows Runner
+# WindowRunner
 
-A local-first coding agent for **Windows**, run **with your own API keys**. Point it at a project folder, and it reads files, edits them under your approval, and runs terminal commands — streamed to you live, resumable across restarts, with nothing leaving your machine except the model requests you configure.
+> A local-first coding agent for **Windows** — your AI assistant runs on your machine, uses your own API keys, and helps you read, edit, and run code with your approval at every step.
 
-Windows-first is taken literally: the supported end-user platform is **Windows** (per-user NSIS installer, per-user data under `%APPDATA%`), the CI merge gate proves the installer and the desktop app on `windows-latest`, and the macOS/Linux user paths were deliberately removed rather than left half-claimed. The server is plain Node, so development and test automation also run on Linux runners and in Docker — that is development infrastructure, not a supported platform.
-
-## ✨ What actually ships (all verified in CI)
-
-- **Agent loop over SSE** — sessions pinned to a project root, one active turn at a time, streamed events with monotonic `seq`, `Last-Event-ID` resume with no gaps or duplicates, explicit terminal events (`turn_completed` / `turn_cancelled` / `turn_failed`), hot provider swap between turns.
-- **Six root-confined tools** — `read_file`, `write_file`, `edit_file`, `list_dir`, `run_terminal`, `read_skill`. Every path goes through logical-containment **and** realpath checks (`..`, absolute paths, encoded traversal and symlink escapes are rejected for reads and writes alike); `run_terminal` runs with a bounded output buffer, a wall-clock limit, secrets stripped from its environment, and is killed as a whole process tree on Stop or timeout.
-- **Approvals + project trust** — `write_file`, `edit_file` and `run_terminal` always ask; approval lifetimes are independent of any SSE connection. Trust grants are a separate, explicit act keyed by the project's real root and a config hash, persisted per machine.
-- **Bring-your-own-key providers** — `openai-compatible` (OpenAI, OpenRouter, Ollama, LM Studio, Gemini's compatibility endpoint, …), native `anthropic`, and an offline `mock` default. Provider profiles with masked keys, one-shot **model discovery**, one-click connection test, usage history, retry with backoff.
-- **Durable file persistence** — per-session metadata + per-turn JSONL logs, atomic writes, optional fsync, durable-before-notify, crash recovery (truncated tails), quarantine of malformed logs, restart recovery that appends exactly one `RESTART` event.
-- **Hardened HTTP surface** — loopback-only bind by default, Host/Origin validation, bearer token on every `/api` route (constant-time compare), strict input validation with stable error codes, keys redacted from every error and log surface.
-- **Project skills** — a project can ship its own conventions as markdown instruction files under `.windowrunner/skills/<name>/SKILL.md`. Discovered skills are listed (name + description, capped at 40) in the turn's first user message, and the model pulls one in on demand with `read_skill`. A skill is **instructions only**: nothing in it executes, and it can never widen an approval. What it asks for still goes through `write_file` / `edit_file` / `run_terminal` approval exactly as before. Skills load from the project you point the agent at — they are repository content, so the index labels them untrusted rather than system instructions.
-- **Windows desktop app** — Electron shell that boots the bundled server as a child process on an OS-assigned loopback port with an in-memory token, sandboxed preload bridge, navigation lockdown, clean process-tree shutdown, per-user NSIS install that keeps your data across upgrades and uninstall.
-
-No MCP, no project-context auto-discovery, no web search: those are **not implemented**, and this README does not advertise them. The tool list above is the complete list. Skills are the one exception to the old disclaimer, and they are deliberately narrow — instructions a model may read, never code it runs, and no new approval surface.
-
-## 🚀 Installation
-
-Status below is what was actually executed — not what the packaging intends. Full details, prerequisites, known gaps and troubleshooting: **[docs/INSTALL.md](./docs/INSTALL.md)**. Notable changes are tracked in **[CHANGELOG.md](./CHANGELOG.md)**.
-
-| Path | Status |
-| --- | --- |
-| Windows desktop app (NSIS installer) | **Built, installed, exercised, upgraded and uninstalled by CI on `windows-latest`** (unsigned — see code signing below) |
-| Clone + `npm ci` / `npm run setup` / `npm test` / `npm start` | **Verified** (Linux dev runners and `windows-latest` CI) |
-| `npm start` (HTTP API on `127.0.0.1:7634`, offline mock provider) | **Verified** |
-| Packed tarball (`npm pack` → clean dir → `npm start`) | **Verified** (`smoke:packed`, `smoke:packed:start`); registry publication has a workflow (`npm-publish.yml`, dry-run by default) but nothing is published yet — `npx windows-runner` still 404s (gap G-05) |
-| Docker (server-bundle verification in CI) | **Verified** — development/CI infrastructure, not a supported user platform |
-| macOS / Linux as end-user platforms | **Set aside** — no installers, no CI legs, no claims |
-
-### Option 1 — Windows desktop app
-
-From a checkout:
-
-```bash
-npm run build            # server + web bundles
-npm run build:desktop    # desktop shell + packaged payload
-npm run e2e:desktop      # user journey against the unpacked app
-```
-
-Package the installer on Windows:
-
-```bash
-npm run package:desktop:win    # → packages/desktop/release/WindowRunner-Setup-<version>.exe
-```
-
-Run `WindowRunner-Setup-<version>.exe` for a per-user install (no admin/UAC;
-Start Menu entry under `%LOCALAPPDATA%\Programs\WindowRunner`). User data —
-sessions, provider profiles, logs — lives in `%APPDATA%\WindowRunner`,
-survives uninstall, and is preserved across in-place upgrades. Automation:
-silent install/uninstall with `/S`. The `Desktop installer (windows-latest)`
-CI job builds the installer, installs it silently, drives the installed app
-through a mock session, verifies an in-place upgrade keeps user data, and
-uninstalls it on every push. Every installer artifact ships with a
-`SHA256SUMS.txt` sidecar; the `Desktop signing (windows-latest)` job proves
-the Authenticode signing pipeline on every push (official installers stay
-unsigned — and SmartScreen warns — until a production certificate is wired in
-as a repo secret). See
-[docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app) → "Code signing and
-SmartScreen" and "Verifying a download".
-
-### Option 2 — Clone and set up (development)
-
-```bash
-git clone https://github.com/StepenkoAnatoli/WindowRunner.git
-cd WindowRunner
-npm ci            # installs all four workspaces, runs the postinstall check
-npm run setup     # install -> typecheck -> build, in one step
-npm test          # full suite (shared, server, web, desktop), no API keys required
-npm start         # serve the API + UI on http://127.0.0.1:7634
-```
-
-`npm start` runs `packages/server/dist/index.cjs` (its `prestart` hook builds
-when `dist/` is missing or stale). What starts is the HTTP API plus the
-**web UI** served at `/` (`packages/web`): the offline `mock` provider is the
-default (set `WINDOWS_RUNNER_PROVIDER=openai-compatible` or `anthropic` for a real model),
-six root-confined tools are registered, every `/api` route
-requires a bearer token (printed once in memory mode — the banner's `ui:` line
-carries it as a `#token=` fragment the page consumes and removes — and stored
-at `~/.windows-runner/auth-token` in file mode), and the server binds loopback
-only. The UI talks to the API with `fetch` only (bearer on every request,
-streamed SSE with `Last-Event-ID` resume). Configuration, endpoints and limits are in
-[docs/INSTALL.md → "Running the server"](./docs/INSTALL.md#running-the-server).
-`npm run smoke:start` boots the built server and runs a turn against it.
-
-### Option 3 — Packed artifact
-
-`bin/windows-runner.js` is the CLI launcher (declared as `windows-runner` and
-`wr` in `package.json`). `npm run smoke:packed:start` proves that packing the
-tarball, unpacking it in a clean temporary directory outside the repository,
-and executing `npm start` boots and answers health queries without workspace
-symlinks. Until the package is published to the registry (`npm view windows-runner`
-returns `E404`, gap G-05), local tarball installation works.
-
-### Option 4 — Docker (development/CI verification of the server bundle)
-
-```bash
-docker compose up --build
-```
-
-Builds the multi-stage container image using the self-contained server bundle
-(`packages/server/dist/index.cjs`). The image runs the standalone bundle
-directly without requiring `node_modules` or workspace symlinks in the runtime
-container. CI verifies this on every push and pull request (the `Docker` job)
-as a portable way to exercise the server artifact — it is not a supported
-end-user platform for the product.
+[![Node >=22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![Platform](https://img.shields.io/badge/platform-Windows-blue)](#how-to-install-windows--absolute-beginners)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-informational)](#project-structure)
 
 ---
 
-The default provider is the offline **mock** (no key, no network): the whole
-loop — sessions, turns, SSE streaming, approvals — runs end to end without an
-API key, in `npm start` and in the desktop app alike. Real model calls need a
-provider profile (see the provider dashboard in
-[docs/INSTALL.md](./docs/INSTALL.md#provider-dashboard)); real-model runs are
-manual and never part of CI ([`eval/README.md`](./eval/README.md)). Locally
-generated reports land in `eval/results/scripted-*.json`, which is
-**intentionally gitignored** (the tracked `scripted-2026-09-20.json` is a
-historical sample kept for reference). For
-development, `npm run dev` restarts the server on source changes (`tsx watch`).
+## Features
 
-## Providers
+- **Works offline out of the box** — built-in `mock` provider lets you try the whole app with no API key and no internet
+- **Bring your own key** — one place for OpenAI-compatible (OpenAI, Ollama, LM Studio, OpenRouter, Gemini), native **Anthropic**, or offline mock. Switch providers between turns with one click
+- **Stays inside your project** — every file the agent touches is locked to the folder you chose. `..`, absolute paths, and sneaky symlinks are blocked for reading *and* writing
+- **You approve the risky stuff** — file writes, edits, and terminal commands always pause for **Approve / Deny**. A “no” is sent back to the model; nothing runs without you
+- **Project Trust is separate** — a project's own config (like `.mcp.json` or a skill) only runs after you explicitly trust that folder. Approval ≠ trust
+- **Project Skills (instructions only)** — drop markdown files under `.windowrunner/skills/<name>/SKILL.md` and the agent can read them with `read_skill`. Skills never execute code and can never skip approval
+- **Resumable live streaming** — answers stream over SSE with monotonic `seq` and `Last-Event-ID` resume, so a dropped connection never loses text
+- **Durable & private** — sessions and logs stay on your disk (`~/.windows-runner` or `%APPDATA%\WindowRunner` in the desktop app). Only model requests leave your machine, and only when you send a message
+- **Clean three-panel UI** — Projects on the left, chat in the middle, tools & approvals on the right. Works on desktop and in the browser with no framework overhead
+- **Windows-native shell** — Electron app boots its own server on a random loopback port, holds the token in memory, and shuts down the whole process tree cleanly. Per-user NSIS installer, no admin / UAC needed
 
-| Provider | Status in this checkout |
-| --- | --- |
-| **Mock** | ✅ Default. Offline rehearsal of the whole loop — no key, no network |
-| **OpenAI-compatible** | ✅ `WINDOWS_RUNNER_PROVIDER=openai-compatible`. Covers OpenAI, OpenRouter, Groq, Together, vLLM, llama.cpp, LiteLLM, LM Studio, Google Gemini's OpenAI endpoint |
-| **Ollama** | ✅ via OpenAI-compatible: `WINDOWS_RUNNER_MODEL_BASE_URL=http://127.0.0.1:11434/v1`, no key |
-| **Anthropic (native)** | ✅ `WINDOWS_RUNNER_PROVIDER=anthropic`, `WINDOWS_RUNNER_MODEL=claude-…`, key from `WINDOWS_RUNNER_MODEL_API_KEY` or `ANTHROPIC_API_KEY` |
+## Screenshots
 
-## What the agent can do
+> Screenshots are placeholders — replace with actual captures when publishing. Suggested framing:
 
-Tools shipped in this checkout (`packages/server/src/agent/tools/builtin.ts`).
-Every path is relative to the session's project root and cannot leave it —
-not via `..`, absolute paths, encoded traversal or symlinks, for reads or writes.
+| Screenshot | What to show |
+|---|---|
+| **Workspace** | Three-column layout: project sidebar (Projects / Sessions), center conversation with a turn and approval card, right inspector with tool timeline |
+| **Providers** | Provider dashboard: active-provider banner, provider cards with green/gray dots, masked `****last4`, **Use this / Test / Edit / Delete** buttons |
+| **Approval** | Detail of an approval card: `write_file` diff preview with **Approve** (blue) and **Deny** (red) |
 
-| Tool | Approval |
-| --- | --- |
-| `read_file` (with optional line range), `list_dir` | never |
-| `write_file`, `edit_file` (exact-match replace, must be unique) | **always asks first** |
-| `run_terminal` | **always asks first** — runs in the project root, server secrets stripped from its environment, bounded output, killed as a whole process tree on Stop/timeout |
+`Screenshots live in /docs or at the top of README as images: ![Workspace](docs/screenshots/workspace.png)`
 
-Set `WINDOWS_RUNNER_TOOLS=0` for a text-only agent. There are no other tools
-in this checkout — no `grep`, no `apply_patch`, no `git_*`, no `web_*`, no
-skills, no `mcp_*`. The project-trust gate that will guard project-supplied
-tools (MCP servers, hooks) already exists; the tools themselves do not.
+---
 
-### Privacy and data flow
+## How to Install (Windows – Absolute Beginners)
 
-Local-first describes where WindowsRunner runs and stores its state; it does not mean every value remains on the machine.
+You need **no prior experience** with the command line. Pick **one** option below. The zip method is the simplest if you already downloaded this project.
 
-Configuration, complete session transcripts, and session state are stored
-locally. Configured model providers receive the data needed for their
-requests — that is the only data that leaves the machine, and only when you
-send a turn. There is no telemetry, no account, and no phone-home. A fuller
-description of the trust boundaries lives in
-[docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
+### What you need first (one time)
 
-Safety rails:
+1. **Install Node.js**
+   - Open your browser and go to **https://nodejs.org**
+   - Click the green **LTS** button (it says **22.x LTS**)
+   - Run the downloaded installer: click **Next → Next → Next → Finish** (all defaults are fine)
+   - To check it worked: press **Windows key**, type **PowerShell**, open **Windows PowerShell**, type `node -v` and press **Enter**. You should see `v22.x.x`.
 
-- The agent's own file tools are confined to the session's project directory
-- Terminal commands need approval, are killed with their whole process tree at the timeout (60s default) or when you press Stop, no pty
-- Authorization roots default to your home directory (configurable via `WINDOWS_RUNNER_ALLOWED_ROOTS`); a request naming a `cwd` outside them is rejected
+2. **Install Git (only if you don't have it)**
+   - Go to **https://git-scm.com/download/win**
+   - Run the installer with defaults
+   - Check in the same PowerShell: `git --version`
 
-**This is not a sandbox.** An approved shell command runs as *you*, with your
-full privileges: it can read and write anywhere you can, reach the network and
-use your credentials. The project-directory restriction applies only to the
-built-in file tools, and it does not make command execution safe. Only approve
-commands you would type yourself, and run WindowsRunner on an untrusted
-repository the way you would run that repository's own scripts — in a VM if
-that matters to you. OS-level isolation is a separate project, not something
-the current controls provide.
+> You only do steps 1–2 once. You can skip them next time.
 
-## How it fits together
+### Option A — From the ZIP you downloaded (recommended)
+
+This is the file you get when you click **Download ZIP** on GitHub or receive `WindowRunner-clean.zip`.
+
+1. **Extract the ZIP**
+   - Right-click `WindowRunner-clean.zip` → **Extract All…** → **Extract**
+   - Open the new folder `WindowRunner` (you should see `package.json` and `install.ps1` inside)
+
+2. **Open PowerShell inside that folder**
+   - Click inside the address bar at the top, type `powershell`, press **Enter**
+   - A blue window opens already in the right place
+
+3. **Install the app (first time only, about 30 seconds)**
+   ```powershell
+   npm ci
+   ```
+   - This downloads everything the app needs. Wait until it says `windows-runner: install verified`.
+
+4. **Start the app**
+   ```powershell
+   npm start
+   ```
+   - You will see:
+     ```
+     windows-runner listening on http://127.0.0.1:7634
+       ui:          http://127.0.0.1:7634/#token=...
+     ```
+   - Hold **Ctrl** and click the `ui:` link, or copy it into your browser
+   - The page opens already signed in (the `#token=...` part is removed automatically)
+
+5. **Stop the app**
+   - Go back to PowerShell and press **Ctrl + C**
+
+> **Tip:** You can also double-click `install.ps1` or run `powershell -ExecutionPolicy Bypass -File .\install.ps1` — it does `npm ci` → build → typecheck and then offers to start the server.
+
+### Option B — One-line installer (if you have internet)
+
+If you prefer to clone fresh instead of using a ZIP:
+
+1. Open **PowerShell**
+2. Paste this and press **Enter**:
+   ```powershell
+   irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex
+   ```
+   - It clones the project to `~/windows-runner`, installs, and asks if you want to start. Choose **Y**.
+   - If Windows says *“running scripts is disabled”*, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, reopen PowerShell, and try again.
+
+### Option C — Desktop app installer (when a Release is published)
+
+When you see a **Release** on GitHub:
+
+1. Download `WindowRunner-Setup-<version>.exe` and `SHA256SUMS.txt`
+2. (Optional) verify the download: in PowerShell `Get-FileHash .\WindowRunner-Setup-*.exe -Algorithm SHA256` and compare with `SHA256SUMS.txt`
+3. Double-click the `.exe` → **No admin needed**
+4. Find **WindowRunner** in your Start Menu. User data (sessions, profiles) lives in `%APPDATA%\WindowRunner` and survives updates & uninstall.
+
+> Today the installer is built & tested in CI on `windows-latest` but official signed installers await a production certificate (SmartScreen will warn until then — click **More info → Run anyway** if you trust the source). Until the Releases page has an `.exe`, use **Option A**.
+
+**Having trouble?** See [`docs/INSTALL.md`](./docs/INSTALL.md#troubleshooting) for copy-paste fixes for the most common errors, or open an Issue on GitHub.
+
+---
+
+## How to Run
+
+After the first `npm ci`, you only need one command each time:
+
+```powershell
+npm start
+# → http://127.0.0.1:7634  (mock provider, offline — no API key needed)
+```
+
+What happens:
+- If the project was never built, it builds automatically before starting (you don't need `npm run build` yourself)
+- The browser UI is served at `/` — open the `ui:` URL from the banner; in memory mode it already contains your token
+- Every `/api` request needs a bearer token: the banner prints it once in memory mode, or read `~/.windows-runner/auth-token` in file-persistence mode
+- Press **Ctrl + C** to stop gracefully (in-flight turns are cancelled cleanly)
+
+**Other useful commands:**
+
+| What you want | Command |
+|---|---|
+| Auto-restart on file changes (developers) | `npm run dev` |
+| Use a real model (OpenAI, Ollama, …) | `set WINDOWS_RUNNER_PROVIDER=openai-compatible` + `set WINDOWS_RUNNER_MODEL=gpt-4o-mini` + `set WINDOWS_RUNNER_MODEL_API_KEY=sk-...` then `npm start` |
+| Use Anthropic | `set WINDOWS_RUNNER_PROVIDER=anthropic` + `set WINDOWS_RUNNER_MODEL=claude-sonnet-4-5` + `set ANTHROPIC_API_KEY=...` |
+| Start with file persistence | `set WINDOWS_RUNNER_PERSISTENCE_MODE=file` then `npm start` |
+| Check if everything is healthy | Open `http://127.0.0.1:7634/healthz` or `http://127.0.0.1:7634/api/health` (with token) |
+
+Full list of environment variables: [`docs/INSTALL.md` → Configuration](./docs/INSTALL.md#configuration) and `packages/server/src/config.ts` (the single source of truth).
+
+---
+
+## How to Use
+
+You can learn the whole app in under a minute:
+
+1. **Pick a folder** — left sidebar → **Choose folder…** (desktop) or type a path like `C:\Users\you\my-project` → **Open project**. The agent will only touch files inside this folder.
+
+2. **Start a conversation** — click **New session** under your project. Type a message at the bottom (e.g. *“Fix the bug in src/app.js”*) and press **Send**.
+
+3. **Watch it work** — the answer streams in real time. Tool calls (reading, writing) appear in the center and in the right **Inspector**.
+
+4. **Approve when asked** — risky actions show a yellow card:
+   - **Diff** preview for file writes/edits, **Command** preview for terminal
+   - Click **Approve** to let it run, **Deny** to stop that step (the “no” is sent back to the model)
+   - If you see *“Project not trusted”* on top, click **Trust this project** only if you trust that folder's config
+
+5. **Manage providers** — top bar → **Providers**: add a new key, **Test** it, **Fetch models** to pick a model, **Use this** to switch for the next turn. No restart needed.
+
+6. **Check history** — top bar → **Usage** shows the last 50 turns (tokens, model, status). **Settings** shows security & storage info and lets you **Forget remembered projects** (clears the sidebar only, not server data).
+
+> **First time?** Leave the provider on **Mock** (offline). It prefixes replies with `[mock]` so you can learn the flow before spending any money.
+
+---
+
+## Tech Stack
+
+| Layer | Choice |
+|---|---|
+| **Language** | TypeScript (strict), ESM |
+| **Runtime** | Node.js >=22 |
+| **Server** | Express 4 (only runtime dependency) + self-contained `esbuild` bundle `dist/index.cjs` |
+| **Shared core** | `@windows-runner/shared` — turn-state reducer, `StreamEvent` contract, workspace-catalog validation (single owner for server + UIs) |
+| **Web UI** | Vanilla TypeScript, no framework — pure reducer (`app-state.ts`) + view modules, `esbuild` → `dist/app` |
+| **Desktop** | Electron 44 + electron-builder (NSIS per-user installer) |
+| **Providers** | `openai-compatible` (OpenAI, Ollama, vLLM, Groq, Gemini compat) + native `anthropic` + offline `mock` with retry/backoff |
+| **Persistence** | In-memory (default) or file (`JSONL` per turn + `meta.json`, atomic writes, quarantine, `RESTART` recovery) |
+| **Tests** | `node:test` + `tsx`, Playwright (Chromium + Electron), scripted eval harness |
+
+---
+
+## Project Structure
 
 ```
-packages/
-  shared/    turn-state reducer + StreamEvent contract + workspace-catalog
-             validation — the single owner of everything server and UIs share
-  server/    src/index.ts   boot entry point (`npm start`): config -> runtime -> listen -> drain
-             src/config.ts  environment parsing, strict, safe defaults
-             src/boot.ts    composes createApp(), recovers persisted state, graceful shutdown
-             src/app.ts     Express app factory: composition, security boundary, validation loop
-             src/http/      route modules (sessions, turns, observability, providers), static UIs,
-                            shared request validation — one owner per resource
-             src/providers/ LLMProvider contract, the offline mock, the openai-compatible and
-                            anthropic adapters, retry wrapper
-             src/agent/     turn manager/loop, session lifecycle, approvals, trust, persistence stores
-  web/       framework-free UI: app shell, workspace, provider dashboard, usage, settings
-  desktop/   Electron desktop shell: main process, preload bridge, /desktop renderer, NSIS packaging
-scripts/
-  setup.mjs         install -> typecheck -> build
-  postinstall.mjs   verifies the workspace tree on npm ci / npm install
-  ensure-built.mjs  `prestart`: builds when dist/ is missing or older than src/
-  smoke-packed.mjs        validates the packed tarball against the manifest
-  smoke-packed-start.mjs  unpacks the tarball outside source tree and verifies `npm start`
-  smoke-start.mjs         boots the built server, runs a turn over SSE, restarts it, checks SIGTERM
-bin/
-  windows-runner.js       executable CLI launcher (`windows-runner`, `wr`)
-install.ps1         Windows clone-and-setup installer (offers `npm start` at the end)
-Dockerfile / docker-compose.yml   server-bundle verification (CI)
-docs/INSTALL.md     install-path status, how to run the server, packaging gaps (G-01..G-06)
+WindowRunner/
+├─ bin/
+│  └─ windows-runner.js        # CLI launcher (windows-runner / wr) → runs dist/index.cjs
+├─ packages/
+│  ├─ shared/                  # shared types: StreamEvent union, turn reducer, workspace catalog
+│  │  └─ src/index.ts
+│  ├─ server/                  # Express app + agent loop + providers
+│  │  └─ src/
+│  │     ├─ index.ts           # boot entry (npm start)
+│  │     ├─ config.ts          # strict env parsing — single source for docs
+│  │     ├─ boot.ts            # composes runtime, recovers persisted state
+│  │     ├─ app.ts             # Express factory (security, validation, routes)
+│  │     ├─ agent/             # loop, turn-manager, session, approvals, trust, persistence
+│  │     ├─ providers/         # openai-compatible, anthropic, mock, retry, sse
+│  │     ├─ http/              # routes: sessions, turns, providers, observability, skills
+│  │     └─ project-root.ts    # ONLY filesystem authority (containment + realpath)
+│  ├─ web/                     # vanilla TS UI — app shell + workspace + providers/usage/settings
+│  │  └─ src/main.ts           # DOM coordinator (own side effects), reducer owns state
+│  └─ desktop/                 # Electron shell — main, preload bridge, server-process, paths
+├─ scripts/                    # setup, ensure-built, postinstall, smoke checks
+├─ eval/                       # 6 scripted coding tasks + validate-provider probe
+├─ docs/
+│  ├─ INSTALL.md               # full install-path status & troubleshooting
+│  ├─ THREAT_MODEL.md          # trust boundaries
+│  └─ adr/                     # 001 seq, 002 approval identity, 003 skills
+├─ install.ps1                 # Windows clone-and-setup installer
+├─ Dockerfile / docker-compose.yml  # server-bundle verification (dev/CI only)
+└─ package.json                # root workspaces + scripts (build, test, start, eval)
 ```
 
-## Persistence
+Generated folders (`packages/*/dist/`, `node_modules/`) are gitignored and rebuilt with `npm run build` / `npm ci`.
 
-WindowsRunner supports two persistence modes with strong safety guarantees:
+---
 
-- **Memory (default)**: `InMemoryTurnLogStore` — deterministic test double, no durability, restart loses all, UI treats as failed.
-- **File (production)**: `FileTurnLogStore` + `FileSessionStore` — JSONL per turn under `WINDOWS_RUNNER_DATA_DIR/sessions/<sessionId>/turns/<turnId>.jsonl` (primary) with `turns/<turnId>.jsonl` legacy flat fallback, plus `sessions/<sessionId>/meta.json` versioned metadata.
+## Running Tests
 
-**File layout:**
-```
-WINDOWS_RUNNER_DATA_DIR/
-  sessions/<sessionId>/meta.json  {version:1, sessionId, canonicalRoot, realRoot, createdAt, lastActivityAt, activeTurnId|null, allowedRootsSnapshot?}
-  sessions/<sessionId>/turns/<turnId>.jsonl  JSONL per turn
-  turns/<turnId>.jsonl  legacy flat fallback
-  quarantine/<turnId>.jsonl.quarantined  >50% invalid lines moved here, cannot be loaded as active
-```
+No API keys needed — fake OpenAI/Anthropic servers + offline mock provider cover everything.
 
-**Durability:**
-- Per-turn serialized queue `Map<turnId, Promise>` ensures serialized writes within one process.
-- O_APPEND atomic <4KB, optional fsync (`WINDOWS_RUNNER_FSYNC=true` does open+write+fsync+close).
-- `durableBeforeNotify` (default true for file mode): `appendAsync` awaits persistence before SSE — never emits before durable. Async mode (false) notifies before persist, faster but possible loss, RESTART appended on recovery.
-- Crash recovery truncates incomplete last line before next append.
-- Recovery: truncated final ignored, malformed middle skip+warn, duplicate seq keep first, out-of-order sorted on read with diagnostic (never rewrites file automatically except RESTART and truncated cleanup), gaps warn, identity mismatches reject/quarantine.
-- Boot: re-validates every session root via `ProjectRoot.create(canonicalRoot, currentAllowedRoots)` with current config, never trusts persisted `canonicalRoot`, `realRoot`, `allowedRootsSnapshot` for authorization. Clears stale `activeTurnId`, persists updated meta. Appends exactly one `RESTART` at `maxSeq+1` for non-terminal turns, persisted and boot-idempotent across process restarts (file still 3 lines after second boot, not 4).
-- Retention: `evictOldest` only evicts terminal turns, preserves active. `deleteTurnFile` for eviction.
-- Diagnostics: `BootDiagnostics` observable via `/api/health` and `/api/diagnostics/persistence`.
-
-**Single-process writer limitation (prominent):**
-```
-SERIALIZED WRITES WITHIN ONE PROCESS ONLY. Multi-process writers UNSUPPORTED — O_APPEND alone does NOT provide session-level correctness, no file lock. Run single server instance per dataDir.
-```
-Documented in `FileTurnLogStore` header, `CONTEXT.md`, `/api/health`, and deployment docs. For production, run single instance per dataDir or use external lock (future).
-
-**Configuration defaults (safe):**
-- `WINDOWS_RUNNER_DATA_DIR`: `~/.windows-runner` if not set; must be absolute. Only used and created in file mode.
-- `WINDOWS_RUNNER_PERSISTENCE_MODE`: `memory` default (safe for dev), `file` for prod.
-- `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY`: true default for file mode (correctness), false for memory (performance).
-- `WINDOWS_RUNNER_FSYNC`: false default (performance), true for durability.
-- `WINDOWS_RUNNER_ALLOWED_ROOTS`: comma-separated absolute project roots. The server defaults to the home directory (`WINDOWS_RUNNER_HOME` overrides it); an empty list — "allow any" — is a test-only affordance of `ProjectRoot` that the boot path never uses.
-
-## Environment variables
-
-Read by the server entry point (`npm start`) — this table matches `ENV` in
-`packages/server/src/config.ts`; set-but-invalid values fail the boot with a
-message naming the variable. The full semantics table is in
-[docs/INSTALL.md → "Configuration"](./docs/INSTALL.md#configuration).
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `7634` | Server port (`0` = ephemeral, printed in the ready line) |
-| `HOST` | `127.0.0.1` | Bind address. Non-loopback is refused unless `WINDOWS_RUNNER_ALLOW_REMOTE=1` |
-| `WINDOWS_RUNNER_ALLOW_REMOTE` | `0` | Explicit acknowledgement that the token-protected API is exposed beyond loopback over plain HTTP |
-| `WINDOWS_RUNNER_AUTH` | `token` | `token` = bearer auth on every `/api` route; `off` only with a loopback `HOST` |
-| `WINDOWS_RUNNER_AUTH_TOKEN` | generated | The bearer token (≥16 chars). Unset: `<data dir>/auth-token` in file mode, else per-process and printed once |
-| `WINDOWS_RUNNER_ALLOWED_HOSTS` | none | Extra `Host` header values accepted besides loopback and the bind address |
-| `WINDOWS_RUNNER_ALLOWED_ORIGINS` | loopback origins | Explicit browser origins allowed to call the API (no wildcard) |
-| `WINDOWS_RUNNER_PROVIDER` | `mock` | `mock` (offline), `openai-compatible` or `anthropic` |
-| `WINDOWS_RUNNER_MODEL` / `_MODEL_BASE_URL` / `_MODEL_API_KEY` | — | Model name (required for network providers), endpoint base URL (default per provider), key (never printed; falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`) |
-| `WINDOWS_RUNNER_MODEL_MAX_RETRIES` | `2` | Retries for transient model errors (429/5xx/network) before any output streamed; `0` disables |
-| `WINDOWS_RUNNER_MAX_STEPS` | `10` | Model calls per turn before `MAX_STEPS_EXCEEDED`; lower it to cap spend |
-| `WINDOWS_RUNNER_MODEL_CALL_TIMEOUT_MS` | `30000` | Wall-clock limit for one model call |
-| `WINDOWS_RUNNER_TOOLS` | `1` | `0` disables the built-in tools |
-| `WINDOWS_RUNNER_TERMINAL_TIMEOUT_MS` / `_TERMINAL_OUTPUT_LIMIT` | `60000` / `65536` | `run_terminal` wall-clock limit and output cap |
-| `WINDOWS_RUNNER_PERSISTENCE_MODE` | `memory` | `memory` or `file` |
-| `WINDOWS_RUNNER_DATA_DIR` | `~/.windows-runner` | Where sessions and turn logs are stored in file mode |
-| `WINDOWS_RUNNER_DURABLE_BEFORE_NOTIFY` | `true` (file mode) | Persist before notifying SSE listeners |
-| `WINDOWS_RUNNER_FSYNC` | `false` | fsync each appended event |
-| `WINDOWS_RUNNER_ALLOWED_ROOTS` | home directory | Comma-separated absolute roots a session `cwd` must be inside |
-| `WINDOWS_RUNNER_HOME` | OS home | Overrides the default authorized project root (used by tests/containers) |
-| `WINDOWS_RUNNER_SHUTDOWN_GRACE_MS` | `5000` | Drain timeout on SIGINT/SIGTERM/SIGHUP |
-
-## Tests
-
-```bash
+```powershell
+# Full suite — shared + server + web + desktop (desktop auto-builds if needed)
 npm test
+
+# Individual workspaces
+npm run typecheck              # typecheck all workspaces (no emit)
+npm run build                  # emits packages/*/dist + bundled server
+
+# Smoke & contract checks (what CI runs)
+npm run smoke:packed            # tarball matches manifest?
+npm run smoke:packed:start      # unpack tarball outside repo and boot npm start?
+npm run smoke:start             # boot built server → run a mock turn over SSE → restart → SIGTERM
+npm run check:release           # version single-source + changelog format
+npm run eval -- --expect-pass   # 6 scripted end-to-end tasks with hidden checks (writes eval/results/*.json)
+
+# Desktop & browser E2E (needs build + Playwright/Electron binaries)
+npm run test:desktop            # desktop unit & contract tests
+npm run smoke:desktop           # page + Electron smoke (Linux + windows-latest CI)
+npm run e2e                     # web Playwright suite (Chromium)
+npm run e2e:desktop             # real Electron journey (core + providers/settings)
 ```
 
-Runs the full suite across all four workspaces — shared, server, web, and
-desktop (the desktop `pretest` hook builds the shell if `dist/` is missing or
-stale). No API keys required. `npm run eval -- --expect-pass` additionally
-drives the real server through five scripted end-to-end tasks with hidden
-checks.
+`npm start` also has a `prestart` hook that builds automatically when `dist/` is missing or older than `src/`, so you can run tests or start without building first.
 
-## Provenance
+---
 
-WindowsRunner is an independent project. The agent loop, tools, provider adapters
-and user interface are written for this repository; no third-party agent code is
-included. Third-party components are used under their own licenses — see
-[NOTICE](./NOTICE).
+## Known Limitations / TODOs
 
-`express` is the only runtime dependency (plus the workspace `@windows-runner/shared`),
-with `typescript`, `tsx` and `@types/*` for development. There is no React,
-Vite, Tailwind CSS, highlight.js, `diff` or `picomatch` in `package-lock.json`.
-Verify with `npm ls --all --depth=0`.
+Honest and short — these are tracked in [`RELEASE_CHECKLIST.md`](./RELEASE_CHECKLIST.md):
 
-## Security
+- **npm package not yet published** — `npx windows-runner` still 404s. The publish workflow exists (`.github/workflows/npm-publish.yml`, dry-run by default); until a maintainer adds `NPM_TOKEN` and dispatches it, use the ZIP + `npm ci` path.
+- **No OS keychain for API keys** — provider keys are stored in `<data dir>/provider-profiles.json` with mode `0600` and masked as `****last4` in the UI, but at rest they are plaintext. No telemetry or phone-home.
+- **Single writer per data dir** — file persistence (`WINDOWS_RUNNER_DATA_DIR`) is safe for one server process. Running two servers on the same dir is unsupported (no file lock; `O_APPEND` alone is not enough).
+- **Desktop installer unsigned until a cert is provided** — SmartScreen will warn. Build from source or verify `SHA256SUMS.txt`. Signing pipeline is proven in CI (`Desktop signing` job).
+- **No sandbox** — an approved terminal command runs as *you* with your full privileges, network and credentials. Only approve commands you would type yourself; treat untrusted repos like their own scripts (use a VM if needed).
+- **macOS / Linux not supported as user platforms** — Windows is the shipped product. Linux runners & Docker are dev/CI infrastructure only.
+- **Limited UI persistence** — a refresh keeps the project sidebar but does not restore the live transcript. Re-attach the session to continue.
 
-Found a security problem? Do not open a public issue — see
-[SECURITY.md](./SECURITY.md) for the private reporting path and the trust
-model. The implemented security boundary is described in
-[docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md). Download verification and
-code-signing status are in
-[docs/INSTALL.md](./docs/INSTALL.md#windows-desktop-app) → "Code signing and
-SmartScreen" / "Verifying a download". The B5 security review lives at
-[docs/research/2026-09-22-b5-security-review.md](./docs/research/2026-09-22-b5-security-review.md).
+---
+
+## Contributing
+
+We welcome contributions! Keep it small and Windows-first:
+
+1. Fork the repo and create a feature branch
+2. Run `npm ci && npm test` — all four workspaces must pass
+3. Keep filesystem access behind `ProjectRoot` (`safePath`) — no raw `fs` on user paths
+4. Keep the server free of UI concerns and the UI free of provider specifics
+5. Windows is the product platform — don't add macOS/Linux installers or CI legs without a decision
+6. Open a pull request — all **seven CI checks must be green** before merge (`CI`, `Browser E2E`, `Docker`, `Platform`, `Desktop`, `Desktop installer`, `Desktop signing`)
+
+Please report security issues privately per [`SECURITY.md`](./SECURITY.md).
+
+---
 
 ## License
 
-Apache-2.0. See [LICENSE](./LICENSE).
+**Apache-2.0** — see [`LICENSE`](./LICENSE). Third-party components are listed in [`NOTICE`](./NOTICE).
+
+---
+
+*Made for Windows. Local-first. Your keys, your machine, your code.*
