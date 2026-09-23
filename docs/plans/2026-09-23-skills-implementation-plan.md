@@ -58,12 +58,23 @@ Phase 1's malformed-YAML test becomes "malformed or non-scalar frontmatter → e
 
 `read_skill({ name })`. `requiresApproval: () => false` — it returns a text file inside the project root that `read_file` could already return. Resolves through `safePath` semantics.
 
-- [ ] Reads a known skill's body
-- [ ] Unknown name → actionable error ("no skill named X; available: …"), not a stack trace, per the AGENTS.md error convention
-- [ ] `..`, absolute path, encoded traversal and symlink escape → refused identically to `read_file`
-- [ ] Added to `createBuiltinTools()` and nowhere else — the AGENTS.md rule is "there is no plugin discovery"
+**DONE 2026-09-23.** `readSkillTool()` in `builtin.ts`; 7 tests added to `packages/server/test/builtin-tools.test.ts`, server suite 409 → 416.
 
-**Verify:** `npm run test --workspace packages/server`
+Two existing tests pin the tool list and both had to be updated, which is the point of having them: `builtin-tools.test.ts` (shape) and `openai-compatible.test.ts:237` (what the real boot path advertises to a provider). Neither is a regression; a new tool cannot start reaching every provider unnoticed.
+
+- [x] Reads a known skill's body; `requiresApproval` is `false`
+- [x] Unknown name → actionable error naming the available skills, not a stack trace
+- [x] Project with no skills → says so plainly, names where skills live
+- [x] Directory exists but failed validation → reports the diagnostic reason instead of a bare miss
+- [x] `..`, absolute path, encoded traversal, spaces, uppercase, underscores → refused as `PATH_ESCAPES_ROOT` before any filesystem access
+- [x] Non-string / missing `name` → `TOOL_FAILED`
+- [x] Symlinked skill directory → refused, **and** a test asserts the smuggled body never appears anywhere in the result
+- [x] `t.trust === undefined` for every tool — the existing shape assertion already enforced the ADR's "instructions-only" claim
+- [x] Added to `createBuiltinTools()` and nowhere else
+
+**Verify:** `npm run test --workspace packages/server` → 416/416; `npx tsc -p packages/server/tsconfig.json --noEmit` → clean; full `npm test` → 739 pass / 0 fail.
+
+**Not yet true:** `README.md:10` and `:78` still say "five root-confined tools" and `README.md:17` still says no skills system exists. Those are user-facing claims and phase 8 owns them — they flip when the feature is actually reachable. `AGENTS.md` was updated now because the app itself reads it as project instructions.
 
 ---
 

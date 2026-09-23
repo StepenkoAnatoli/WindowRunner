@@ -24,6 +24,7 @@ import * as fs from "node:fs/promises";
 import type { ToolDefinition, ToolExecutionContext } from "./types.js";
 import { PathError } from "../../project-root.js";
 import { spawnTree, killTree } from "../../process-tree.js";
+import { loadSkills, SKILL_NAME_RE } from "../skills.js";
 
 export interface BuiltinToolOptions {
   /** Wall-clock limit for one terminal command; the loop's toolTimeoutMs still applies on top. */
@@ -72,6 +73,7 @@ export function createBuiltinTools(options: BuiltinToolOptions = {}): Map<string
     editFileTool(),
     listDirTool(),
     runTerminalTool(opts.terminalTimeoutMs, opts.terminalOutputLimit, options.terminalEnv),
+    readSkillTool(),
   ];
   return new Map(tools.map((t) => [t.name, t]));
 }
@@ -376,6 +378,87 @@ class BoundedBuffer {
     const tail = Buffer.concat(this.tail).toString("utf8");
     return this.dropped > 0 ? `${head}\n[... ${this.dropped} bytes omitted ...]\n${tail}` : head + tail;
   }
+}
+
+/**
+ * read_skill (ADR 003, phase 2) — the single mechanism behind both activation
+ * modes. A `/`-command in the UI and the model's own decision both end up here,
+ * which is why there is no second code path that injects skill text into a
+ * turn.
+ *
+ * Instructions only. It returns the markdown body of
+ * `.windowrunner/skills/<name>/SKILL.md` and executes nothing, so it declares no
+ * `trust` and asks no approval: it is a read of a file inside the project root
+ * that `read_file` could already return. If a future version lets skills carry
+ * executable payloads, that is when `ToolDefinition.trust` gets declared — not
+ * here, and not silently.
+ *
+ * The name is a skill name, not a path. Anything that is not a bare
+ * `SKILL_NAME_RE` name is refused as `PATH_ESCAPES_ROOT` before any filesystem
+ * access, so `../x`, absolute paths and encoded traversal cannot be used to
+ * reach outside the skills directory even in principle. `loadSkills` then
+ * re-checks containment via ProjectRoot, because the two guards are independent
+ * and either one alone would be a gap.
+ */
+function readSkillTool(): ToolDefinition {
+  return {
+    name: "read_skill",
+    description:
+      "Load one of this project's skills by name. A skill is a markdown instruction file the project ships under .windowrunner/skills/. Reading a skill does not run anything; if a skill asks for a command to be run, use run_terminal, which still requires approval.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Skill name, e.g. \"release-notes\". Lowercase letters, digits and dashes; not a path.",
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    requiresApproval: () => false,
+    async execute(input, ctx) {
+      const obj = asRecord(input);
+      if (!obj) return fail('input must be an object with a "name"');
+      const name = requireString(obj, "name");
+      if (isFail(name)) return name;
+      if (name.trim() === "") return fail('"name" must not be empty');
+      if (!SKILL_NAME_RE.test(name)) {
+        // Reported as an escape rather than a lookup miss: `..` is not a
+        // misspelled skill name, and the model should learn that distinction.
+        return fail(
+          `"${name}" is not a skill name. A skill name is not a path: lowercase letters, digits and dashes only.`,
+          "PATH_ESCAPES_ROOT",
+          false
+        );
+      }
+
+      const { skills, diagnostics } = await loadSkills(ctx.projectRoot);
+      const skill = skills.find((s) => s.name === name);
+      if (skill) return { ok: true, output: skill.body };
+
+      // A skill directory that exists but failed validation is a different
+      // situation from one that was never there, and the model should be told
+      // which it hit rather than guessing.
+      const brokenFor = diagnostics.find((d) => d.file.split(/[\\/]/).includes(name));
+      if (brokenFor) {
+        return fail(
+          `the skill "${name}" exists but was not loaded: ${brokenFor.reason} — ${brokenFor.message}`,
+          "TOOL_FAILED",
+          false
+        );
+      }
+      if (skills.length === 0) {
+        return fail(
+          `no skill named "${name}": this project has no skills. Skills live under .windowrunner/skills/<name>/SKILL.md.`,
+          "TOOL_FAILED",
+          false
+        );
+      }
+      const available = skills.map((s) => s.name).join(", ");
+      return fail(`no skill named "${name}". Available skills: ${available}.`, "TOOL_FAILED", false);
+    },
+  };
 }
 
 const SECRET_ENV = /(^|_)(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)$|^WINDOWS_RUNNER_(AUTH_TOKEN|MODEL_API_KEY)$|^OPENAI_API_KEY$|^ANTHROPIC_API_KEY$/i;

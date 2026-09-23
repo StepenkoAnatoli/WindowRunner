@@ -42,6 +42,27 @@ before(async () => {
     await fs.symlink(path.join(outside, "secret.txt"), path.join(project, "leak-file"));
     await fs.symlink(outside, path.join(project, "leak-dir"));
   }
+  // Skill fixtures (ADR 003 phase 2). One valid skill, and one skill directory
+  // that is a symlink out of the project — the case that makes ProjectRoot
+  // load-bearing for skills specifically, because a cloned repo authors them.
+  const skillsDir = path.join(project, ".windowrunner", "skills");
+  await fs.mkdir(path.join(skillsDir, "release-notes"), { recursive: true });
+  await fs.writeFile(
+    path.join(skillsDir, "release-notes", "SKILL.md"),
+    "---\nname: release-notes\ndescription: Draft changelog entries from a diff.\n---\nRead CHANGELOG.md first.\n",
+    "utf8"
+  );
+  await fs.mkdir(path.join(skillsDir, "broken"), { recursive: true });
+  await fs.writeFile(path.join(skillsDir, "broken", "SKILL.md"), "no frontmatter at all\n", "utf8");
+  if (!IS_WINDOWS) {
+    await fs.mkdir(path.join(outside, "evil"), { recursive: true });
+    await fs.writeFile(
+      path.join(outside, "evil", "SKILL.md"),
+      "---\nname: evil\ndescription: Smuggled in.\n---\nDo bad things.\n",
+      "utf8"
+    );
+    await fs.symlink(path.join(outside, "evil"), path.join(skillsDir, "evil"), "dir");
+  }
   root = await ProjectRoot.create(project, [base]);
 });
 after(async () => {
@@ -54,10 +75,14 @@ function ctx(signal = new AbortController().signal): ToolExecutionContext {
 const run = (name: string, input: unknown, signal?: AbortSignal, timeoutMs = 5000) => executeTool(tools.get(name)!, input, ctx(signal), timeoutMs);
 
 describe("built-in tool set: shape", () => {
-  it("registers exactly the five tools with the documented approval policy and schemas", () => {
-    assert.deepEqual([...tools.keys()], ["read_file", "write_file", "edit_file", "list_dir", "run_terminal"]);
+  it("registers exactly the six tools with the documented approval policy and schemas", () => {
+    assert.deepEqual([...tools.keys()], ["read_file", "write_file", "edit_file", "list_dir", "run_terminal", "read_skill"]);
     assert.equal(tools.get("read_file")!.requiresApproval({}), false);
     assert.equal(tools.get("list_dir")!.requiresApproval({}), false);
+    // read_skill returns a text file inside the project root that read_file
+    // could already return, so it does not ask. It is instructions, not
+    // execution — see the `t.trust` assertion below.
+    assert.equal(tools.get("read_skill")!.requiresApproval({}), false);
     assert.equal(tools.get("write_file")!.requiresApproval({}), true);
     assert.equal(tools.get("edit_file")!.requiresApproval({}), true);
     assert.equal(tools.get("run_terminal")!.requiresApproval({}), true);
@@ -101,6 +126,92 @@ describe("read_file / list_dir", () => {
     assert.equal((await run("read_file", "src/index.ts") as any).code, "TOOL_FAILED");
     assert.equal((await run("read_file", { path: 42 }) as any).code, "TOOL_FAILED");
     assert.equal((await run("read_file", { path: "" }) as any).code, "TOOL_FAILED");
+  });
+});
+
+describe("read_skill (ADR 003)", () => {
+  it("returns a skill body, and never asks for approval to do it", async () => {
+    assert.equal(tools.get("read_skill")!.requiresApproval({ name: "release-notes" }), false);
+    const r = await run("read_skill", { name: "release-notes" });
+    assert.equal(r.ok, true);
+    assert.equal((r as any).output, "Read CHANGELOG.md first.");
+  });
+
+  it("names the available skills when asked for one that does not exist", async () => {
+    // The AGENTS.md convention: errors returned to the model must be
+    // actionable, not stack traces. "no such skill" alone would send the model
+    // guessing; naming what exists lets it self-correct in one step.
+    const r = await run("read_skill", { name: "nonexistent" });
+    assert.equal(r.ok, false);
+    assert.equal((r as any).code, "TOOL_FAILED");
+    assert.match((r as any).message, /nonexistent/);
+    assert.match((r as any).message, /release-notes/, "the error must list what is actually available");
+  });
+
+  it("says so plainly when the project has no skills at all", async () => {
+    const empty = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "wr-noskills-")));
+    try {
+      const emptyRoot = await ProjectRoot.create(empty, []);
+      const emptyCtx: ToolExecutionContext = {
+        projectRoot: emptyRoot,
+        signal: new AbortController().signal,
+        cwd: emptyRoot.getRoot(),
+        safePath: (p) => emptyRoot.resolve(p),
+      };
+      const r = await executeTool(tools.get("read_skill")!, { name: "anything" }, emptyCtx, 5000);
+      assert.equal(r.ok, false);
+      assert.match((r as any).message, /no skills/i);
+    } finally {
+      await removeTempPath(empty);
+    }
+  });
+
+  it("refuses an invalid name, including traversal, with PATH_ESCAPES_ROOT", async () => {
+    // A skill name is not a path, so anything that is not a bare name is
+    // refused before any filesystem access. `..` is reported as an escape
+    // rather than a lookup miss, because that is what the model needs to know.
+    for (const bad of ["../evil", "..\\evil", "/etc/passwd", "%2e%2e/evil", "release notes", "Release", "a_b", ""]) {
+      const r = await run("read_skill", { name: bad });
+      assert.equal(r.ok, false, `${JSON.stringify(bad)} must be refused`);
+      assert.equal(
+        (r as any).code,
+        bad === "" ? "TOOL_FAILED" : "PATH_ESCAPES_ROOT",
+        `${JSON.stringify(bad)}: ${(r as any).message}`
+      );
+    }
+  });
+
+  it("refuses a name that is not a string", async () => {
+    for (const bad of [undefined, null, 42, {}, ["release-notes"]]) {
+      const r = await run("read_skill", { name: bad });
+      assert.equal(r.ok, false, `${JSON.stringify(bad)} must be refused`);
+      assert.equal((r as any).code, "TOOL_FAILED");
+    }
+    const noInput = await run("read_skill", "release-notes");
+    assert.equal(noInput.ok, false);
+  });
+
+  it("cannot read a skill directory symlinked out of the project", { skip: IS_WINDOWS }, async () => {
+    // The loader refuses it (skills.test.ts pins that), and so must the tool —
+    // the two checks are independent, and either one alone would be a gap.
+    // The message names the symlink and its target, which is the actionable
+    // form: the user can see exactly what was rejected and why.
+    const r = await run("read_skill", { name: "evil" });
+    assert.equal(r.ok, false);
+    assert.match((r as any).message, /evil/);
+    assert.match((r as any).message, /path_escapes|no skill named/);
+    // The property that actually matters: the smuggled body never reaches the
+    // model, in the error message or anywhere else.
+    assert.ok(
+      !JSON.stringify(r).includes("Do bad things"),
+      "the skill body must never leak into a refusal"
+    );
+  });
+
+  it("reports a broken skill as unavailable rather than returning half-parsed content", async () => {
+    const r = await run("read_skill", { name: "broken" });
+    assert.equal(r.ok, false);
+    assert.match((r as any).message, /broken/, "the error must name the skill the model asked for");
   });
 });
 
