@@ -282,3 +282,7 @@ export interface TurnLogStore {
 export function isTerminalStatus(status: TurnStatus | "idle"): boolean {
   return status === "completed" || status === "cancelled" || status === "failed";
 }
+
+// ---- Workspace catalog (B1): shared persistence shape + validation ----
+
+export * from "./workspace-catalog.js";
