@@ -913,21 +913,29 @@ jobs:
           ELECTRON_BUILDER_OFFLINE: "true"
         run: npm run package:desktop:win:release
 
-      - name: "Assert the app executable, installer and uninstaller are signed"
+      - name: "Assert the app executable and the installer are signed"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $exe = "packages\desktop\release\win-unpacked\WindowRunner.exe"
           $setup = Get-ChildItem "packages\desktop\release" -Filter "*-Setup-*.exe" | Select-Object -First 1
-          # electron-builder.yml states signing covers "app exe, uninstaller,
-          # NSIS installer". The uninstaller runs on user machines during
-          # uninstall and would raise its own SmartScreen prompt if it went out
-          # unsigned, so asserting only the first two left a shipped artifact
-          # outside the gate. Same lookup pattern the release verification uses.
-          $uninstall = Get-ChildItem "packages\desktop\release\win-unpacked" -Filter "Uninstall*.exe" | Select-Object -First 1
+          # Deliberately NOT asserting on win-unpacked\Uninstall*.exe. That was
+          # tried and is wrong: electron-builder signs the uninstaller into
+          # outDir as `<installer-base>__uninstaller.exe` and then DELETES it
+          # (app-builder-lib/out/targets/nsis/NsisTarget.js — `signIf(
+          # uninstallerPath)` followed by `unlink(UNINSTALLER_OUT_FILE)`). The
+          # file left in win-unpacked is the NSIS template that gets embedded in
+          # the installer, and electron-builder never signs it, so a signature
+          # assertion there can only ever fail.
+          #
+          # The uninstaller a user actually runs is extracted at install time
+          # from the installer, which IS signed and IS asserted below. Whether
+          # that extracted copy carries a signature is not observable from the
+          # build output — it needs a signed install, and is recorded as an
+          # open item in RELEASE_CHECKLIST.md rather than asserted here on a
+          # guess.
           if (!$setup) { throw "no installer produced" }
-          if (!$uninstall) { throw "no uninstaller produced — cannot verify it was signed" }
-          foreach ($file in @($exe, $setup.FullName, $uninstall.FullName)) {
+          foreach ($file in @($exe, $setup.FullName)) {
             if (!(Test-Path $file)) { throw "missing build output: $file" }
             $sig = Get-AuthenticodeSignature -FilePath $file
             Write-Host "$file -> status=$($sig.Status) signer=$($sig.SignerCertificate.Subject)"
@@ -938,8 +946,8 @@ jobs:
               throw "WRONG SIGNER: $file — signed by something other than the CI test certificate"
             }
           }
-          Write-Host "ASSERT PASS: app exe, installer and uninstaller are Authenticode-signed by the pipeline test certificate (status 'UnknownError' is expected: the test chain is untrusted by design)"
-          Write-Host "::notice title=signing gate::ASSERT PASS: installer + app exe + uninstaller signed by the CI test certificate"
+          Write-Host "ASSERT PASS: app exe and installer are Authenticode-signed by the pipeline test certificate (status 'UnknownError' is expected: the test chain is untrusted by design)"
+          Write-Host "::notice title=signing gate::ASSERT PASS: installer + app exe signed by the CI test certificate"
 
       - name: Collect signing diagnostics
         if: failure()

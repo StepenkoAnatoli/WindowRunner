@@ -194,8 +194,8 @@ jobs:
 
       # forceCodeSigning only proves that electron-builder applied *a*
       # signature; it cannot tell us whether it is the right certificate,
-      # whether the app exe and the installer agree, whether the uninstaller
-      # was covered at all, or whether the signature was timestamped (an
+      # whether the app exe and the installer agree, or whether the signature
+      # was timestamped (an
       # untimestamped signature stops verifying the moment the certificate
       # expires). The CI signing job proves the pipeline with a throwaway
       # certificate; this step proves the artifact a customer will download.
@@ -204,7 +204,7 @@ jobs:
       # the signer subject must match it exactly, when it does not the check
       # is skipped. Same degradation shape as the certificate gate above, so
       # adding the pin later is a one-secret change and never a code change.
-      - name: "Verify the release signature (app exe, installer, uninstaller)"
+      - name: "Verify the release signature (app exe and installer)"
         if: steps.signing.outputs.mode == 'signed'
         shell: pwsh
         env:
@@ -214,16 +214,21 @@ jobs:
           $releaseDir = "packages\desktop\release"
           $exe = Join-Path $releaseDir "win-unpacked\WindowRunner.exe"
           $setup = Get-ChildItem $releaseDir -Filter "*-Setup-*.exe" | Select-Object -First 1
-          # electron-builder.yml states signing covers "app exe, uninstaller,
-          # NSIS installer". The uninstaller runs on user machines during
-          # uninstall and raises its own SmartScreen prompt if it goes out
-          # unsigned, so it is asserted here rather than assumed.
-          $uninstall = Get-ChildItem (Join-Path $releaseDir "win-unpacked") -Filter "Uninstall*.exe" | Select-Object -First 1
+          # Deliberately NOT asserting on win-unpacked\Uninstall*.exe:
+          # electron-builder signs the uninstaller into outDir as
+          # `<installer-base>__uninstaller.exe` and then DELETES it
+          # (app-builder-lib/out/targets/nsis/NsisTarget.js —
+          # `signIf(uninstallerPath)` then `unlink(UNINSTALLER_OUT_FILE)`).
+          # What is left in win-unpacked is the NSIS template embedded in the
+          # installer, and it is never signed, so asserting a signature there
+          # fails every release. The uninstaller a user runs is extracted at
+          # install time from the installer, which IS asserted here; whether
+          # that extracted copy is signed is tracked as an open item in
+          # RELEASE_CHECKLIST.md instead of being guessed at.
           if (!$setup) { throw "no installer produced in $releaseDir" }
-          if (!$uninstall) { throw "no uninstaller produced — cannot verify it was signed" }
 
           $subjects = @()
-          foreach ($file in @($exe, $setup.FullName, $uninstall.FullName)) {
+          foreach ($file in @($exe, $setup.FullName)) {
             if (!(Test-Path $file)) { throw "missing build output: $file" }
             $sig = Get-AuthenticodeSignature -FilePath $file
             Write-Host "$file -> status=$($sig.Status) signer=$($sig.SignerCertificate.Subject) timestamp=$($sig.TimeStamperCertificate.Subject)"
@@ -249,7 +254,7 @@ jobs:
 
           $distinct = $subjects | Sort-Object -Unique
           if ($distinct.Count -ne 1) {
-            throw "SIGNER MISMATCH across artifacts: $($distinct -join ' | ') — the app exe, installer and uninstaller must all carry the same signature"
+            throw "SIGNER MISMATCH across artifacts: $($distinct -join ' | ') — the app exe and the installer must carry the same signature"
           }
           Write-Host "signer: $($distinct[0])"
 
@@ -264,7 +269,7 @@ jobs:
           } else {
             Write-Host "::notice title=signer pin::WIN_CSC_EXPECTED_SUBJECT is not configured — the signer was verified structurally but not pinned to an expected subject."
           }
-          Write-Host "::notice title=signing gate::Verified: app exe, installer and uninstaller are timestamped and signed by $($distinct[0])"
+          Write-Host "::notice title=signing gate::Verified: app exe and installer are timestamped and signed by $($distinct[0])"
 
       # Same install → journey → uninstall gate as the per-PR installer job
       # (minus the upgrade phases, which need two versions): the release

@@ -71,8 +71,7 @@ section names below are allowed.
   `forceCodeSigning` path and failed the build with an opaque signing error.
   The gate now tests both, and a certificate without its password (or the
   reverse) produces an explicit "signing misconfigured" error naming the
-  missing secret. The CI signing assertion also covers the uninstaller now,
-  matching what `electron-builder.yml` has always claimed it signs.
+  missing secret.
 
 - **Windows-only product scope.** The macOS and Linux user-platform claims,
   installers and CI legs were deliberately set aside: the `Platform` and
@@ -84,6 +83,24 @@ section names below are allowed.
 
 ### Fixed
 
+- **The CI signing gate asserted a signature on an artifact that is never
+  signed, and failed.** An uninstaller check was added to the `Desktop signing`
+  job on the reasoning that `electron-builder.yml` says signing covers the
+  "app exe, uninstaller, NSIS installer" and that a shipped uninstaller outside
+  the gate was a gap. The premise was wrong. electron-builder signs *an*
+  uninstaller — into the output directory as `<installer-base>__uninstaller.exe`
+  — and then **deletes it**
+  (`app-builder-lib/out/targets/nsis/NsisTarget.js`: `signIf(uninstallerPath)`
+  followed by `unlink(UNINSTALLER_OUT_FILE)`). What remains in `win-unpacked` is
+  the NSIS template embedded in the installer, which nothing signs, so the
+  assertion could only ever fail. Reverted to the app exe and the installer in
+  both `ci.yml` and `release.yml` (the release gate carried the same claim and
+  would have failed every release), the misleading `electron-builder.yml`
+  comment corrected, and `release-contract.test.ts` now asserts the gate does
+  *not* look up that file so this cannot come back. Whether the uninstaller a
+  user actually runs — extracted at install time from the signed installer —
+  carries a signature is not observable from the build output and is recorded
+  as an open item in `RELEASE_CHECKLIST.md` rather than guessed at.
 - **A `SKILL.md` saved with a UTF-8 BOM was rejected.** The byte-order mark
   sits before the opening `---` line, so the frontmatter check failed and the
   skill was excluded with `missing frontmatter` — a diagnostic naming the wrong

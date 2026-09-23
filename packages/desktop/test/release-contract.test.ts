@@ -199,8 +199,9 @@ describe("release contract: code signing hardening", () => {
   //   2. The signing gate tested one secret but the build consumes two, so a
   //      missing WIN_CSC_KEY_PASSWORD produced a cryptic forceCodeSigning
   //      failure instead of the diagnostic the job exists to emit.
-  //   3. electron-builder.yml claims signing covers "app exe, uninstaller,
-  //      NSIS installer" but the CI assertion looped over only two files.
+  //   3. The release verified nothing about WHICH certificate signed, so a
+  //      wrong-but-present signature (e.g. a renewed CN, or the CI test
+  //      certificate) shipped as long as forceCodeSigning was satisfied.
   const ci = read(".github/workflows/ci.yml");
   const release = read(".github/workflows/release.yml");
 
@@ -269,28 +270,41 @@ describe("release contract: code signing hardening", () => {
     );
   });
 
-  it("asserts every artifact electron-builder claims to sign, including the uninstaller", () => {
-    // electron-builder.yml: "signs every executable it produces (app exe,
-    // uninstaller, NSIS installer)". The uninstaller runs on user machines and
-    // would raise its own SmartScreen prompt if it went out unsigned.
-    const yml = fs.readFileSync(path.join(desktopRoot, "electron-builder.yml"), "utf8").replace(/\r\n/g, "\n");
-    assert.match(yml, /app exe, uninstaller, NSIS installer/, "the config must still claim all three artifacts");
-    // Scoped to the signing regions. A file-wide check passes vacuously: both
-    // workflows already contain `-Filter "Uninstall*.exe"` in their UNINSTALL
-    // steps, which is not a signing assertion at all.
+  it("does not assert a signature on the win-unpacked uninstaller, which electron-builder never signs", () => {
+    // Regression guard for a gate that was shipped broken. The claim being
+    // corrected: electron-builder.yml says signing covers "app exe,
+    // uninstaller, NSIS installer", and it does sign AN uninstaller — but it
+    // signs it into outDir as `<installer-base>__uninstaller.exe` and then
+    // deletes it (app-builder-lib/out/targets/nsis/NsisTarget.js:
+    // `signIf(uninstallerPath)` then `unlink(UNINSTALLER_OUT_FILE)`). The file
+    // left in win-unpacked is the NSIS template embedded in the installer, and
+    // nothing signs it. Asserting a signature there failed the CI signing job
+    // on the first run and would fail every release.
+    //
+    // Scoped to the signing regions. Both workflows legitimately contain
+    // `-Filter "Uninstall*.exe"` in their UNINSTALL steps, which is not a
+    // signing assertion, so a file-wide check would pass vacuously.
     const ciSigning = ci.slice(ci.indexOf("  desktop-signing:"));
+    assert.ok(ciSigning.length > 0, "the desktop-signing job must exist");
     assert.ok(
-      ciSigning.includes('"Uninstall*.exe"'),
-      "the CI signing gate must locate and cover the uninstaller"
+      !ciSigning.includes('"Uninstall*.exe"'),
+      "the CI signing gate must not look up the win-unpacked uninstaller — it is never signed"
     );
-    // Bounded by the STEP NAME, not by Get-AuthenticodeSignature: the
-    // uninstaller is located before the signature loop, so slicing from the
-    // loop excludes the very lookup being asserted.
     const relVerify = release.slice(release.indexOf("Verify the release signature"), release.indexOf("Install silently"));
     assert.ok(relVerify.length > 0, "the release must have a verification region before the install step");
     assert.ok(
-      relVerify.includes('"Uninstall*.exe"'),
-      "the release verification must cover the uninstaller, not just the app exe and installer"
+      !relVerify.includes('"Uninstall*.exe"'),
+      "the release verification must not look up the win-unpacked uninstaller either"
+    );
+    // What the gate DOES cover: the app exe and the installer, both of which
+    // electron-builder signs. Asserted as a loop over exactly those two.
+    assert.ok(
+      ciSigning.includes("foreach ($file in @($exe, $setup.FullName))"),
+      "the CI signing gate must assert the app exe and the installer"
+    );
+    assert.ok(
+      relVerify.includes("foreach ($file in @($exe, $setup.FullName))"),
+      "the release verification must assert the app exe and the installer"
     );
   });
 });
