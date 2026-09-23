@@ -1,7 +1,7 @@
 # ADR 003 — Skills are instructions-only project markdown, loaded on demand by a `read_skill` tool
 
 **Date:** 2026-09-23
-**Status:** Proposed (awaiting owner review)
+**Status:** Accepted — implemented in full on 2026-09-23 (loader, `read_skill`, the HTTP route, index auto-discovery, web palette, eval task). No deviation from the decisions below. `RELEASE_CHECKLIST.md` still carries the open item "Skill metadata cannot bypass user-required approvals" *by design*: `ToolDefinition.trust` remains undeclared and `ProjectTrustRegistry` remains unused, because the invariant is enforced by the approval gate itself rather than by a trust gate. `packages/server/test/skills-security.test.ts` is the executable form of that claim.
 **Context:** `README.md:17` and `AGENTS.md:121` both state that no skills system exists, and `CHANGELOG.md:65` records that an earlier skills system (`SKILL.md`, `/`-commands, seven named skills, auto/manual-build modes) was *advertised but never implemented* and was stripped from the docs rather than built. So this is a blank slate, not a restoration: `RELEASE_CHECKLIST.md:146` cites a `packages/server/src/access.ts` that does not exist in this tree.
 
 Two pieces of infrastructure already exist and shape the design:

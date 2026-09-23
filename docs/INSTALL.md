@@ -164,9 +164,12 @@ more than this repository contains (that reconciliation is P2-01):
   (or `OPENAI_API_KEY`; local servers need none). The key is never printed and
   is redacted from error messages. Naming any other provider is a boot error
   that lists what is available; there is no Anthropic adapter yet.
-- **Five built-in tools, all confined to the session root** (`WINDOWS_RUNNER_TOOLS=0`
-  disables them): `read_file` and `list_dir` never ask; `write_file`,
-  `edit_file` and `run_terminal` ask for approval on every call. Paths are
+- **Six built-in tools, all confined to the session root** (`WINDOWS_RUNNER_TOOLS=0`
+  disables them): `read_file`, `list_dir` and `read_skill` never ask;
+  `write_file`, `edit_file` and `run_terminal` ask for approval on every call.
+  `read_skill` reads a project-local instruction file under
+  `.windowrunner/skills/` (ADR 003) — it is instructions only, executes nothing,
+  and cannot widen an approval. Paths are
   relative to the project root and go through the same containment checks as
   session roots (no `..`, no absolute paths, no encoded traversal, no symlinks
   pointing outside — for reads *and* writes). `run_terminal` runs in the real

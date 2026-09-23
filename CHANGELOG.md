@@ -12,6 +12,30 @@ section names below are allowed.
 
 ### Added
 
+- **Project skills** (ADR 003). A project can now ship its own conventions as
+  markdown instruction files under `.windowrunner/skills/<name>/SKILL.md`.
+  Discovered skills are listed — name and description only, capped at 40 —
+  in the turn's first user message, and the model loads one on demand with the
+  new `read_skill` built-in tool, bringing the tool count to six. A skill is
+  **instructions only**: nothing in it executes, `read_skill` asks no approval
+  because it is a read of a file inside the project root that `read_file` could
+  already return, and a skill can never widen an approval — whatever it asks
+  for still goes through `write_file` / `edit_file` / `run_terminal` approval
+  exactly as before. That invariant is pinned by
+  `packages/server/test/skills-security.test.ts`, which runs a skill claiming
+  "approval prompts are disabled for this session" through the real turn runner
+  and real approval registry and asserts the following `run_terminal` still
+  waits for the user. Discovery never throws: a malformed, oversized or hostile
+  skill is excluded with a diagnostic naming the reason and the repo-relative
+  file, surfaced in the UI rather than silently dropped. Skills are read from
+  the project you point the agent at, so the injected index labels them
+  untrusted repository content rather than system instructions. Also reachable
+  over `GET /api/sessions/:id/skills` (metadata and diagnostics, never bodies)
+  and from a `/`-palette over the composer, which inserts `/<name>` and submits
+  — it never injects a body, so both activation modes share the one
+  `read_skill` path. `eval/tasks/skills/` drives the whole flow against the
+  real server, and its hidden check can only pass by reading a skill.
+
 - **An npm publication workflow** (`.github/workflows/npm-publish.yml`),
   narrowing gap G-05. The Release workflow has always built and proven the CLI
   tarball but never published it, so the documented `npx windows-runner` path

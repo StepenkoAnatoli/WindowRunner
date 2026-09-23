@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-23
 **Spec:** `docs/adr/003-skills-are-instructions-only-project-markdown.md`
-**Status:** Proposed — no code written yet
+**Status:** Complete — all eight phases shipped on 2026-09-23. Phase notes below record what actually landed and the two places it deviated from this plan.
 
 Sequenced for TDD: each phase writes the failing test first, then the code that satisfies it. Phases 1-5 are server-side and independently shippable; phase 6 is the UI; phases 7-8 close the loop.
 
@@ -205,14 +205,21 @@ Also updated the now-inaccurate "five tasks" counts in `eval/README.md`, `AGENTS
 
 This is not a follow-up. `CHANGELOG.md:63` records the project shipping docs that over-claimed features that did not exist; shipping skills without updating these two lines repeats that failure exactly.
 
-- [ ] `README.md:17` — currently "No skills system, no MCP, … those are **not implemented**". Must be rewritten to describe what actually shipped.
-- [ ] `AGENTS.md:121` — currently "The skills loader mentioned in older docs does not exist; there is no skills system in this checkout." Must be replaced with the real file map entry.
-- [ ] `AGENTS.md` layout section — add `packages/server/src/agent/skills.ts` and `http/routes/skills.ts`
-- [ ] `CHANGELOG.md` — an `[Unreleased]` → `Added` entry
-- [ ] `docs/adr/003-…md` — flip **Status:** from "Proposed" to "Accepted"
-- [ ] No new environment variables, so no `ENV` table entry and no `docs/INSTALL.md` table change — confirm this stayed true
+**Status: DONE.** All eight phases are now shipped.
 
-**Verify:** `npm run check:release` (changelog format gate)
+- [x] `README.md` — the disclaimer no longer says "No skills system". Rewritten to state what actually shipped, and to name the narrowness explicitly (instructions a model may read, never code it runs, no new approval surface). The remaining "not implemented" list (MCP, project-context auto-discovery, web search) stays true.
+- [x] `AGENTS.md` — the "skills loader … does not exist" claim replaced with the real entry, including the invariant and a warning that a `skills-security.test.ts` failure is a security bug rather than a test to relax.
+- [x] `AGENTS.md` layout section — `agent/skills.ts` updated (it said "not yet wired into the HTTP surface or the UI", false since phases 3 and 6) and `http/routes/skills.ts` added.
+- [x] `CHANGELOG.md` — an `[Unreleased]` → `Added` entry.
+- [x] `docs/adr/003-…md` — **Status:** flipped to "Accepted", with a note that `RELEASE_CHECKLIST.md`'s open item stays open by design and that `skills-security.test.ts` is the executable form of the claim.
+- [x] No new environment variables — confirmed: no `process.env` in `skills.ts`, `http/routes/skills.ts` or `skills-palette.ts`, and `packages/server/src/config.ts` is untouched on this branch. So no `ENV` entry and no `docs/INSTALL.md` table change were owed.
+
+Two stale claims this plan did not list, found by sweeping for tool counts rather than trusting the list:
+
+- `README.md` said "Five root-confined tools" / "five root-confined tools are registered" in two places — now six, with `read_skill` named in both.
+- `docs/INSTALL.md:167` said "Five built-in tools" and "`read_file` and `list_dir` never ask" — now six, with `read_skill` in the never-ask set.
+
+**Verify:** `npm run check:release` → `OK (version 0.1.0)`, exit 0; `npm run typecheck` exit 0; `npm test` → **776 pass / 0 fail**; `npm run smoke:start` passes; `npm run eval -- --expect-pass` → 6/6.
 
 ---
 

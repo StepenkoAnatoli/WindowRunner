@@ -7,14 +7,15 @@ Windows-first is taken literally: the supported end-user platform is **Windows**
 ## ✨ What actually ships (all verified in CI)
 
 - **Agent loop over SSE** — sessions pinned to a project root, one active turn at a time, streamed events with monotonic `seq`, `Last-Event-ID` resume with no gaps or duplicates, explicit terminal events (`turn_completed` / `turn_cancelled` / `turn_failed`), hot provider swap between turns.
-- **Five root-confined tools** — `read_file`, `write_file`, `edit_file`, `list_dir`, `run_terminal`. Every path goes through logical-containment **and** realpath checks (`..`, absolute paths, encoded traversal and symlink escapes are rejected for reads and writes alike); `run_terminal` runs with a bounded output buffer, a wall-clock limit, secrets stripped from its environment, and is killed as a whole process tree on Stop or timeout.
+- **Six root-confined tools** — `read_file`, `write_file`, `edit_file`, `list_dir`, `run_terminal`, `read_skill`. Every path goes through logical-containment **and** realpath checks (`..`, absolute paths, encoded traversal and symlink escapes are rejected for reads and writes alike); `run_terminal` runs with a bounded output buffer, a wall-clock limit, secrets stripped from its environment, and is killed as a whole process tree on Stop or timeout.
 - **Approvals + project trust** — `write_file`, `edit_file` and `run_terminal` always ask; approval lifetimes are independent of any SSE connection. Trust grants are a separate, explicit act keyed by the project's real root and a config hash, persisted per machine.
 - **Bring-your-own-key providers** — `openai-compatible` (OpenAI, OpenRouter, Ollama, LM Studio, Gemini's compatibility endpoint, …), native `anthropic`, and an offline `mock` default. Provider profiles with masked keys, one-shot **model discovery**, one-click connection test, usage history, retry with backoff.
 - **Durable file persistence** — per-session metadata + per-turn JSONL logs, atomic writes, optional fsync, durable-before-notify, crash recovery (truncated tails), quarantine of malformed logs, restart recovery that appends exactly one `RESTART` event.
 - **Hardened HTTP surface** — loopback-only bind by default, Host/Origin validation, bearer token on every `/api` route (constant-time compare), strict input validation with stable error codes, keys redacted from every error and log surface.
+- **Project skills** — a project can ship its own conventions as markdown instruction files under `.windowrunner/skills/<name>/SKILL.md`. Discovered skills are listed (name + description, capped at 40) in the turn's first user message, and the model pulls one in on demand with `read_skill`. A skill is **instructions only**: nothing in it executes, and it can never widen an approval. What it asks for still goes through `write_file` / `edit_file` / `run_terminal` approval exactly as before. Skills load from the project you point the agent at — they are repository content, so the index labels them untrusted rather than system instructions.
 - **Windows desktop app** — Electron shell that boots the bundled server as a child process on an OS-assigned loopback port with an in-memory token, sandboxed preload bridge, navigation lockdown, clean process-tree shutdown, per-user NSIS install that keeps your data across upgrades and uninstall.
 
-No skills system, no MCP, no project-context auto-discovery, no web search: those are **not implemented**, and this README does not advertise them. The tool list above is the complete list.
+No MCP, no project-context auto-discovery, no web search: those are **not implemented**, and this README does not advertise them. The tool list above is the complete list. Skills are the one exception to the old disclaimer, and they are deliberately narrow — instructions a model may read, never code it runs, and no new approval surface.
 
 ## 🚀 Installation
 
@@ -75,7 +76,7 @@ npm start         # serve the API + UI on http://127.0.0.1:7634
 when `dist/` is missing or stale). What starts is the HTTP API plus the
 **web UI** served at `/` (`packages/web`): the offline `mock` provider is the
 default (set `WINDOWS_RUNNER_PROVIDER=openai-compatible` or `anthropic` for a real model),
-five root-confined tools are registered, every `/api` route
+six root-confined tools are registered, every `/api` route
 requires a bearer token (printed once in memory mode — the banner's `ui:` line
 carries it as a `#token=` fragment the page consumes and removes — and stored
 at `~/.windows-runner/auth-token` in file mode), and the server binds loopback
