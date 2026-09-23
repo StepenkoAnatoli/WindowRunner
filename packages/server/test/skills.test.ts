@@ -135,6 +135,27 @@ describe("skills loader: exclusion cases", () => {
     }
   });
 
+  it("accepts a SKILL.md that begins with a UTF-8 BOM", async () => {
+    // Not exotic on the supported platform: this repository pins a BOM in
+    // install.ps1 for exactly this reason (packaging.test.ts), because Windows
+    // editors add one. A BOM sits before the '---' line, so a naive
+    // startsWith check rejects an otherwise valid skill with a diagnostic that
+    // names the wrong problem.
+    const ctx = await withSkills({
+      ".windowrunner/skills/bom/SKILL.md": "\uFEFF" + skill("bom", "Written by an editor that adds a BOM."),
+    });
+    try {
+      const { skills, diagnostics } = await loadSkills(ctx.pr);
+      assert.deepEqual(diagnostics, [], "a BOM must not produce a diagnostic");
+      assert.deepEqual(skills.map((s) => s.name), ["bom"]);
+      assert.equal(skills[0].description, "Written by an editor that adds a BOM.");
+      // The BOM must not survive into the name, or it would fail SKILL_NAME_RE.
+      assert.equal(skills[0].name, "bom");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
   it("excludes malformed frontmatter", async () => {
     const ctx = await withSkills({
       ".windowrunner/skills/broken/SKILL.md": "---\nname: broken\nthis line has no colon\n---\nbody\n",

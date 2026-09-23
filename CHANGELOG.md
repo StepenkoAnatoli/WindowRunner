@@ -84,6 +84,14 @@ section names below are allowed.
 
 ### Fixed
 
+- **A `SKILL.md` saved with a UTF-8 BOM was rejected.** The byte-order mark
+  sits before the opening `---` line, so the frontmatter check failed and the
+  skill was excluded with `missing frontmatter` — a diagnostic naming the wrong
+  problem, for a file that was valid. Not exotic on the supported platform:
+  this repository pins a BOM in `install.ps1` for the same reason, because
+  Windows editors add one. `parseSkillFile` now strips a leading BOM before
+  parsing. Found by review, with a regression test in
+  `packages/server/test/skills.test.ts`.
 - The user-facing documentation told a different story than the code. Every
   advertised-but-unimplemented feature claim was removed from `README.md` and
   the release notes: project-context auto-discovery, a skills system

@@ -117,7 +117,12 @@ interface ParsedSkillFile {
  * needs real YAML, that is its own decision with its own dependency audit.
  */
 export function parseSkillFile(text: string): ParsedSkillFile {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // Strip a UTF-8 BOM before anything else. It is invisible, it sits before the
+  // '---' line, and Windows editors add one routinely — this repository pins a
+  // BOM in install.ps1 for the same platform reason. Without this the file is
+  // rejected as "missing frontmatter", which names the wrong problem.
+  const withoutBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const normalized = withoutBom.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!normalized.startsWith("---\n") && normalized !== "---") {
     throw new Error("missing frontmatter: the file must start with a '---' line");
   }
