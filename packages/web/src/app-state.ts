@@ -1,4 +1,4 @@
-import type { ApprovalRequest, StreamEvent, TurnState } from "@windows-runner/shared";
+import type { ApprovalRequest, SkillDiagnostic, SkillMeta, StreamEvent, TurnState } from "@windows-runner/shared";
 import { createInitialTurnState, reduceTurnState } from "@windows-runner/shared";
 import type { HealthSummary, ProviderProfileView, TurnUsageView } from "./api.js";
 import { validateProviderForm } from "./provider-types.js";
@@ -113,7 +113,17 @@ export interface AppState {
   auth: "unknown" | "checking" | "ok" | "invalid";
   authError?: string;
   server?: { securityMode: string; persistenceMode: string };
-  session?: { sessionId: string; root: string; trust?: { configHash: string; source?: string } | null };
+  session?: {
+    sessionId: string;
+    root: string;
+    trust?: { configHash: string; source?: string } | null;
+    /**
+     * Skills the attached project ships (ADR 003), loaded by main.ts and kept
+     * here so the reducer stays the only writer of app state. Index only: no
+     * skill bodies, which the agent loads on demand via `read_skill`.
+     */
+    skills?: { skills: SkillMeta[]; diagnostics: SkillDiagnostic[] };
+  };
   turns: TurnView[];
   activeTurnId?: string;
   /** Latest global, actionable error (API failures outside a turn). */
@@ -156,6 +166,7 @@ export type AppAction =
   | { type: "session_created"; sessionId: string; root: string }
   | { type: "session_cleared" }
   | { type: "trust_loaded"; grant: { configHash: string; source?: string } | null }
+  | { type: "skills_loaded"; skills: SkillMeta[]; diagnostics: SkillDiagnostic[] }
   | { type: "turn_submitted"; turnId: string; message: string }
   | { type: "turn_event"; turnId: string; event: StreamEvent }
   | { type: "turn_connection"; turnId: string; connection: ConnectionState; attempt?: number }
@@ -238,6 +249,12 @@ export function reduceApp(state: AppState, action: AppAction): AppState {
       };
     case "trust_loaded":
       return state.session ? { ...state, session: { ...state.session, trust: action.grant }, trustPrompt: action.grant ? undefined : state.trustPrompt } : state;
+    case "skills_loaded":
+      // Ignored when no session is attached: a late response from a session
+      // that has since been replaced must not attach to the new one.
+      return state.session
+        ? { ...state, session: { ...state.session, skills: { skills: action.skills, diagnostics: action.diagnostics } } }
+        : state;
     case "turn_submitted": {
       const view: TurnView = { turnId: action.turnId, message: action.message, state: createInitialTurnState(), tools: [], connection: "idle", reconnectAttempt: 0 };
       return { ...state, turns: [...state.turns, view], activeTurnId: action.turnId, error: undefined };

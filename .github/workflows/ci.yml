@@ -919,6 +919,21 @@ jobs:
           $ErrorActionPreference = "Stop"
           $exe = "packages\desktop\release\win-unpacked\WindowRunner.exe"
           $setup = Get-ChildItem "packages\desktop\release" -Filter "*-Setup-*.exe" | Select-Object -First 1
+          # Deliberately NOT asserting on win-unpacked\Uninstall*.exe. That was
+          # tried and is wrong: electron-builder signs the uninstaller into
+          # outDir as `<installer-base>__uninstaller.exe` and then DELETES it
+          # (app-builder-lib/out/targets/nsis/NsisTarget.js — `signIf(
+          # uninstallerPath)` followed by `unlink(UNINSTALLER_OUT_FILE)`). The
+          # file left in win-unpacked is the NSIS template that gets embedded in
+          # the installer, and electron-builder never signs it, so a signature
+          # assertion there can only ever fail.
+          #
+          # The uninstaller a user actually runs is extracted at install time
+          # from the installer, which IS signed and IS asserted below. Whether
+          # that extracted copy carries a signature is not observable from the
+          # build output — it needs a signed install, and is recorded as an
+          # open item in RELEASE_CHECKLIST.md rather than asserted here on a
+          # guess.
           if (!$setup) { throw "no installer produced" }
           foreach ($file in @($exe, $setup.FullName)) {
             if (!(Test-Path $file)) { throw "missing build output: $file" }

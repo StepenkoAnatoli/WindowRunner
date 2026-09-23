@@ -51,7 +51,7 @@ checksums and changelog notes.
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
-| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; five tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
+| Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; six tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
 | Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
 | Windows lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` (`windows-latest`): same commands as `CI`, plus `install.ps1 -NoStart` |
@@ -70,7 +70,7 @@ this checklist tracks.
 | --- | --- |
 | Installer fresh-clone + interactive modes | Both installers run in CI only in checkout mode with `--no-start`/`-NoStart`. Cloning from a URL and the interactive start prompt are untested on every OS. |
 | `npm run smoke:docker` script | No such script exists; the Docker coverage lives inline in the `Docker` CI job (`docker compose up --build`, health/turn/clean-exit assertions) instead of a repo script. |
-| Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup; npm registry publication is open (gap G-05). |
+| Packed CLI smoke (`npx windows-runner`, `wr`) | `bin/windows-runner.js` exists and is packaged; `smoke:packed:start` tests tarball startup. Publication now has a workflow (`.github/workflows/npm-publish.yml`, dispatch-only, dry-run by default) but nothing is published yet — it needs the `NPM_TOKEN` secret and a maintainer run (gap G-05). |
 | Electron desktop build | **Implemented and enforced since PR A/A2, extended by B5** — see the `Desktop`, `Desktop installer` and `Desktop signing` rows above. (This row previously claimed `packages/desktop` did not exist; it has since B1's base.) |
 | Production code signing | The pipeline is CI-proven with a test certificate (B5.3) and release builds fail loudly without credentials; **no production certificate exists yet** — installers stay unsigned until the `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` secrets are added (maintainer action, documented in docs/INSTALL.md). |
 | Real-model evaluation runs (P2-02) | Deliberately manual: they cost money and are not reproducible. `eval/README.md`. |
@@ -441,7 +441,7 @@ Files to inspect:
 - `.github/workflows/ci.yml` (scripted run)
 
 Acceptance criteria:
-- [x] Evaluation set includes bug fix, feature work, refactor, build failure, and multi-file change tasks.
+- [x] Evaluation set includes bug fix, feature work, refactor, build failure, multi-file change, and project-skills tasks.
 - [x] Each task uses hidden or independent checks where practical. *(`check.js` lives outside the project root the agent is confined to.)*
 - [ ] Metrics are recorded for completion rate, regressions, user interventions, token/cost estimates, elapsed time, and recovery behavior. *(Completion, interventions, tokens, elapsed, steps, tool failures: yes. Cost and regressions: no — no committed real-model baseline yet.)*
 - [x] Evaluation results identify model version, task fixture, limits, and failure modes.
@@ -519,13 +519,13 @@ Acceptance:
 ### [ ] README and docs match verified support status
 ### [ ] No open release-blocking security issues remain
 ### [x] Release artifacts are tested and verified before publication — B5 (2026-09-22): tag-driven release workflow (`.github/workflows/release.yml`) gates on the tag matching `package.json` + the changelog section, re-runs the packed smokes and the installed-app e2e journey before a DRAFT GitHub Release is created with the installer, CLI tarball, update metadata and `SHA256SUMS.txt`; per-PR the `Desktop installer` job proves install → upgrade → uninstall
-### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
+### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 narrowed 2026-09-23 to a maintainer action: `.github/workflows/npm-publish.yml` now exists and is contract-tested (dispatch-only, dry-run by default, dist-tag computed, credential checked with `npm whoami`), so the remaining step is adding the `NPM_TOKEN` secret and running it with `dry_run` set to `false`
 ### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, `Desktop (windows-latest)`, `Desktop installer (windows-latest)`, and `Desktop signing (windows-latest)` checks + >= 1 approval (admin action) — seven checks since the 2026-09-23 Windows-only rescope; **owner decision 2026-09-22: deferred to the end of the project** (deliberate deferral, not a gap — see "Merge gating is NOT configured")
 ### [x] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays (narrowed to >=22.0.0)
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 ### [x] Versioning: single source of truth — B5 (2026-09-22): `npm run check:release` (CI-enforced) requires the root `package.json` version to be valid semver and all four workspaces to match it; release tags are bound to the tree via `--require-version`
 ### [x] Changelog: B5 (2026-09-22) — `CHANGELOG.md` in Keep a Changelog format, format-validated by `check:release`, and the source of GitHub Release notes (`scripts/release-notes.mjs`)
-### [ ] Code signing: B5 (2026-09-22) — the pipeline is proven (`Desktop signing` CI job: certificate injection → signtool → signed installer + app exe, SHA-256, `forceCodeSigning` release builds); **a production OV/EV certificate is still needed** — add repo secrets `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` and releases sign automatically (SmartScreen reputation follows)
+### [ ] Code signing: B5 (2026-09-22) — the pipeline is proven (`Desktop signing` CI job: certificate injection → signtool → signed installer + app exe, SHA-256, `forceCodeSigning` release builds); **a production OV/EV certificate is still needed** — add repo secrets `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` and releases sign automatically (SmartScreen reputation follows). Hardened 2026-09-23: the signing gate now requires BOTH secrets (a half-configured repo names the missing one instead of failing the build opaquely), the release workflow verifies the artifacts it produced before installing or shipping them (app exe and installer signed, same subject, RFC 3161 timestamped, never the CI test certificate), and an optional `WIN_CSC_EXPECTED_SUBJECT` secret pins the signer subject. Still untested: the RFC 3161 timestamp path, which the CI proof deliberately skips (`ELECTRON_BUILDER_OFFLINE=true`) — it is first exercised by a real release build. **Open, and not asserted anywhere:** whether the uninstaller a user runs is signed. electron-builder signs `<installer-base>__uninstaller.exe` in the output directory and then deletes it (`NsisTarget.js`), so the copy embedded in the installer and extracted at install time comes from the unsigned `win-unpacked` NSIS template. Confirming it needs a signed install plus `Get-AuthenticodeSignature` on the installed `Uninstall*.exe` — add that to the release journey the first time a real certificate is configured. Do not re-add a build-output assertion for it: that gate shipped broken once already
 ### [x] Crash diagnostics: B5 (2026-09-22) — local-only Crashpad minidumps + redacted bounded crash logs with retention (20 logs / 10 dumps), never uploaded (docs/INSTALL.md → "Crash reports and logs")
 
 ## Cutting a release (B5 procedure)

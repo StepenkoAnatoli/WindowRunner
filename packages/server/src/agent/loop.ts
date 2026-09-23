@@ -9,6 +9,7 @@ import { DeadlineError } from "../deadline.js";
 import { ProjectRoot, PathError } from "../project-root.js";
 import type { MetricsRegistry } from "./metrics.js";
 import type { ProjectTrustRegistry } from "./project-trust.js";
+import { loadSkills, renderSkillsIndex } from "./skills.js";
 
 export interface RunTurnInput {
   sessionId: SessionId;
@@ -122,6 +123,33 @@ export class TurnRunner {
 
     await append({ type: "turn_started", limits, message: request.messages[0]?.content ?? "", root: projectRoot.getRoot(), realRoot: projectRoot.getRealRoot() } as any);
     const turnStartedAt = this.now();
+
+    // Auto-discovery index (ADR 003, phase 5). Prepended to the first user
+    // message rather than composed into the system prompt, because
+    // DEFAULT_SYSTEM_PROMPT is fixed at provider construction and making it
+    // per-turn would mean changing the LLMProvider interface across all three
+    // adapters.
+    //
+    // Injected AFTER turn_started so the persisted transcript — and therefore
+    // the UI — still shows the message the user actually typed, not the
+    // augmented one the model receives.
+    //
+    // Recomputed every turn, so a skill added mid-session takes effect on the
+    // next turn. Gated on the read_skill tool being present: an index pointing
+    // at a tool the loop cannot execute would only invite a failed call.
+    if (this.tools.has("read_skill")) {
+      try {
+        const { skills } = await loadSkills(projectRoot, { reservedNames: this.tools.keys() });
+        const index = renderSkillsIndex(skills);
+        if (index && request.messages.length > 0 && request.messages[0].role === "user") {
+          const [first, ...rest] = request.messages;
+          request = { ...request, messages: [{ ...first, content: `${index}\n\n${first.content}` }, ...rest] };
+        }
+      } catch {
+        // A skills problem must never fail the user's turn. loadSkills reports
+        // rather than throws by design; this only covers the unexpected.
+      }
+    }
 
     let usage: TurnUsage | undefined;
 

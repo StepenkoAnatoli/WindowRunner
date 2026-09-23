@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@windows-runner/shared";
+import type { SkillsIndex, StreamEvent } from "@windows-runner/shared";
 import type { CreateProviderInput, UpdateProviderInput } from "./provider-types.js";
 
 /**
@@ -283,6 +283,15 @@ export class ApiClient {
 
   async listProviders(): Promise<ProviderListResult> {
     return (await this.request<ProviderListResult>("GET", "/api/providers")).body;
+  }
+
+  /**
+   * The skills a session's project ships (ADR 003). Index only — names,
+   * descriptions, paths, plus why any skill was excluded. Bodies are never
+   * returned; the agent loads those on demand with `read_skill`.
+   */
+  async listSkills(sessionId: string): Promise<SkillsIndex> {
+    return (await this.request<SkillsIndex>("GET", `/api/sessions/${encodeURIComponent(sessionId)}/skills`)).body;
   }
 
   async createProfile(input: CreateProviderInput | Record<string, unknown>): Promise<ProviderProfileView> {

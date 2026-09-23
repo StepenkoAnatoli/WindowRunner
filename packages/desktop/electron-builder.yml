@@ -53,8 +53,12 @@ win:
   target:
     - nsis
   # B5.3 — Authenticode code signing. Signing is credential-driven, not
-  # config-driven: with `win.sign` unset, electron-builder signs every
-  # executable it produces (app exe, uninstaller, NSIS installer) when
+  # config-driven: with `win.sign` unset, electron-builder signs the app exe,
+  # the NSIS installer, and an uninstaller it writes to the output dir and then
+  # DELETES (app-builder-lib/out/targets/nsis/NsisTarget.js signs
+  # `<installer-base>__uninstaller.exe` and unlinks it). The uninstaller left
+  # in win-unpacked is the NSIS template embedded in the installer and is NOT
+  # signed — do not assert a signature on it. Signing happens when
   # WIN_CSC_LINK (or CSC_LINK) + WIN_CSC_KEY_PASSWORD are present — WIN_CSC_LINK
   # accepts a .pfx/.p12 file path, an https:// URL, or base64 content, which is
   # the shape the release workflow passes from repo secrets — and silently

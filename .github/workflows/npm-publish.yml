@@ -1,0 +1,176 @@
+# npm publication (closes gap G-05).
+#
+# The Release workflow builds and proves the CLI tarball but never publishes
+# it, so the documented `npx windows-runner` / `wr` path returned E404. This
+# workflow closes that gap.
+#
+# It is deliberately NOT part of release.yml. Two reasons:
+#
+#   1. The Release workflow is draft-only by design — "publishing is a human
+#      action" — and npm has no draft. A published version can never be
+#      re-published, and an unpublished version number cannot be reclaimed.
+#      So publication is a separate, explicitly dispatched act.
+#   2. Keeping it out of release.yml leaves the tag-driven draft pipeline and
+#      its contract tests unchanged.
+#
+# Dispatch it by hand with the version to publish. It defaults to a DRY RUN:
+# it proves the exact tarball npm would upload and stops. Re-run with
+# `dry_run` set to `false` to actually publish.
+#
+# The tarball is proven the same way release.yml proves it — the tag-bound
+# consistency gate, the unit suite, and both packed smokes — and then packed
+# by `npm pack` from the same `files[]` allowlist. Nothing here re-implements
+# the build.
+name: npm publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, with or without the leading v (e.g. 0.1.0). Must match package.json and the changelog."
+        required: true
+        type: string
+      dry_run:
+        description: "Prove the tarball without publishing. Set to false to publish for real."
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # One publication at a time; never cancel one that is mid-publish.
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish windows-runner to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+
+      - name: Install dependencies (clean, lockfile-driven)
+        run: npm ci
+
+      # Normalize the input so `0.1.0` and `v0.1.0` both work, then bind the
+      # requested version to the tree: it must equal package.json and have a
+      # changelog section. This also refuses a publish from a tree whose
+      # version has moved on.
+      - name: Normalize the version input
+        id: version
+        run: |
+          RAW="${{ github.event.inputs.version }}"
+          VERSION="${RAW#v}"
+          if [ -z "$VERSION" ]; then
+            echo "::error title=bad version::the version input is empty"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Requested version: $VERSION"
+
+      - name: Release consistency gate (version-bound)
+        run: npm run check:release -- --require-version "v${{ steps.version.outputs.version }}"
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      # The tarball must be what the manifest claims, and must boot from a
+      # clean directory outside the repository, before it is published.
+      - name: Packed-artifact smoke test
+        run: npm run smoke:packed
+
+      - name: Packed-tarball start smoke test
+        run: npm run smoke:packed:start
+
+      - name: Pack the tarball npm would upload
+        run: |
+          npm pack
+          mkdir -p publish-cli
+          mv windows-runner-*.tgz publish-cli/
+          ls -l publish-cli/
+
+      # The dist-tag is computed, never inferred. check-release.mjs accepts
+      # prerelease versions (SEMVER_RE allows a -suffix), and `npm publish`
+      # moves `latest` by default — publishing 1.0.0-rc.1 without an explicit
+      # tag would point `latest` at a prerelease.
+      - name: Decide the dist-tag
+        id: dist_tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          case "$VERSION" in
+            *-*) DIST_TAG=next ;;
+            *) DIST_TAG=latest ;;
+          esac
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $VERSION to dist-tag '$DIST_TAG'"
+
+      # Same discipline as the signing decision in release.yml: the secret is
+      # never interpolated into shell code — only the yes/no decision crosses
+      # the step boundary. Without the token the run succeeds and says so
+      # loudly, so the workflow is exercisable before the secret exists.
+      - name: Decide whether to publish
+        id: mode
+        env:
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' && 'yes' || 'no' }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" != "false" ]; then
+            echo "mode=dry_run" >> "$GITHUB_OUTPUT"
+            echo "::notice title=npm publish::Dry run — the tarball above is what would be published. Re-run with dry_run set to false to publish for real."
+          elif [ "$HAS_TOKEN" != "yes" ]; then
+            echo "mode=skipped" >> "$GITHUB_OUTPUT"
+            echo "::warning title=npm publish skipped::The NPM_TOKEN repository secret is not configured, so nothing was published. Add an npm automation token to publish (docs/INSTALL.md -> publishing)."
+          else
+            echo "mode=publish" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --dry-run makes npm do everything except upload. Verified locally:
+      # `npm publish --dry-run` exits 0 even with no token at all (npm only
+      # warns "This command requires you to be logged in"), so the dry run
+      # proves the TARBALL — contents, size, dist-tag — and deliberately
+      # says nothing about the credential. That is what the next step is for.
+      - name: Publish (dry run)
+        if: steps.mode.outputs.mode == 'dry_run'
+        run: npm publish --dry-run --tag "${{ steps.dist_tag.outputs.dist_tag }}"
+
+      # Fail on the credential before the publish, not inside it: `npm whoami`
+      # is a cheap, explicit authentication check with a clear error, so a
+      # missing or revoked token is obvious instead of surfacing as a 403
+      # mid-publish.
+      - name: Verify the registry credential
+        if: steps.mode.outputs.mode == 'publish'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          npm whoami --registry https://registry.npmjs.org/
+
+      - name: Publish to the registry
+        if: steps.mode.outputs.mode == 'publish'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          npm publish --tag "${{ steps.dist_tag.outputs.dist_tag }}"
+          echo "::notice title=npm publish::Published windows-runner@${{ steps.version.outputs.version }} to dist-tag '${{ steps.dist_tag.outputs.dist_tag }}'."
+
+      # Prove what the registry now serves, so the run is self-verifying.
+      - name: Verify the published version
+        if: steps.mode.outputs.mode == 'publish'
+        run: |
+          npm view windows-runner@"${{ steps.version.outputs.version }}" version dist-tags
+          echo "::notice title=npm publish::\`npx windows-runner\` now resolves to ${{ steps.version.outputs.version }}."

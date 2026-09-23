@@ -10,7 +10,68 @@ section names below are allowed.
 
 ## [Unreleased]
 
+### Added
+
+- **Project skills** (ADR 003). A project can now ship its own conventions as
+  markdown instruction files under `.windowrunner/skills/<name>/SKILL.md`.
+  Discovered skills are listed — name and description only, capped at 40 —
+  in the turn's first user message, and the model loads one on demand with the
+  new `read_skill` built-in tool, bringing the tool count to six. A skill is
+  **instructions only**: nothing in it executes, `read_skill` asks no approval
+  because it is a read of a file inside the project root that `read_file` could
+  already return, and a skill can never widen an approval — whatever it asks
+  for still goes through `write_file` / `edit_file` / `run_terminal` approval
+  exactly as before. That invariant is pinned by
+  `packages/server/test/skills-security.test.ts`, which runs a skill claiming
+  "approval prompts are disabled for this session" through the real turn runner
+  and real approval registry and asserts the following `run_terminal` still
+  waits for the user. Discovery never throws: a malformed, oversized or hostile
+  skill is excluded with a diagnostic naming the reason and the repo-relative
+  file, surfaced in the UI rather than silently dropped. Skills are read from
+  the project you point the agent at, so the injected index labels them
+  untrusted repository content rather than system instructions. Also reachable
+  over `GET /api/sessions/:id/skills` (metadata and diagnostics, never bodies)
+  and from a `/`-palette over the composer, which inserts `/<name>` and submits
+  — it never injects a body, so both activation modes share the one
+  `read_skill` path. `eval/tasks/skills/` drives the whole flow against the
+  real server, and its hidden check can only pass by reading a skill.
+
+- **An npm publication workflow** (`.github/workflows/npm-publish.yml`),
+  narrowing gap G-05. The Release workflow has always built and proven the CLI
+  tarball but never published it, so the documented `npx windows-runner` path
+  404'd. Publication is a separate, manually dispatched workflow rather than a
+  step in `release.yml`, because that workflow is draft-only by design and npm
+  has no draft: a published version can never be re-published. It re-proves the
+  tarball exactly as the Release workflow does (tag-bound consistency gate,
+  unit suite, both packed smokes, `npm pack`), computes the dist-tag instead of
+  letting npm infer it (prereleases go to `next`, never `latest`), defaults to
+  `dry_run: true`, and verifies the credential with `npm whoami` before
+  publishing — `npm publish --dry-run` exits 0 even with no token, so a dry run
+  proves the tarball and nothing about auth. Contract-tested in
+  `release-contract.test.ts`. Publishing still needs a maintainer to add the
+  `NPM_TOKEN` secret and re-run with `dry_run` set to `false`.
+- **Release-path signature verification.** `forceCodeSigning` only proves that
+  electron-builder applied *a* signature — it cannot tell a wrong-but-present
+  certificate from the right one, and `release.yml` never inspected the
+  artifacts it produced (`Get-AuthenticodeSignature` appeared in `ci.yml` but
+  nowhere in the release path). The Release workflow now verifies the app exe,
+  the installer and the uninstaller before the installer is run or shipped: all
+  three signed, all by the same subject, all carrying an RFC 3161 timestamp (an
+  untimestamped signature stops verifying when the certificate expires), and
+  none signed by the CI signing-proof certificate. An optional
+  `WIN_CSC_EXPECTED_SUBJECT` secret pins the signer subject; like the
+  certificate gate it degrades to a skip when absent, and a mismatch names
+  certificate renewal as the likely cause.
+
 ### Changed
+
+- **The signing gate now requires both credentials.** It tested
+  `WIN_CSC_LINK` alone while the build consumes both it and
+  `WIN_CSC_KEY_PASSWORD`, so a half-configured repository took the
+  `forceCodeSigning` path and failed the build with an opaque signing error.
+  The gate now tests both, and a certificate without its password (or the
+  reverse) produces an explicit "signing misconfigured" error naming the
+  missing secret.
 
 - **Windows-only product scope.** The macOS and Linux user-platform claims,
   installers and CI legs were deliberately set aside: the `Platform` and
@@ -22,6 +83,32 @@ section names below are allowed.
 
 ### Fixed
 
+- **The CI signing gate asserted a signature on an artifact that is never
+  signed, and failed.** An uninstaller check was added to the `Desktop signing`
+  job on the reasoning that `electron-builder.yml` says signing covers the
+  "app exe, uninstaller, NSIS installer" and that a shipped uninstaller outside
+  the gate was a gap. The premise was wrong. electron-builder signs *an*
+  uninstaller — into the output directory as `<installer-base>__uninstaller.exe`
+  — and then **deletes it**
+  (`app-builder-lib/out/targets/nsis/NsisTarget.js`: `signIf(uninstallerPath)`
+  followed by `unlink(UNINSTALLER_OUT_FILE)`). What remains in `win-unpacked` is
+  the NSIS template embedded in the installer, which nothing signs, so the
+  assertion could only ever fail. Reverted to the app exe and the installer in
+  both `ci.yml` and `release.yml` (the release gate carried the same claim and
+  would have failed every release), the misleading `electron-builder.yml`
+  comment corrected, and `release-contract.test.ts` now asserts the gate does
+  *not* look up that file so this cannot come back. Whether the uninstaller a
+  user actually runs — extracted at install time from the signed installer —
+  carries a signature is not observable from the build output and is recorded
+  as an open item in `RELEASE_CHECKLIST.md` rather than guessed at.
+- **A `SKILL.md` saved with a UTF-8 BOM was rejected.** The byte-order mark
+  sits before the opening `---` line, so the frontmatter check failed and the
+  skill was excluded with `missing frontmatter` — a diagnostic naming the wrong
+  problem, for a file that was valid. Not exotic on the supported platform:
+  this repository pins a BOM in `install.ps1` for the same reason, because
+  Windows editors add one. `parseSkillFile` now strips a leading BOM before
+  parsing. Found by review, with a regression test in
+  `packages/server/test/skills.test.ts`.
 - The user-facing documentation told a different story than the code. Every
   advertised-but-unimplemented feature claim was removed from `README.md` and
   the release notes: project-context auto-discovery, a skills system

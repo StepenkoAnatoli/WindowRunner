@@ -14,6 +14,9 @@
  *   - installer checksums (B5.4)
  *   - upgrade/uninstall gate in the installer CI job (B5.6)
  *   - release workflow contract (B5.7)
+ *   - npm publication contract (G-05)
+ *   - code signing hardening (release-path verification, both-secret gate,
+ *     uninstaller coverage)
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -187,6 +190,125 @@ describe("release contract: code signing (B5.3)", () => {
   });
 });
 
+describe("release contract: code signing hardening", () => {
+  // The gaps these pin, all found by reading the two workflows side by side:
+  //   1. The Release workflow built with forceCodeSigning but never inspected
+  //      the artifact — `Get-AuthenticodeSignature` appears nowhere in
+  //      release.yml, while ci.yml asserts it. CI proved the pipeline; the
+  //      release proved nothing, so a wrong-but-present certificate shipped.
+  //   2. The signing gate tested one secret but the build consumes two, so a
+  //      missing WIN_CSC_KEY_PASSWORD produced a cryptic forceCodeSigning
+  //      failure instead of the diagnostic the job exists to emit.
+  //   3. The release verified nothing about WHICH certificate signed, so a
+  //      wrong-but-present signature (e.g. a renewed CN, or the CI test
+  //      certificate) shipped as long as forceCodeSigning was satisfied.
+  const ci = read(".github/workflows/ci.yml");
+  const release = read(".github/workflows/release.yml");
+
+  it("the release build inspects the signature it produced instead of trusting forceCodeSigning", () => {
+    assert.ok(
+      release.includes("Get-AuthenticodeSignature"),
+      "the release must verify the artifact's signature, not just that the build did not fail"
+    );
+    assert.ok(release.includes('"NotSigned"'), "the release gate must fail on unsigned output");
+    assert.ok(
+      release.includes("WindowRunner CI Signing Proof"),
+      "the release must refuse to ship an artifact signed by the CI test certificate"
+    );
+    // forceCodeSigning proves a signature was applied; it cannot tell us the
+    // app exe and the installer carry the SAME one.
+    assert.ok(
+      release.includes("SignerCertificate.Subject"),
+      "the release must compare the signer across artifacts"
+    );
+    // The installer is the thing users run; a missing timestamp means the
+    // signature stops verifying when the certificate expires.
+    assert.ok(
+      release.includes("TimeStamperCertificate"),
+      "the release must assert the signature is timestamped"
+    );
+  });
+
+  it("verifies the signed build before the artifact is installed or shipped", () => {
+    const build = release.indexOf("npm run package:desktop:win:release");
+    const verify = release.indexOf("Get-AuthenticodeSignature");
+    const install = release.indexOf("Install silently");
+    assert.ok(build >= 0 && verify > build, "verification must follow the signed build");
+    assert.ok(install > verify, "the installer must be verified before it is installed");
+  });
+
+  it("supports an optional signer-subject pin that degrades to no pin", () => {
+    // Same shape as the certificate gate: absent secret means the check is
+    // skipped, not failed. A renewal that changes the CN must be an obvious
+    // fix, not a mystery.
+    assert.ok(
+      release.includes("WIN_CSC_EXPECTED_SUBJECT"),
+      "the optional subject pin must be read from a secret"
+    );
+    assert.ok(
+      /renewal|renewed/i.test(release),
+      "a subject mismatch must name certificate renewal as the likely cause"
+    );
+  });
+
+  it("refuses to sign with only half the credentials", () => {
+    // WIN_CSC_KEY_PASSWORD is consumed by the build (release.yml passes it to
+    // electron-builder) but was never part of the decision, so a missing
+    // password reached forceCodeSigning and failed the build opaquely.
+    assert.match(
+      release,
+      /HAS_CERT: \$\{\{ secrets\.WIN_CSC_LINK != '' && secrets\.WIN_CSC_KEY_PASSWORD != '' && 'yes' \|\| 'no' \}\}/,
+      "the signing decision must require BOTH the certificate and its password"
+    );
+    assert.ok(
+      /WIN_CSC_KEY_PASSWORD/.test(release.slice(release.indexOf("Decide the signing mode"), release.indexOf("Build the installer"))),
+      "the decision step must name the password secret"
+    );
+    assert.ok(
+      /password/i.test(release.slice(release.indexOf("Decide the signing mode"), release.indexOf("Build the installer (signed"))),
+      "a certificate without its password must produce its own diagnostic"
+    );
+  });
+
+  it("does not assert a signature on the win-unpacked uninstaller, which electron-builder never signs", () => {
+    // Regression guard for a gate that was shipped broken. The claim being
+    // corrected: electron-builder.yml says signing covers "app exe,
+    // uninstaller, NSIS installer", and it does sign AN uninstaller — but it
+    // signs it into outDir as `<installer-base>__uninstaller.exe` and then
+    // deletes it (app-builder-lib/out/targets/nsis/NsisTarget.js:
+    // `signIf(uninstallerPath)` then `unlink(UNINSTALLER_OUT_FILE)`). The file
+    // left in win-unpacked is the NSIS template embedded in the installer, and
+    // nothing signs it. Asserting a signature there failed the CI signing job
+    // on the first run and would fail every release.
+    //
+    // Scoped to the signing regions. Both workflows legitimately contain
+    // `-Filter "Uninstall*.exe"` in their UNINSTALL steps, which is not a
+    // signing assertion, so a file-wide check would pass vacuously.
+    const ciSigning = ci.slice(ci.indexOf("  desktop-signing:"));
+    assert.ok(ciSigning.length > 0, "the desktop-signing job must exist");
+    assert.ok(
+      !ciSigning.includes('"Uninstall*.exe"'),
+      "the CI signing gate must not look up the win-unpacked uninstaller — it is never signed"
+    );
+    const relVerify = release.slice(release.indexOf("Verify the release signature"), release.indexOf("Install silently"));
+    assert.ok(relVerify.length > 0, "the release must have a verification region before the install step");
+    assert.ok(
+      !relVerify.includes('"Uninstall*.exe"'),
+      "the release verification must not look up the win-unpacked uninstaller either"
+    );
+    // What the gate DOES cover: the app exe and the installer, both of which
+    // electron-builder signs. Asserted as a loop over exactly those two.
+    assert.ok(
+      ciSigning.includes("foreach ($file in @($exe, $setup.FullName))"),
+      "the CI signing gate must assert the app exe and the installer"
+    );
+    assert.ok(
+      relVerify.includes("foreach ($file in @($exe, $setup.FullName))"),
+      "the release verification must assert the app exe and the installer"
+    );
+  });
+});
+
 describe("release contract: artifact checksums (B5.4)", () => {
   it("formatSums produces a sha256sum -c compatible, sorted, basename-only sidecar", async () => {
     const { createHash } = await import("node:crypto");
@@ -353,6 +475,81 @@ describe("release contract: release workflow (B5.7)", () => {
       build >= 0 && unitTests >= 0 && build < unitTests,
       "the guard must run `npm run build` before `npm test` — the packaging contract executes packages/server/dist/index.cjs"
     );
+  });
+});
+
+describe("release contract: npm publication (G-05)", () => {
+  // Gap G-05: the CLI tarball was built, proven and attached to the draft
+  // release, but nothing ever published it to the registry, so the
+  // documented `npx windows-runner` path 404'd. Publication lives in its
+  // OWN workflow rather than in release.yml for two reasons: the Release
+  // workflow is deliberately draft-only ("publishing is a human action",
+  // release.yml header), and npm has no draft — a published version can
+  // never be re-published. So publication is a separate, explicitly
+  // dispatched, human-initiated act that defaults to a dry run.
+  const publish = read(".github/workflows/npm-publish.yml");
+
+  it("is dispatch-only: publication is a deliberate human action, never a tag side effect", () => {
+    assert.match(publish, /^on:\n {2}workflow_dispatch:/m, "the publish workflow must only run on demand");
+    assert.ok(!/^on:\n {2}push:/m.test(publish), "publishing must not be triggered by a push or tag");
+  });
+
+  it("defaults to a dry run, because a published version can never be re-published", () => {
+    assert.match(publish, /dry_run:/, "the workflow must expose a dry_run control");
+    assert.match(publish, /default: true/, "dry_run must default to true — publishing is opt-in");
+    assert.match(publish, /version:/, "the version to publish must be an explicit input, not inferred");
+  });
+
+  it("is gated on the NPM_TOKEN secret and degrades loudly when it is absent", () => {
+    assert.ok(publish.includes("secrets.NPM_TOKEN"), "publication must be driven by the NPM_TOKEN secret");
+    // Same discipline as the signing job (release.yml:151): the secret is
+    // never interpolated into shell code, only the yes/no decision is.
+    assert.match(publish, /HAS_TOKEN: \$\{\{ secrets\.NPM_TOKEN != '' && 'yes' \|\| 'no' \}\}/, "only the yes/no decision may cross the step boundary");
+    assert.match(publish, /::(warning|notice) title=/, "a skipped publication must say so, not pass silently");
+  });
+
+  it("never lets npm infer the dist-tag, so a prerelease cannot claim `latest`", () => {
+    // check-release.mjs's SEMVER_RE accepts prereleases, so a version like
+    // 1.0.0-rc.1 can reach this workflow. `npm publish` would move `latest`
+    // onto it by default; the dist-tag is computed instead. Both publish
+    // invocations pin it explicitly — the dry run too, so the dry run proves
+    // the command that will actually ship.
+    assert.ok(publish.includes("DIST_TAG=next"), "prereleases must go to the `next` dist-tag");
+    assert.ok(publish.includes("DIST_TAG=latest"), "final releases go to `latest`");
+    assert.ok(
+      publish.includes('npm publish --dry-run --tag "${{ steps.dist_tag.outputs.dist_tag }}"'),
+      "the dry run must pin the same explicit dist-tag"
+    );
+    assert.ok(
+      publish.includes('npm publish --tag "${{ steps.dist_tag.outputs.dist_tag }}"'),
+      "the real publish must pin an explicit --tag rather than let npm move `latest`"
+    );
+  });
+
+  it("proves the tarball the same way the Release workflow does before shipping it", () => {
+    assert.match(publish, /check:release -- --require-version/, "the published version must be bound to the tree");
+    const smoke = publish.indexOf("npm run smoke:packed");
+    const dryRun = publish.indexOf("npm publish --dry-run");
+    const real = publish.indexOf('npm publish --tag "${{');
+    assert.ok(smoke >= 0, "the packed smokes must run at all");
+    assert.ok(dryRun > smoke, "the dry run must come after the packed smokes");
+    assert.ok(real > smoke, "the real publish must come after the packed smokes");
+  });
+
+  it("checks the credential explicitly before publishing, because the dry run cannot", () => {
+    // `npm publish --dry-run` exits 0 with no token at all (it only warns), so
+    // the dry run proves the tarball and nothing about auth. `npm whoami` is
+    // the explicit gate on the real path.
+    assert.ok(publish.includes("npm whoami"), "the real publish must verify the credential up front");
+    const whoami = publish.indexOf("npm whoami");
+    const real = publish.indexOf('npm publish --tag "${{');
+    assert.ok(whoami >= 0 && real > whoami, "the credential check must run before the publish");
+  });
+
+  it("leaves the draft-only Release workflow untouched", () => {
+    const release = read(".github/workflows/release.yml");
+    assert.ok(!release.includes("npm publish"), "release.yml stays draft-only; it must not publish to npm");
+    assert.ok(!release.includes("NPM_TOKEN"), "the Release workflow holds no registry credential");
   });
 });
 

@@ -232,9 +232,11 @@ describe("openai-compatible provider through config + boot", () => {
     assert.match(streamedText, /from the real boot path/);
     assert.match(events, /turn_completed/);
     assert.doesNotMatch(events, new RegExp(KEY));
-    // The real boot path advertises the built-in tools to the model.
+    // The real boot path advertises the built-in tools to the model. This is a
+    // deliberate chokepoint: adding a tool means editing this list, so a new
+    // tool cannot start being advertised to every provider unnoticed.
     const names = s.requests[0].body.tools.map((t: any) => t.function.name).sort();
-    assert.deepEqual(names, ["edit_file", "list_dir", "read_file", "run_terminal", "write_file"]);
+    assert.deepEqual(names, ["edit_file", "list_dir", "read_file", "read_skill", "run_terminal", "write_file"]);
     assert.equal(s.requests[0].body.messages[0].role, "system");
   });
 

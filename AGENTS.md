@@ -56,9 +56,24 @@ claims.
   workspace-catalog shape and validation used by BOTH the web UI and the
   desktop main process — never duplicate it locally.
 - `packages/server/src/agent/tools/builtin.ts` — the complete built-in tool
-  set (`read_file`, `write_file`, `edit_file`, `list_dir`, `run_terminal`),
-  each `{ spec, requiresApproval, preview, execute }`. There is no plugin
-  discovery: new tools are added to `createBuiltinTools()` and nowhere else.
+  set (`read_file`, `write_file`, `edit_file`, `list_dir`, `run_terminal`,
+  `read_skill`), each `{ spec, requiresApproval, preview, execute }`. There is
+  no plugin discovery: new tools are added to `createBuiltinTools()` and
+  nowhere else. Two tests pin the list, so adding a tool means editing both:
+  `test/builtin-tools.test.ts` (shape) and `test/openai-compatible.test.ts`
+  (what the real boot path advertises to a provider).
+- `packages/server/src/agent/skills.ts` — project-local skills (ADR 003):
+  discovery, parsing and validation of `.windowrunner/skills/<name>/SKILL.md`.
+  A skill is **instructions only** — markdown, nothing executable — so
+  `ToolDefinition.trust` stays undeclared and `read_skill` asks no approval; it
+  is a read of a file inside the root that `read_file` could already return.
+  Discovery never throws: a malformed or hostile skill is excluded with a
+  diagnostic. Reached from three places: the `read_skill` tool, the
+  `GET /api/sessions/:id/skills` route (`http/routes/skills.ts`), and the
+  index prepended to the turn's first user message in `agent/loop.ts`.
+- `packages/server/src/http/routes/skills.ts` — the read-only skills route.
+  It returns names, descriptions and diagnostics with **no bodies on the
+  wire**; the model reads a body only through `read_skill`.
 - `packages/web/src/` — web UI (vanilla TypeScript, no framework). `main.ts`
   wires the DOM and owns side effects; `app-state.ts` owns session/turn state
   as a pure reducer; `providers/`, `settings/`, `usage/` are route-local view
@@ -117,6 +132,13 @@ and to the tables in `docs/INSTALL.md` and `README.md`.
 servers. Follow that pattern rather than adding tests that need real keys.
 The `mock` provider is also useful for manual end-to-end checks, and
 `npm run eval -- --expect-pass` drives the full server (real HTTP, scripted
-provider, tools, approvals) through five tasks with hidden checks.
-The skills loader mentioned in older docs does not exist; there is no skills
-system in this checkout.
+provider, tools, approvals) through six tasks with hidden checks.
+Skills are implemented and tested: `packages/server/src/agent/skills.ts`
+(loader), the `read_skill` built-in tool, `GET /api/sessions/:id/skills`, the
+index injected into the first user message, and the web palette in
+`packages/web/src/skills-palette.ts`. `npm run eval -- --task skills` drives
+the whole path against the real server. The invariant that matters is in
+`docs/adr/003-skills-are-instructions-only-project-markdown.md` and pinned by
+`test/skills-security.test.ts`: **a skill can never bypass an approval**. If an
+edit to a `SKILL.md` fixture can make that test pass differently, the feature
+is unsafe — treat such a failure as a security bug, not a test to relax.

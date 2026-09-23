@@ -226,6 +226,7 @@ async function selectSession(entry: SessionCatalogEntry): Promise<void> {
     const created = await client.createSession(entry.sessionId, project.root);
     dispatch({ type: "session_created", sessionId: created.sessionId, root: created.root });
     await refreshTrust();
+    await refreshSkills();
     await persistCatalog();
   } catch (err) {
     if (err instanceof ApiRequestError && err.code === "SESSION_ALREADY_EXISTS") {
@@ -235,6 +236,7 @@ async function selectSession(entry: SessionCatalogEntry): Promise<void> {
         const trust = await client.getTrust(entry.sessionId);
         dispatch({ type: "session_created", sessionId: entry.sessionId, root: trust.canonicalRoot });
         dispatch({ type: "trust_loaded", grant: trust.grant });
+        await refreshSkills();
         await persistCatalog();
       } catch (inner) {
         reportError(inner);
@@ -267,6 +269,25 @@ async function refreshTrust(): Promise<void> {
     dispatch({ type: "trust_loaded", grant: trust.grant });
   } catch (err) {
     reportError(err);
+  }
+}
+
+/**
+ * Load the attached project's skills (ADR 003). Called alongside
+ * `refreshTrust` wherever a session becomes attached.
+ *
+ * Failures are deliberately silent rather than reported: skills are an
+ * enhancement, and a project with none returns an empty index rather than an
+ * error. Raising the global error banner here would interrupt the user's work
+ * over something that does not block it.
+ */
+async function refreshSkills(): Promise<void> {
+  if (!client || !state.session) return;
+  try {
+    const index = await client.listSkills(state.session.sessionId);
+    dispatch({ type: "skills_loaded", skills: index.skills ?? [], diagnostics: index.diagnostics ?? [] });
+  } catch {
+    // Intentionally not reported; see above.
   }
 }
 
@@ -537,6 +558,8 @@ function render(): void {
             dispatch({ type: "inspector_selection_changed", selection: { kind: "approval", turnId, requestId } });
             dispatch({ type: "inspector_tab_selected", tab: "approvals" });
           },
+          skills: state.session?.skills?.skills,
+          skillDiagnostics: state.session?.skills?.diagnostics,
         }),
         inspector: renderInspector({
           tab: state.workspace.inspectorTab,
