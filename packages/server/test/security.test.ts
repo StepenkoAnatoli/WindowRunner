@@ -337,7 +337,7 @@ describe("security boundary — HTTP", () => {
 
   it("the whole authenticated lifecycle works: session, turn, SSE with Last-Event-ID, cancel, delete", async () => {
     const project = await mkTmp();
-    const { base } = await listen({ allowedRoots: [project], provider: new FakeProvider([Steps.text("one"), Steps.text("two")]) });
+    const { base } = await listen({ allowedRoots: [project], provider: new FakeProvider([Steps.text("one"), Steps.hang()]) });
     const created = await fetch(`${base}/api/sessions/life`, json({ cwd: project }, bearer()));
     assert.equal(created.status, 201);
 
@@ -355,8 +355,18 @@ describe("security boundary — HTTP", () => {
     assert.equal(noAuth.status, 401);
     assert.match(noAuth.headers.get("content-type") ?? "", /application\/json/);
 
-    const cancel = await fetch(`${base}/api/sessions/life/turns/${turnId}/cancel`, json({}, bearer()));
+    // Cancelling a turn that already finished is an honest 409, not fake success.
+    const cancelFinished = await fetch(`${base}/api/sessions/life/turns/${turnId}/cancel`, json({}, bearer()));
+    assert.equal(cancelFinished.status, 409);
+    assert.equal((await cancelFinished.json()).code, "TURN_NOT_ACTIVE");
+
+    // Cancelling an in-flight turn is 202.
+    const hanging = await fetch(`${base}/api/sessions/life/turns`, json({ message: "hang" }, bearer()));
+    assert.equal(hanging.status, 202);
+    const { turnId: hangId } = await hanging.json();
+    const cancel = await fetch(`${base}/api/sessions/life/turns/${hangId}/cancel`, json({}, bearer()));
     assert.equal(cancel.status, 202);
+
     const del = await fetch(`${base}/api/sessions/life`, { method: "DELETE", headers: bearer() });
     assert.equal(del.status, 204);
   });
