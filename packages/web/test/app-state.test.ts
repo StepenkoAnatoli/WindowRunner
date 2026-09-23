@@ -69,6 +69,45 @@ describe("app reducer", () => {
     assert.equal(s.session?.trust?.source, ".mcp.json");
   });
 
+  it("stores loaded skills on the session, and ignores a late response with no session attached", () => {
+    const skills = [{ name: "release-notes", description: "Draft changelog entries.", path: ".windowrunner/skills/release-notes/SKILL.md" }];
+    const diagnostics = [{ reason: "missing_frontmatter" as const, file: ".windowrunner/skills/broken/SKILL.md", message: "no closing '---' line" }];
+
+    let s = reduceApp(withTurn(), { type: "skills_loaded", skills, diagnostics });
+    assert.deepEqual(s.session?.skills?.skills, skills);
+    assert.deepEqual(s.session?.skills?.diagnostics, diagnostics);
+    // Skills are index-only: a body in this slice would mean the wire contract
+    // changed, and every skill would cost context on every turn. Assert on the
+    // wire shape rather than casting the typed field away.
+    assert.deepEqual(Object.keys(s.session!.skills!.skills[0]).sort(), ["description", "name", "path"]);
+
+    // Replacing the list is a replace, not an append.
+    s = reduceApp(s, { type: "skills_loaded", skills: [], diagnostics: [] });
+    assert.deepEqual(s.session?.skills, { skills: [], diagnostics: [] });
+
+    // A response that arrives after the session was cleared must not resurrect
+    // it or attach to whatever session comes next.
+    const cleared = reduceApp(s, { type: "session_cleared" });
+    assert.equal(cleared.session, undefined);
+    const late = reduceApp(cleared, { type: "skills_loaded", skills, diagnostics });
+    assert.equal(late, cleared, "the reducer must return the identical state object");
+    assert.equal(late.session, undefined);
+  });
+
+  it("clears skills when a different session is attached", () => {
+    let s = reduceApp(withTurn(), {
+      type: "skills_loaded",
+      skills: [{ name: "a", description: "d", path: "p" }],
+      diagnostics: [],
+    });
+    assert.equal(s.session?.skills?.skills.length, 1);
+    // session_created rebuilds the session object, so the previous session's
+    // skills must not survive into the new one.
+    s = reduceApp(s, { type: "session_created", sessionId: "s2", root: "/other" });
+    assert.equal(s.session?.sessionId, "s2");
+    assert.equal(s.session?.skills, undefined, "skills are per-session and must not leak across");
+  });
+
   it("describes failures, cancellation, reconnects and stream errors", () => {
     let s = withTurn();
     s = reduceApp(s, { type: "turn_connection", turnId: "t1", connection: "reconnecting", attempt: 2 });

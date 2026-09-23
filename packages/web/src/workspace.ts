@@ -8,6 +8,8 @@ import {
 } from "./app-state.js";
 import { CENTER_APPROVAL_IDS, renderApprovalCard } from "./approval-view.js";
 import { button, el } from "./dom.js";
+import { attachSkillsPalette, renderSkillsPanel } from "./skills-palette.js";
+import type { SkillDiagnostic, SkillMeta } from "@windows-runner/shared";
 
 /**
  * Center conversation workspace (B1).
@@ -35,6 +37,10 @@ export interface ConversationWorkspaceProps {
   onDismissTrust(): void;
   onSelectTurn(turnId: string): void;
   onSelectApproval(turnId: string, requestId: string): void;
+  /** Skills the attached session's project ships (ADR 003). Fetched by main.ts. */
+  skills?: SkillMeta[];
+  /** Why any skill was excluded; surfaced verbatim so a silent failure is debuggable. */
+  skillDiagnostics?: SkillDiagnostic[];
 }
 
 export function renderConversationWorkspace(props: ConversationWorkspaceProps): HTMLElement {
@@ -67,15 +73,36 @@ export function renderConversationWorkspace(props: ConversationWorkspaceProps): 
       props.activeTurn ? button("cancel", "Stop", props.onCancel, "danger") : null
     )
   );
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
+  // Extracted so the palette can submit through the same path as the form's
+  // own submit handler, instead of synthesising a submit event.
+  const submitFromComposer = (): void => {
     const ta = form.querySelector<HTMLTextAreaElement>('[data-testid="message-input"]')!;
     const message = ta.value.trim();
     if (message) {
       ta.value = "";
       props.onSubmit(message);
     }
+  };
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitFromComposer();
   });
+
+  // The composer is a container so the palette can be a SIBLING of the form:
+  // the workspace re-renders on state changes, and a palette living inside the
+  // form would be rebuilt (and lose its state) on every keystroke-driven
+  // re-render. Attached after the form has a parent, which is why this happens
+  // here rather than in the palette module.
+  const composer = el("div", { class: "composer-wrap", "data-testid": "composer-wrap" }, form);
+  const skills = props.skills ?? [];
+  attachSkillsPalette(form, {
+    getSkills: () => skills,
+    // Selecting a skill does NOT inject its content. The composer now holds
+    // `/<name>` and submits that, so the model calls read_skill itself — one
+    // mechanism for both activation modes, not two code paths.
+    onPick: () => submitFromComposer(),
+  });
+
   return el(
     "main",
     { class: "conversation-workspace", "data-testid": "conversation-workspace" },
@@ -84,7 +111,12 @@ export function renderConversationWorkspace(props: ConversationWorkspaceProps): 
       { class: "conversation", "data-testid": "conversation" },
       props.trustPrompt ? renderTrustPrompt(props.trustPrompt, props) : null,
       el("div", { class: "turns", "data-testid": "turns" }, ...props.turns.map((t) => renderTurnCard(t, props))),
-      form
+      composer,
+      // Collapsed by default: useful when a skill is missing, invisible
+      // otherwise. Diagnostics are shown verbatim, not summarised.
+      skills.length > 0 || (props.skillDiagnostics?.length ?? 0) > 0
+        ? el("details", { class: "skills-details", "data-testid": "skills-details" }, el("summary", {}, "Project skills"), renderSkillsPanel(skills, props.skillDiagnostics ?? []))
+        : null
     )
   );
 }

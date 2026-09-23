@@ -158,13 +158,24 @@ Index is names + descriptions only, never bodies, in framing that labels it untr
 
 `/`-command palette over the composer, and a read-only settings list showing discovered skills and their diagnostics so an excluded skill is debuggable rather than invisible.
 
-- [ ] Palette opens on `/`, filters as typed, closes on Escape — consistent with the existing keyboard conventions (`keyboard-nav.ts`: arrows move focus, Enter/Space activate, Escape cancels)
-- [ ] Selecting a skill sends the turn; the model calls `read_skill`. **No injection path in the UI.**
-- [ ] Diagnostics surface verbatim
-- [ ] Reducer stays pure; side effects stay in `main.ts`, per the AGENTS.md split
-- [ ] Desktop picks it up at `/desktop` for free — verify, don't reimplement
+**Status: DONE.** Shipped as `packages/web/src/skills-palette.ts` (palette + panel), wired through `api.ts` (`listSkills`), `app-state.ts` (`session.skills` + the `skills_loaded` action), `main.ts` (`refreshSkills()`, called on both session-attach paths), and `workspace.ts` (composer wrapper + collapsed skills `<details>`).
 
-**Verify:** `npm run test --workspace packages/web`, `npm run e2e`, `npm run smoke:desktop`
+- [x] Palette opens on `/` **only at the very start of the text**, filters as typed, closes on Escape without clearing the composer, and stops swallowing Escape once closed — consistent with the existing keyboard conventions (`keyboard-nav.ts`: arrows move focus, Enter/Space activate, Escape cancels; `dom.ts`: no focus traps)
+- [x] Selecting a skill sends the turn; the model calls `read_skill`. **No injection path in the UI** — the palette writes `/<name>` into the composer and submits through the real handler (`submitFromComposer()`), never the body, so both activation modes share one mechanism per ADR 003
+- [x] Diagnostics surface verbatim (reason + repo-relative file + message)
+- [x] Reducer stays pure; side effects stay in `main.ts`, per the AGENTS.md split. `refreshSkills()` is deliberately silent on failure — skills are an enhancement and must not raise the global error banner
+- [x] Desktop picks it up at `/desktop` for free — verified by inspection: `packages/desktop/src/renderer.ts` mounts the same `/app/app.js` bundle `main.ts` builds, so there is no desktop-side code to write
+
+Two deviations from the sketch above, both forced by the DOM stub (`packages/web/test/dom-stub.ts`), which implements only the surface components actually touch:
+
+- The palette is a **sibling of the form**, not a child, and owns its own DOM. The workspace re-renders on every state change, so a nested palette would be rebuilt — losing its open state and focus — on every keystroke.
+- The stub has no `dispatchEvent`, so the palette cannot synthesise a `submit` event. `workspace.ts` therefore extracts `submitFromComposer()` and both paths call it. This is the better shape anyway: a view module should never fake events to reach a handler.
+
+The stub also gained `removeAttribute()` and a `parentElement` getter, both used by the palette.
+
+**Verify:** `npm test --workspace packages/web` → **249 pass / 0 fail** (233 before: +14 `skills-palette.test.ts`, +2 `app-state.test.ts`); `npm run typecheck` and `npm run typecheck:desktop` clean; full `npm test` → **776 pass / 0 fail**; `npm run smoke:start` passes.
+
+**Not verified here:** `npm run e2e` and `npm run smoke:desktop` could not run — Playwright's browser binary is absent from the sandbox and `npx playwright install` cannot reach the network (`Executable doesn't exist at …/chrome-headless-shell`). The palette's browser behaviour is covered only by the DOM-stub unit tests plus the typechecks. Run `npm run e2e` locally before merging.
 
 ---
 

@@ -54,6 +54,16 @@ export class FakeElement {
     return this.attributes.has(name);
   }
 
+  /** Toggling `hidden` needs a real removal: `setAttribute("hidden","false")`
+   *  still hides, because the attribute is boolean in HTML. */
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+  }
+
+  get parentElement(): FakeElement | null {
+    return this.parent && this.parent.nodeType === 1 ? (this.parent as FakeElement) : null;
+  }
+
   get defaultValue(): string {
     return this.attributes.get("value") ?? "";
   }
