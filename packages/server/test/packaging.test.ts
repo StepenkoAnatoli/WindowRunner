@@ -245,32 +245,14 @@ describe("Packaging contract", () => {
   });
 
   describe("documentation references", () => {
-    /**
-     * Docs that install surfaces mention precisely in order to say they are
-     * absent. The second test in this block asserts each one really is missing,
-     * so this list cannot quietly go stale in either direction: add the file and
-     * the test tells you to remove it from here.
-     */
-    const KNOWN_ABSENT: string[] = [];
-
     it("docs referenced by the installers and Dockerfile exist", () => {
       const surfaces = ["Dockerfile", "install.ps1", "README.md"];
       for (const surface of surfaces) {
         assert.ok(exists(surface), `${surface} is missing`);
         const text = fs.readFileSync(path.join(repoRoot, surface), "utf8");
         for (const match of text.matchAll(/docs\/[\w./-]+\.md/g)) {
-          if (KNOWN_ABSENT.includes(match[0])) continue;
           assert.ok(exists(match[0]), `${surface} references missing ${match[0]}`);
         }
-      }
-    });
-
-    it("docs listed as absent are still absent", () => {
-      for (const doc of KNOWN_ABSENT) {
-        assert.ok(
-          !exists(doc),
-          `${doc} now exists — remove it from KNOWN_ABSENT and restore the references that were rewritten around it`
-        );
       }
     });
 

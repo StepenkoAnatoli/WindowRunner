@@ -1,6 +1,4 @@
 import type { Express } from "express";
-import type { TurnManager } from "../agent/turn-manager.js";
-import type { ApprovalRegistry } from "../agent/approval-registry.js";
 import type { SessionManager } from "../agent/session-manager.js";
 import type { MetricsRegistry } from "../agent/metrics.js";
 import type { ProjectTrustRegistry } from "../agent/project-trust.js";

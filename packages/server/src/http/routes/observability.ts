@@ -34,6 +34,16 @@ interface FileStoreLike {
   getPersistenceFailures?: () => unknown;
 }
 
+/** The validation slice both payloads report: thresholds plus the live detectors. */
+function validationView(validation: ValidationResult, thresholds: ResolvedThresholds) {
+  return {
+    thresholds,
+    stuckTurns: validation.stuckTurns,
+    longWaitingApprovals: validation.longWaitingApprovals,
+    idleSessions: validation.idleSessions,
+  };
+}
+
 export function registerObservabilityRoutes(app: Express, rt: AppRuntime): void {
   const { deps, metrics, trust, now, thresholds, security } = rt;
 
@@ -111,12 +121,7 @@ export function registerObservabilityRoutes(app: Express, rt: AppRuntime): void 
         gauges: snapshot.gauges,
         recent: snapshot.recent,
         durations: snapshot.durations,
-        validation: {
-          thresholds,
-          stuckTurns: validation.stuckTurns,
-          longWaitingApprovals: validation.longWaitingApprovals,
-          idleSessions: validation.idleSessions,
-        },
+        validation: validationView(validation, thresholds),
         meta: snapshot.meta,
       },
       diagnostics: {

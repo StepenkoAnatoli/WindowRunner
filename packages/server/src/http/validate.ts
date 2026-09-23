@@ -1,8 +1,7 @@
 import type { Request, Response } from "express";
 
 /** Shared path/body limits for the HTTP surface. */
-export const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
-export const TURN_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 export const MAX_MESSAGE_CHARS = 200_000;
 export const MAX_PATH_CHARS = 4_096;
 export const MAX_REASON_CHARS = 1_000;
@@ -18,7 +17,7 @@ export const MAX_REASON_CHARS = 1_000;
 
 export function requireSessionId(req: Request, res: Response): string | undefined {
   const sessionId = req.params.sessionId;
-  if (typeof sessionId !== "string" || !SESSION_ID_RE.test(sessionId)) {
+  if (typeof sessionId !== "string" || !ID_RE.test(sessionId)) {
     res.status(400).json({ error: "sessionId must match [A-Za-z0-9_-]{1,128}", code: "SESSION_ID_INVALID" });
     return undefined;
   }
@@ -27,7 +26,7 @@ export function requireSessionId(req: Request, res: Response): string | undefine
 
 export function requireTurnId(req: Request, res: Response): string | undefined {
   const turnId = req.params.turnId;
-  if (typeof turnId !== "string" || !TURN_ID_RE.test(turnId)) {
+  if (typeof turnId !== "string" || !ID_RE.test(turnId)) {
     res.status(400).json({ error: "turnId must match [A-Za-z0-9_-]{1,128}", code: "TURN_ID_INVALID" });
     return undefined;
   }

@@ -1,5 +1,5 @@
 import express from "express";
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import type { TurnManager } from "./agent/turn-manager.js";
 import type { ApprovalRegistry } from "./agent/approval-registry.js";
 import type { LLMProvider } from "./providers/types.js";
@@ -18,10 +18,9 @@ import { registerObservabilityRoutes } from "./http/routes/observability.js";
 import { registerProviderRoutes } from "./http/routes/providers.js";
 import { registerStaticUi, isClientAppRoute } from "./http/static-ui.js";
 import { resolveThresholds, type AppHandle, type AppRuntime, type ResolvedThresholds } from "./http/runtime.js";
-import { bodyObject } from "./http/validate.js";
 
 // Deep-route classification lives with the static-UI module; re-exported for
-// the boot path and tests that reason about route serving.
+// the tests that reason about route serving.
 export { isClientAppRoute };
 
 export interface LongRunningThresholds {
@@ -161,14 +160,7 @@ export function createApp(deps: AppDeps): AppHandle {
   // Session lifecycle (one-active-turn policy, root pinning). The terminal
   // checker is wired to the same TurnManager the routes read, so there is one
   // source of truth for "is this turn still running".
-  const sessionManager =
-    deps.sessionManager ??
-    new SessionManager({
-      isTurnTerminal: (turnId) => {
-        const log = deps.manager.getLog(turnId);
-        return log ? log.state.isTerminal : true;
-      },
-    });
+  const sessionManager = deps.sessionManager ?? new SessionManager();
   sessionManager.setTurnTerminalChecker((turnId) => {
     const log = deps.manager.getLog(turnId);
     return log ? log.state.isTerminal : true;

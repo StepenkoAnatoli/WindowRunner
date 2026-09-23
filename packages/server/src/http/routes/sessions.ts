@@ -17,7 +17,7 @@ import { bodyObject, isPathString, MAX_PATH_CHARS, requireSessionId } from "../v
  */
 
 /** Session-creation errors with a stable HTTP mapping; anything else is a 500. */
-function sendSessionError(res: Response, err: unknown, sessionId: string, fallbackMessage: string): void {
+export function sendSessionError(res: Response, err: unknown, sessionId: string, fallbackMessage: string): void {
   const code = (err as { code?: unknown }).code;
   if (code === "SESSION_ALREADY_EXISTS") {
     res.status(409).json({ error: "session already exists", code: "SESSION_ALREADY_EXISTS", sessionId });
