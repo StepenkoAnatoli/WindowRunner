@@ -85,13 +85,23 @@ Two existing tests pin the tool list and both had to be updated, which is the po
 **Modified:** `packages/server/src/app.ts` (compose the route), `packages/server/src/http/runtime.ts` if the route needs new `AppRuntime` state
 **Test:** follow the existing route-test pattern in `packages/server/test/`
 
-- [ ] Returns the index plus diagnostics
-- [ ] Bearer auth required; missing/invalid token rejected like every other `/api` route
-- [ ] `http/validate.ts` guards on the session id; stable error codes
-- [ ] Unknown session → 404, not an empty index
-- [ ] No `any` in the handler — typed `Request`/`Response`, per the AGENTS.md HTTP-layer rule
+**DONE 2026-09-23.** Types hoisted to `packages/shared/src/index.ts`; new `packages/server/src/http/routes/skills.ts` registered in `app.ts`; `packages/server/test/skills-routes.test.ts` (7 tests). Server suite 418 → 425.
 
-**Verify:** `npm run typecheck` (catches `any` drift), `npm run test --workspace packages/shared`, `npm run test --workspace packages/server`
+The type split changed slightly from the plan: `SkillMeta` is the index shape (name, description, path) and `SkillLoaded extends SkillMeta` adds `body` + `truncated`. `loadSkills` returns `SkillLoaded[]`; the route strips bodies down to `SkillMeta[]`. That separation is what makes "no bodies on the wire" a type-level property rather than a convention.
+
+- [x] `GET /api/sessions/:sessionId/skills` returns index + diagnostics
+- [x] Bearer auth required; missing and wrong tokens both 401
+- [x] `requireSessionId` guard; over-long id → 400
+- [x] Unknown session → 404 `SESSION_NOT_FOUND`, not an empty index
+- [x] **No bodies in the response** — asserted on the parsed shape *and* on the raw response text
+- [x] Diagnostics returned verbatim; asserted they carry no absolute filesystem path
+- [x] Reserved names resolved from `createBuiltinTools()` rather than hardcoded, so the index and `read_skill` cannot drift
+- [x] No `any` in the handler; typed `Request`/`Response`
+- [x] Project with no skills → empty index, empty diagnostics
+
+**Verify:** `npx tsx --test packages/server/test/skills-routes.test.ts` → 7/7; full `npm test` → 748 pass / 0 fail; `npm run typecheck` clean; `npm run check:release` OK; `npm run smoke:start` passes (boots the real built server, which now composes the new route).
+
+**Note for the implementer of phase 4+:** `read_file` is reported as `invalid_name`, not `reserved_name` — underscores are invalid in a skill name, so no built-in tool name can be a skill name at all. A test asserts `reserved_name` does *not* fire for the current tool set, so this stops being true the day a dash-named tool is added.
 
 ---
 

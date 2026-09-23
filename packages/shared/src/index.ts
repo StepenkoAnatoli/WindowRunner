@@ -283,6 +283,63 @@ export function isTerminalStatus(status: TurnStatus | "idle"): boolean {
   return status === "completed" || status === "cancelled" || status === "failed";
 }
 
+// ---- Skills (ADR 003): shared shapes for project-local skills ----
+
+/**
+ * A skill is instructions only: `.windowrunner/skills/<name>/SKILL.md`,
+ * frontmatter plus a markdown body, nothing executable. These types are the
+ * wire shape between the server's loader and the UIs (web and the desktop
+ * shell at `/desktop`), so both can render the palette and the diagnostics
+ * without duplicating the shape locally — the same rule
+ * `workspace-catalog.ts` is held to.
+ */
+
+/** Index entry: what a palette or a per-turn index needs. No body. */
+export interface SkillMeta {
+  name: string;
+  description: string;
+  /** Path relative to the project root, e.g. `.windowrunner/skills/x/SKILL.md`. */
+  path: string;
+}
+
+/** A loaded skill: the index entry plus the body the model reads on demand. */
+export interface SkillLoaded extends SkillMeta {
+  body: string;
+  /** True when the body was cut at the loader's size cap. */
+  truncated: boolean;
+}
+
+export type SkillDiagnosticReason =
+  | "missing_skill_file"
+  | "missing_frontmatter"
+  | "malformed_frontmatter"
+  | "missing_description"
+  | "name_mismatch"
+  | "invalid_name"
+  | "reserved_name"
+  | "description_too_long"
+  | "body_truncated"
+  | "file_too_large"
+  | "path_escapes"
+  | "io_error";
+
+/**
+ * Why a skill was excluded. Surfaced to the user verbatim, because a skill
+ * that silently fails to load is undebuggable — the whole point of returning
+ * diagnostics alongside the index.
+ */
+export interface SkillDiagnostic {
+  reason: SkillDiagnosticReason;
+  /** Skill-relative path, safe to display; never an absolute filesystem path. */
+  file: string;
+  message: string;
+}
+
+export interface SkillsIndex {
+  skills: SkillMeta[];
+  diagnostics: SkillDiagnostic[];
+}
+
 // ---- Workspace catalog (B1): shared persistence shape + validation ----
 
 export * from "./workspace-catalog.js";

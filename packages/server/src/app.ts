@@ -16,6 +16,7 @@ import { registerSessionRoutes } from "./http/routes/sessions.js";
 import { registerTurnRoutes } from "./http/routes/turns.js";
 import { registerObservabilityRoutes } from "./http/routes/observability.js";
 import { registerProviderRoutes } from "./http/routes/providers.js";
+import { registerSkillRoutes } from "./http/routes/skills.js";
 import { registerStaticUi, isClientAppRoute } from "./http/static-ui.js";
 import { resolveThresholds, type AppHandle, type AppRuntime, type ResolvedThresholds } from "./http/runtime.js";
 
@@ -250,6 +251,7 @@ export function createApp(deps: AppDeps): AppHandle {
   registerTurnRoutes(app, runtime);
   registerObservabilityRoutes(app, runtime);
   registerProviderRoutes(app, runtime);
+  registerSkillRoutes(app, runtime);
 
   return app;
 }

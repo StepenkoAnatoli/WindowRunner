@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { SkillDiagnostic, SkillDiagnosticReason, SkillLoaded } from "@windows-runner/shared";
 import type { ProjectRoot } from "../project-root.js";
 import { PathError } from "../project-root.js";
 
@@ -63,38 +64,23 @@ export const MAX_SKILL_FILE_BYTES = 1024 * 1024;
 /** Appended to a truncated body so the model knows it is not seeing the end. */
 export const BODY_TRUNCATED_NOTICE = "\n\n[truncated: skill body exceeded the size limit]";
 
-export type SkillDiagnosticReason =
-  | "missing_skill_file"
-  | "missing_frontmatter"
-  | "malformed_frontmatter"
-  | "missing_description"
-  | "name_mismatch"
-  | "invalid_name"
-  | "reserved_name"
-  | "description_too_long"
-  | "body_truncated"
-  | "file_too_large"
-  | "path_escapes"
-  | "io_error";
+/**
+ * The wire shapes live in `@windows-runner/shared` so the web UI and the
+ * desktop shell render skills from one definition rather than duplicating it —
+ * the rule AGENTS.md states for `workspace-catalog.ts`. Re-exported here so
+ * server-side callers keep importing from the loader.
+ */
+export type {
+  SkillMeta,
+  SkillLoaded,
+  SkillDiagnostic,
+  SkillDiagnosticReason,
+  SkillsIndex,
+} from "@windows-runner/shared";
 
-export interface SkillDiagnostic {
-  reason: SkillDiagnosticReason;
-  /** Skill-relative path, safe to display; never an absolute filesystem path. */
-  file: string;
-  message: string;
-}
-
-export interface SkillMeta {
-  name: string;
-  description: string;
-  /** Path relative to the project root, e.g. `.windowrunner/skills/x/SKILL.md`. */
-  path: string;
-  body: string;
-  truncated: boolean;
-}
-
-export interface SkillsIndex {
-  skills: SkillMeta[];
+/** What `loadSkills` returns: loaded skills (with bodies) plus diagnostics. */
+export interface LoadSkillsResult {
+  skills: SkillLoaded[];
   diagnostics: SkillDiagnostic[];
 }
 
@@ -193,7 +179,7 @@ function diag(reason: SkillDiagnosticReason, file: string, message: string): Ski
  * diagnostic, so one hostile or broken skill cannot break the turn that asked
  * for the index.
  */
-export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOptions = {}): Promise<SkillsIndex> {
+export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOptions = {}): Promise<LoadSkillsResult> {
   const reserved = new Set(options.reservedNames ?? []);
   const diagnostics: SkillDiagnostic[] = [];
 
@@ -355,7 +341,7 @@ export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOp
   // `candidates` is still sorted so the emitted index and any diagnostics are
   // deterministic across filesystems, whose readdir order is not.
   candidates.sort((a, b) => (a.dirName < b.dirName ? -1 : a.dirName > b.dirName ? 1 : 0));
-  const skills: SkillMeta[] = [];
+  const skills: SkillLoaded[] = [];
   for (const c of candidates) {
     let body = c.body;
     let truncated = false;
