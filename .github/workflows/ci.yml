@@ -913,14 +913,21 @@ jobs:
           ELECTRON_BUILDER_OFFLINE: "true"
         run: npm run package:desktop:win:release
 
-      - name: "Assert the app executable and the installer are signed"
+      - name: "Assert the app executable, installer and uninstaller are signed"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $exe = "packages\desktop\release\win-unpacked\WindowRunner.exe"
           $setup = Get-ChildItem "packages\desktop\release" -Filter "*-Setup-*.exe" | Select-Object -First 1
+          # electron-builder.yml states signing covers "app exe, uninstaller,
+          # NSIS installer". The uninstaller runs on user machines during
+          # uninstall and would raise its own SmartScreen prompt if it went out
+          # unsigned, so asserting only the first two left a shipped artifact
+          # outside the gate. Same lookup pattern the release verification uses.
+          $uninstall = Get-ChildItem "packages\desktop\release\win-unpacked" -Filter "Uninstall*.exe" | Select-Object -First 1
           if (!$setup) { throw "no installer produced" }
-          foreach ($file in @($exe, $setup.FullName)) {
+          if (!$uninstall) { throw "no uninstaller produced — cannot verify it was signed" }
+          foreach ($file in @($exe, $setup.FullName, $uninstall.FullName)) {
             if (!(Test-Path $file)) { throw "missing build output: $file" }
             $sig = Get-AuthenticodeSignature -FilePath $file
             Write-Host "$file -> status=$($sig.Status) signer=$($sig.SignerCertificate.Subject)"
@@ -931,8 +938,8 @@ jobs:
               throw "WRONG SIGNER: $file — signed by something other than the CI test certificate"
             }
           }
-          Write-Host "ASSERT PASS: app exe and installer are Authenticode-signed by the pipeline test certificate (status 'UnknownError' is expected: the test chain is untrusted by design)"
-          Write-Host "::notice title=signing gate::ASSERT PASS: installer + app exe signed by the CI test certificate"
+          Write-Host "ASSERT PASS: app exe, installer and uninstaller are Authenticode-signed by the pipeline test certificate (status 'UnknownError' is expected: the test chain is untrusted by design)"
+          Write-Host "::notice title=signing gate::ASSERT PASS: installer + app exe + uninstaller signed by the CI test certificate"
 
       - name: Collect signing diagnostics
         if: failure()

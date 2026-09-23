@@ -26,8 +26,29 @@ section names below are allowed.
   proves the tarball and nothing about auth. Contract-tested in
   `release-contract.test.ts`. Publishing still needs a maintainer to add the
   `NPM_TOKEN` secret and re-run with `dry_run` set to `false`.
+- **Release-path signature verification.** `forceCodeSigning` only proves that
+  electron-builder applied *a* signature — it cannot tell a wrong-but-present
+  certificate from the right one, and `release.yml` never inspected the
+  artifacts it produced (`Get-AuthenticodeSignature` appeared in `ci.yml` but
+  nowhere in the release path). The Release workflow now verifies the app exe,
+  the installer and the uninstaller before the installer is run or shipped: all
+  three signed, all by the same subject, all carrying an RFC 3161 timestamp (an
+  untimestamped signature stops verifying when the certificate expires), and
+  none signed by the CI signing-proof certificate. An optional
+  `WIN_CSC_EXPECTED_SUBJECT` secret pins the signer subject; like the
+  certificate gate it degrades to a skip when absent, and a mismatch names
+  certificate renewal as the likely cause.
 
 ### Changed
+
+- **The signing gate now requires both credentials.** It tested
+  `WIN_CSC_LINK` alone while the build consumes both it and
+  `WIN_CSC_KEY_PASSWORD`, so a half-configured repository took the
+  `forceCodeSigning` path and failed the build with an opaque signing error.
+  The gate now tests both, and a certificate without its password (or the
+  reverse) produces an explicit "signing misconfigured" error naming the
+  missing secret. The CI signing assertion also covers the uninstaller now,
+  matching what `electron-builder.yml` has always claimed it signs.
 
 - **Windows-only product scope.** The macOS and Linux user-platform claims,
   installers and CI legs were deliberately set aside: the `Platform` and

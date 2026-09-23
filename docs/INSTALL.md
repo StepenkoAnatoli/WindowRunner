@@ -623,15 +623,32 @@ provided.**
   `packages/desktop/electron-builder.yml`). SHA-256 only.
 - The `Desktop signing (windows-latest)` CI job proves the full pipeline on
   every push: it signs a build with a self-signed test certificate and asserts
-  the app executable and the installer carry an Authenticode signature. This
-  proves cert injection → signtool → signed artifacts; it does **not** create
-  trust — a self-signed chain is untrusted on every machine by design.
+  the app executable, the installer **and the uninstaller** carry an
+  Authenticode signature. This proves cert injection → signtool → signed
+  artifacts; it does **not** create trust — a self-signed chain is untrusted on
+  every machine by design. It also runs offline
+  (`ELECTRON_BUILDER_OFFLINE=true`), so the RFC 3161 timestamping that a real
+  release uses is *not* covered by this proof — see the release step below.
 - Release builds use `npm run package:desktop:win:release`, which sets
   `forceCodeSigning`: a release build that cannot sign **fails** instead of
-  shipping silently unsigned.
+  shipping silently unsigned. The signing gate requires **both**
+  `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`; setting only one produces an
+  explicit "signing misconfigured" error naming the missing secret rather than
+  an opaque build failure.
+- Because `forceCodeSigning` only proves that *a* signature was applied, the
+  release workflow then inspects the artifacts themselves before the installer
+  is run or shipped: the app exe, the installer and the uninstaller must all be
+  signed, by the **same** subject, must carry an RFC 3161 timestamp (an
+  untimestamped signature stops verifying when the certificate expires), and
+  must not be signed by the CI test certificate.
 - To ship signed installers, a maintainer adds the repository secrets
   `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` (OV or EV code-signing certificate).
   Nothing else changes — the release workflow picks them up automatically.
+  Optionally add `WIN_CSC_EXPECTED_SUBJECT` with the certificate's exact
+  subject (for example `CN=Your Name, O=Your Name, C=IL`) to pin the signer:
+  the release then fails if the artifact is signed by anything else. The pin is
+  skipped when the secret is absent, and after a certificate renewal it must be
+  updated or the release will fail with a message saying so.
   With an OV certificate, SmartScreen reputation builds over downloads of the
   signed artifacts; an EV certificate earns immediate reputation. Until then,
   Windows SmartScreen shows "Windows protected your PC" on first run — click

@@ -15,6 +15,8 @@
  *   - upgrade/uninstall gate in the installer CI job (B5.6)
  *   - release workflow contract (B5.7)
  *   - npm publication contract (G-05)
+ *   - code signing hardening (release-path verification, both-secret gate,
+ *     uninstaller coverage)
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -185,6 +187,111 @@ describe("release contract: code signing (B5.3)", () => {
     assert.match(yml, /signingHashAlgorithms:\n {6}- sha256\n/);
     assert.ok(!yml.includes("certificateFile"), "no certificate path may be hardcoded in the builder config");
     assert.ok(!yml.includes("certificatePassword"), "no certificate password may be hardcoded in the builder config");
+  });
+});
+
+describe("release contract: code signing hardening", () => {
+  // The gaps these pin, all found by reading the two workflows side by side:
+  //   1. The Release workflow built with forceCodeSigning but never inspected
+  //      the artifact — `Get-AuthenticodeSignature` appears nowhere in
+  //      release.yml, while ci.yml asserts it. CI proved the pipeline; the
+  //      release proved nothing, so a wrong-but-present certificate shipped.
+  //   2. The signing gate tested one secret but the build consumes two, so a
+  //      missing WIN_CSC_KEY_PASSWORD produced a cryptic forceCodeSigning
+  //      failure instead of the diagnostic the job exists to emit.
+  //   3. electron-builder.yml claims signing covers "app exe, uninstaller,
+  //      NSIS installer" but the CI assertion looped over only two files.
+  const ci = read(".github/workflows/ci.yml");
+  const release = read(".github/workflows/release.yml");
+
+  it("the release build inspects the signature it produced instead of trusting forceCodeSigning", () => {
+    assert.ok(
+      release.includes("Get-AuthenticodeSignature"),
+      "the release must verify the artifact's signature, not just that the build did not fail"
+    );
+    assert.ok(release.includes('"NotSigned"'), "the release gate must fail on unsigned output");
+    assert.ok(
+      release.includes("WindowRunner CI Signing Proof"),
+      "the release must refuse to ship an artifact signed by the CI test certificate"
+    );
+    // forceCodeSigning proves a signature was applied; it cannot tell us the
+    // app exe and the installer carry the SAME one.
+    assert.ok(
+      release.includes("SignerCertificate.Subject"),
+      "the release must compare the signer across artifacts"
+    );
+    // The installer is the thing users run; a missing timestamp means the
+    // signature stops verifying when the certificate expires.
+    assert.ok(
+      release.includes("TimeStamperCertificate"),
+      "the release must assert the signature is timestamped"
+    );
+  });
+
+  it("verifies the signed build before the artifact is installed or shipped", () => {
+    const build = release.indexOf("npm run package:desktop:win:release");
+    const verify = release.indexOf("Get-AuthenticodeSignature");
+    const install = release.indexOf("Install silently");
+    assert.ok(build >= 0 && verify > build, "verification must follow the signed build");
+    assert.ok(install > verify, "the installer must be verified before it is installed");
+  });
+
+  it("supports an optional signer-subject pin that degrades to no pin", () => {
+    // Same shape as the certificate gate: absent secret means the check is
+    // skipped, not failed. A renewal that changes the CN must be an obvious
+    // fix, not a mystery.
+    assert.ok(
+      release.includes("WIN_CSC_EXPECTED_SUBJECT"),
+      "the optional subject pin must be read from a secret"
+    );
+    assert.ok(
+      /renewal|renewed/i.test(release),
+      "a subject mismatch must name certificate renewal as the likely cause"
+    );
+  });
+
+  it("refuses to sign with only half the credentials", () => {
+    // WIN_CSC_KEY_PASSWORD is consumed by the build (release.yml passes it to
+    // electron-builder) but was never part of the decision, so a missing
+    // password reached forceCodeSigning and failed the build opaquely.
+    assert.match(
+      release,
+      /HAS_CERT: \$\{\{ secrets\.WIN_CSC_LINK != '' && secrets\.WIN_CSC_KEY_PASSWORD != '' && 'yes' \|\| 'no' \}\}/,
+      "the signing decision must require BOTH the certificate and its password"
+    );
+    assert.ok(
+      /WIN_CSC_KEY_PASSWORD/.test(release.slice(release.indexOf("Decide the signing mode"), release.indexOf("Build the installer"))),
+      "the decision step must name the password secret"
+    );
+    assert.ok(
+      /password/i.test(release.slice(release.indexOf("Decide the signing mode"), release.indexOf("Build the installer (signed"))),
+      "a certificate without its password must produce its own diagnostic"
+    );
+  });
+
+  it("asserts every artifact electron-builder claims to sign, including the uninstaller", () => {
+    // electron-builder.yml: "signs every executable it produces (app exe,
+    // uninstaller, NSIS installer)". The uninstaller runs on user machines and
+    // would raise its own SmartScreen prompt if it went out unsigned.
+    const yml = fs.readFileSync(path.join(desktopRoot, "electron-builder.yml"), "utf8").replace(/\r\n/g, "\n");
+    assert.match(yml, /app exe, uninstaller, NSIS installer/, "the config must still claim all three artifacts");
+    // Scoped to the signing regions. A file-wide check passes vacuously: both
+    // workflows already contain `-Filter "Uninstall*.exe"` in their UNINSTALL
+    // steps, which is not a signing assertion at all.
+    const ciSigning = ci.slice(ci.indexOf("  desktop-signing:"));
+    assert.ok(
+      ciSigning.includes('"Uninstall*.exe"'),
+      "the CI signing gate must locate and cover the uninstaller"
+    );
+    // Bounded by the STEP NAME, not by Get-AuthenticodeSignature: the
+    // uninstaller is located before the signature loop, so slicing from the
+    // loop excludes the very lookup being asserted.
+    const relVerify = release.slice(release.indexOf("Verify the release signature"), release.indexOf("Install silently"));
+    assert.ok(relVerify.length > 0, "the release must have a verification region before the install step");
+    assert.ok(
+      relVerify.includes('"Uninstall*.exe"'),
+      "the release verification must cover the uninstaller, not just the app exe and installer"
+    );
   });
 });
 

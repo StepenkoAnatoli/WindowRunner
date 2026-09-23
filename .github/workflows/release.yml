@@ -148,14 +148,32 @@ jobs:
       # warning. One config, no code changes — adding the secrets flips it.
       # The secret itself is never interpolated into shell code — only the
       # yes/no decision crosses the step boundary (HAS_CERT env).
+      #
+      # The decision tests BOTH secrets because the build consumes both:
+      # electron-builder needs WIN_CSC_LINK for the certificate and
+      # WIN_CSC_KEY_PASSWORD to open it. Testing only the link meant a
+      # half-configured repository took the forceCodeSigning path and failed
+      # the build with an opaque signing error, instead of reporting the one
+      # missing secret — which is the diagnostic this step exists to produce.
       - name: Decide the signing mode
         id: signing
         shell: bash
         env:
-          HAS_CERT: ${{ secrets.WIN_CSC_LINK != '' && 'yes' || 'no' }}
+          HAS_CERT: ${{ secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' && 'yes' || 'no' }}
+          HAS_LINK: ${{ secrets.WIN_CSC_LINK != '' && 'yes' || 'no' }}
+          HAS_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD != '' && 'yes' || 'no' }}
         run: |
           if [ "$HAS_CERT" = "yes" ]; then
             echo "mode=signed" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_LINK" = "yes" ]; then
+            # Half-configured: the certificate is present but cannot be opened.
+            # Say exactly which secret is missing rather than letting
+            # forceCodeSigning fail the build without naming it.
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::error title=signing misconfigured::WIN_CSC_LINK is set but WIN_CSC_KEY_PASSWORD is not, so the certificate cannot be opened. Add the WIN_CSC_KEY_PASSWORD repository secret. Building UNSIGNED for this run."
+          elif [ "$HAS_PASSWORD" = "yes" ]; then
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::error title=signing misconfigured::WIN_CSC_KEY_PASSWORD is set but WIN_CSC_LINK is not, so there is no certificate to sign with. Add the WIN_CSC_LINK repository secret. Building UNSIGNED for this run."
           else
             echo "mode=unsigned" >> "$GITHUB_OUTPUT"
             echo "::warning title=unsigned release build::WIN_CSC_LINK is not configured — the installer will be built UNSIGNED and the draft release will say so."
@@ -173,6 +191,80 @@ jobs:
         if: steps.signing.outputs.mode != 'signed'
         shell: bash
         run: npm run package:desktop:win
+
+      # forceCodeSigning only proves that electron-builder applied *a*
+      # signature; it cannot tell us whether it is the right certificate,
+      # whether the app exe and the installer agree, whether the uninstaller
+      # was covered at all, or whether the signature was timestamped (an
+      # untimestamped signature stops verifying the moment the certificate
+      # expires). The CI signing job proves the pipeline with a throwaway
+      # certificate; this step proves the artifact a customer will download.
+      #
+      # WIN_CSC_EXPECTED_SUBJECT is an optional pin: when the secret exists
+      # the signer subject must match it exactly, when it does not the check
+      # is skipped. Same degradation shape as the certificate gate above, so
+      # adding the pin later is a one-secret change and never a code change.
+      - name: "Verify the release signature (app exe, installer, uninstaller)"
+        if: steps.signing.outputs.mode == 'signed'
+        shell: pwsh
+        env:
+          EXPECTED_SUBJECT: ${{ secrets.WIN_CSC_EXPECTED_SUBJECT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = "packages\desktop\release"
+          $exe = Join-Path $releaseDir "win-unpacked\WindowRunner.exe"
+          $setup = Get-ChildItem $releaseDir -Filter "*-Setup-*.exe" | Select-Object -First 1
+          # electron-builder.yml states signing covers "app exe, uninstaller,
+          # NSIS installer". The uninstaller runs on user machines during
+          # uninstall and raises its own SmartScreen prompt if it goes out
+          # unsigned, so it is asserted here rather than assumed.
+          $uninstall = Get-ChildItem (Join-Path $releaseDir "win-unpacked") -Filter "Uninstall*.exe" | Select-Object -First 1
+          if (!$setup) { throw "no installer produced in $releaseDir" }
+          if (!$uninstall) { throw "no uninstaller produced — cannot verify it was signed" }
+
+          $subjects = @()
+          foreach ($file in @($exe, $setup.FullName, $uninstall.FullName)) {
+            if (!(Test-Path $file)) { throw "missing build output: $file" }
+            $sig = Get-AuthenticodeSignature -FilePath $file
+            Write-Host "$file -> status=$($sig.Status) signer=$($sig.SignerCertificate.Subject) timestamp=$($sig.TimeStamperCertificate.Subject)"
+            if ($sig.Status -eq "NotSigned") {
+              throw "NOT SIGNED: $file — forceCodeSigning should have failed the build first"
+            }
+            if ($null -eq $sig.SignerCertificate) {
+              throw "NO SIGNER CERTIFICATE: $file — the signature carries no certificate"
+            }
+            # A signature without an RFC 3161 counter-signature stops verifying
+            # when the certificate expires, which for a shipped installer means
+            # SmartScreen warnings reappear at the worst possible time.
+            if ($null -eq $sig.TimeStamperCertificate) {
+              throw "NOT TIMESTAMPED: $file — the signature will stop verifying when the certificate expires"
+            }
+            # The CI signing job deliberately signs with a throwaway
+            # certificate. It must never be what reaches a release artifact.
+            if ($sig.SignerCertificate.Subject -match "WindowRunner CI Signing Proof") {
+              throw "TEST CERTIFICATE IN RELEASE: $file is signed by the CI signing-proof certificate, which is untrusted by design and must never ship"
+            }
+            $subjects += $sig.SignerCertificate.Subject
+          }
+
+          $distinct = $subjects | Sort-Object -Unique
+          if ($distinct.Count -ne 1) {
+            throw "SIGNER MISMATCH across artifacts: $($distinct -join ' | ') — the app exe, installer and uninstaller must all carry the same signature"
+          }
+          Write-Host "signer: $($distinct[0])"
+
+          if ($EXPECTED_SUBJECT) {
+            if ($distinct[0] -ne $EXPECTED_SUBJECT) {
+              # Name renewal explicitly: the overwhelmingly likely cause of a
+              # subject mismatch is a replaced or renewed certificate whose CN
+              # changed, and the fix is the secret, not the build.
+              throw "WRONG SIGNER: expected '$EXPECTED_SUBJECT' but got '$($distinct[0])'. The usual cause is certificate renewal or replacement: update the WIN_CSC_EXPECTED_SUBJECT repository secret to the new certificate's subject."
+            }
+            Write-Host "signer matches the pinned WIN_CSC_EXPECTED_SUBJECT"
+          } else {
+            Write-Host "::notice title=signer pin::WIN_CSC_EXPECTED_SUBJECT is not configured — the signer was verified structurally but not pinned to an expected subject."
+          }
+          Write-Host "::notice title=signing gate::Verified: app exe, installer and uninstaller are timestamped and signed by $($distinct[0])"
 
       # Same install → journey → uninstall gate as the per-PR installer job
       # (minus the upgrade phases, which need two versions): the release
