@@ -65,6 +65,24 @@ section names below are allowed.
 
 ### Changed
 
+- **File persistence now keeps an advisory instance lock.** Booting a server
+  in file mode writes `<dataDir>/.instance-lock` with its PID. A second boot
+  that finds a *live, foreign* owner warns loudly at startup — multi-process
+  writers corrupt the per-turn JSONL logs (there is deliberately no file
+  lock) — while a stale lock from a crashed instance is reclaimed without
+  blocking recovery, and a clean shutdown releases the lock. Strictly
+  advisory: no boot path can wedge on it. Pinned in
+  `packages/server/test/boot.test.ts` ("advisory instance lock").
+- **`npm test` is self-sufficient from a bare checkout.** A root `pretest`
+  first verifies the dev toolchain is actually installed — an interrupted or
+  corrupted `npm ci` (which wipes `node_modules` mid-install) now fails in
+  under a second with the exact recovery command instead of an opaque
+  `tsx: not found` — then runs `scripts/ensure-built.mjs`, so a missing or
+  stale `dist/` is rebuilt before the first test file runs (the packaging
+  contract requires the built bundle). The CI `Test` step also retries once
+  on failure: the suite has one observed one-off cold-start failure that
+  never reproduces on warm runs, and the gate still requires a fully green
+  second run, so a real regression cannot be hidden.
 - **The signing gate now requires both credentials.** It tested
   `WIN_CSC_LINK` alone while the build consumes both it and
   `WIN_CSC_KEY_PASSWORD`, so a half-configured repository took the
@@ -83,6 +101,43 @@ section names below are allowed.
 
 ### Fixed
 
+- **A turn whose events could not be persisted became a zombie.** When
+  durable persistence failed (e.g. disk full), the terminal event — the turn's
+  last word — was dropped along with everything else, leaving the turn
+  non-terminal in memory forever: it counted against every `/api/health`
+  check, could never be evicted, and every shutdown drain ran out its full
+  grace period on it. Terminal events (`turn_completed` / `turn_cancelled` /
+  `turn_failed`) are now applied in-memory when durability is unavailable —
+  the store has already recorded the persistence failure, so nothing is lost
+  silently — while non-terminal events keep the strict "throw, never emit
+  before durable" contract. A `turn_started` that cannot be recorded at all
+  now fails the turn with `PERSISTENCE_FAILED` instead of propagating out of
+  the runner. Verified live: on a full disk the turn converges to
+  `turn_failed PERSISTENCE_FAILED`, the session accepts a new turn once space
+  is freed, and shutdown is clean. Pinned in
+  `packages/server/test/production-readiness-audit.test.ts`
+  ("terminal events converge in-memory").
+- **A brand-new turn with no recorded events was reported as stuck for about
+  56 years.** `createInitialTurnState` sets `updatedAt: 0`, and the
+  stuck-turn check aged the turn from that epoch (`0` is not nullish, so `??`
+  never fell back). Any turn whose first event failed to persist was
+  instantly flagged as a `stuckTurn` alert with an absurd duration, keeping
+  `/api/health` degraded. Age now falls back to the log's in-memory creation
+  time. Pinned in `packages/server/test/metrics-alerts.test.ts`.
+- **`/api/health` and `/api/diagnostics/persistence` always reported
+  `turnsLoaded: 0` and `turnsWithRestart: 0`.** `FileTurnLogStore
+  .getDiagnostics()` returns a fresh copy on every call, and boot mutated
+  that throwaway copy, so the recovered/RESTART counts reached only the boot
+  log and `diagnostics.boot` — the live endpoints silently reported the
+  store's zero defaults. The manager now keeps the corrected figures and the
+  endpoints use them. Pinned in `packages/server/test/boot.test.ts`
+  (file-mode recovery tests now assert the live counters).
+- **The boot banner (and, for bracketed input, the ready/UI URLs) mangled
+  IPv6 hosts.** `HOST=::1` printed `bind: ::1:7634`, ambiguous between host
+  and port, and `HOST=[::1]` — accepted by the loopback check — would have
+  produced `http://[[::1]]:7634`. The banner now brackets IPv6 hosts and
+  `formatUrl` tolerates already-bracketed input. Pinned in
+  `packages/server/test/config.test.ts` and `packages/server/test/boot.test.ts`.
 - **The CI signing gate asserted a signature on an artifact that is never
   signed, and failed.** An uninstaller check was added to the `Desktop signing`
   job on the reasoning that `electron-builder.yml` says signing covers the

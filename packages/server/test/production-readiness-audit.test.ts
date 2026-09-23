@@ -202,6 +202,45 @@ describe("Production-readiness audit", () => {
 
       await removeTempPath(dir);
     });
+
+    it("terminal events converge in-memory when persistence is unavailable (no zombie turns)", async () => {
+      const dir = await mkTmpDir();
+      const turnStore = new FileTurnLogStore({ dataDir: dir });
+
+      const manager = new TurnManager({ store: turnStore, now: () => Date.now(), durableBeforeNotify: true });
+      manager.ensureLog("s", "t_zombie");
+      (turnStore as any).append = async () => {
+        throw new Error("ENOSPC: no space left on device");
+      };
+
+      // Non-terminal events keep the strict contract: throw, never emit.
+      let threw = false;
+      try {
+        await manager.appendAsync("s", "t_zombie", { type: "text_delta", delta: "x" } as any);
+      } catch {
+        threw = true;
+      }
+      assert.equal(threw, true, "non-terminal event still throws in durable mode");
+
+      // A terminal event must converge in-memory instead of leaving the turn
+      // non-terminal forever (the zombie-turn bug): the session's active
+      // count must drop to zero even though nothing was durably written.
+      const emitted: any[] = [];
+      manager.subscribe("s", "t_zombie", 0, (e) => emitted.push(e));
+      const terminal = await manager.appendAsync(
+        "s",
+        "t_zombie",
+        { type: "turn_failed", code: "PERSISTENCE_FAILED", message: "turn could not be started durably: ENOSPC", retryable: false } as any
+      );
+      assert.equal(terminal.type, "turn_failed", "terminal append resolves instead of throwing");
+      const log = manager.getLog("t_zombie")!;
+      assert.equal(log.state.isTerminal, true, "turn converges to terminal in-memory");
+      assert.equal(log.state.status, "failed");
+      assert.equal(emitted.length, 1, "listener notified of the terminal event");
+      assert.equal(manager.getActiveTurnCount(), 0, "no active (zombie) turns remain");
+
+      await removeTempPath(dir);
+    });
   });
 
   describe("3. Security review", () => {

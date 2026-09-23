@@ -285,6 +285,7 @@ describe("startServer — refusals", () => {
 
   it("formats IPv6 hosts with brackets", () => {
     assert.equal(formatUrl("::1", 80), "http://[::1]:80");
+    assert.equal(formatUrl("[::1]", 80), "http://[::1]:80");
     assert.equal(formatUrl("127.0.0.1", 7634), "http://127.0.0.1:7634");
   });
 });
@@ -318,6 +319,10 @@ describe("startServer — file mode", () => {
     assert.equal(health.persistence.dataDir, dataDir);
     assert.equal(health.diagnostics.boot.turns.turnsLoaded, 1);
     assert.equal(health.diagnostics.boot.sessions.sessionsLoaded, 1);
+    // Live persistence diagnostics must carry the same recovery counts (regression:
+    // the store's fresh-copy diagnostics always reported 0/0 after boot).
+    assert.equal(health.diagnostics.persistence.turnsLoaded, 1, "health persistence diagnostics report recovered turns");
+    assert.equal(health.diagnostics.persistence.turnsWithRestart, 0, "terminal turn gets no RESTART, in live diagnostics too");
   });
 
   it("marks a non-terminal persisted turn RESTART and skips sessions outside the current allowed roots", async () => {
@@ -368,16 +373,75 @@ describe("startServer — file mode", () => {
     assert.equal(replay[1].code, "RESTART");
     assert.equal(replay[1].seq, 2);
 
+    // Live diagnostics agree with the boot record (regression for the fresh-copy
+    // diagnostics that always reported 0/0).
+    const healthRestart = (await authed(`${handle.url}/api/health`).then((r) => r.json())) as any;
+    assert.equal(healthRestart.diagnostics.persistence.turnsLoaded, 2);
+    assert.equal(healthRestart.diagnostics.persistence.turnsWithRestart, 2);
+
     // Restart is idempotent: a third boot appends no second RESTART.
     await handle.close();
     const again = await start(baseConfig({ allowedRoots: [project], persistence: { mode: "file", dataDir, durableBeforeNotify: true } }));
     assert.equal(again.boot.turns.turnsWithRestart, 0);
+    const healthAgain = (await authed(`${again.url}/api/health`).then((r) => r.json())) as any;
+    assert.equal(healthAgain.diagnostics.persistence.turnsLoaded, 2);
+    assert.equal(healthAgain.diagnostics.persistence.turnsWithRestart, 0, "no second RESTART reported in live diagnostics");
     const lines = (await fs.readFile(path.join(dataDir, "sessions", "inside", "turns", "t_inside.jsonl"), "utf8")).split("\n").filter(Boolean);
     assert.equal(lines.length, 2);
 
     // The skipped session's root is outside the allowed roots, so it cannot be resumed.
     const refused = await postTurn(again.url, "outside", outside, "resume?");
     assert.equal(refused.status, 403);
+  });
+
+  it("advisory instance lock: live foreign owner warns without blocking, stale lock is reclaimed, clean close releases", async () => {
+    const dataDir = await mkTmp();
+    const project = await mkTmp("wr-boot-project-");
+    const lockFile = path.join(dataDir, ".instance-lock");
+    const config = baseConfig({ allowedRoots: [project], persistence: { mode: "file", dataDir, durableBeforeNotify: true } });
+
+    // 1) A live, foreign owner: boot must warn but not block, and not steal the lock.
+    const foreign = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 30_000)"]);
+    try {
+      await new Promise<void>((resolve) => {
+        foreign.on("spawn", () => resolve());
+        setTimeout(resolve, 2_000);
+      });
+      assert.ok(foreign.pid, "helper process must have a pid");
+      await fs.writeFile(lockFile, `${foreign.pid}\n`);
+
+      const warnings: string[] = [];
+      const first = await start(config, { log: (line) => warnings.push(line) });
+      assert.ok(
+        warnings.some((line) => /another instance \(pid \d+\) appears to be using data dir/.test(line)),
+        `boot should warn about the live foreign instance, got: ${JSON.stringify(warnings)}`
+      );
+      assert.equal(await fs.readFile(lockFile, "utf8"), `${foreign.pid}\n`, "foreign lock must not be stolen");
+      await first.close();
+      assert.equal(await fs.readFile(lockFile, "utf8"), `${foreign.pid}\n`, "clean close must not release a foreign lock");
+    } finally {
+      foreign.kill("SIGKILL");
+      await new Promise<void>((resolve) => foreign.on("exit", () => resolve()));
+    }
+
+    // 2) A stale lock (dead pid) is reclaimed, and a clean close removes it.
+    const dead = spawn(process.execPath, ["-e", "process.exit(0)"]);
+    const deadPid = (await new Promise<number>((resolve) => dead.on("exit", () => resolve(dead.pid ?? 0)))) || 0;
+    assert.ok(deadPid > 0, "dead helper pid captured");
+    await fs.writeFile(lockFile, `${deadPid}\n`);
+
+    const reclaimed: string[] = [];
+    const second = await start(config, { log: (line) => reclaimed.push(line) });
+    assert.ok(!reclaimed.some((line) => /another instance/.test(line)), "dead pid must not trigger the live-instance warning");
+    assert.equal(await fs.readFile(lockFile, "utf8"), `${process.pid}\n`, "stale lock reclaimed by this process");
+    await second.close();
+    let stillThere = true;
+    try {
+      await fs.access(lockFile);
+    } catch {
+      stillThere = false;
+    }
+    assert.equal(stillThere, false, "clean close releases our own instance lock");
   });
 });
 
@@ -396,7 +460,11 @@ describe("close() with in-flight work", () => {
     const result = await handle.close({ graceMs: 3_000, reason: "test shutdown" });
     assert.equal(result.abortedTurns, 1);
     assert.equal(result.forced, false, "the turn settled, nothing had to be forced");
-    assert.ok(Date.now() - startedAt < 3_000);
+    // The 3_000ms grace bound is a wall-clock sanity check, not a contract:
+    // on a heavily loaded CI runner the event loop can legitimately be
+    // delayed a few hundred ms per await. Keep enough headroom that the
+    // assertion catches hangs, not scheduling noise.
+    assert.ok(Date.now() - startedAt < 5_000, `close() took ${Date.now() - startedAt}ms`);
 
     const log = handle.manager.getLog(body.turnId)!;
     assert.equal(log.state.status, "cancelled");

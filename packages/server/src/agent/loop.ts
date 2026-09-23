@@ -121,7 +121,28 @@ export class TurnRunner {
       throw err;
     }
 
-    await append({ type: "turn_started", limits, message: request.messages[0]?.content ?? "", root: projectRoot.getRoot(), realRoot: projectRoot.getRealRoot() } as any);
+    // turn_started must be durable before anything else (durable mode). If it
+    // cannot be recorded at all (e.g. disk full), report it to the client and
+    // converge: the terminal event is applied in-memory even though durability
+    // just failed (TurnManager terminal fallback), so this turn cannot become
+    // a zombie. The persistence failure alert has already fired via the store.
+    let turnStartedPersisted = true;
+    await append({ type: "turn_started", limits, message: request.messages[0]?.content ?? "", root: projectRoot.getRoot(), realRoot: projectRoot.getRealRoot() } as any).catch(async (err) => {
+      turnStartedPersisted = false;
+      try {
+        await append({
+          type: "turn_failed",
+          code: "PERSISTENCE_FAILED",
+          message: `turn could not be started durably: ${err instanceof Error ? err.message : String(err)}`,
+          retryable: false,
+        });
+      } catch {
+        // Even the in-memory convergence failed; nothing more to do here.
+      }
+    });
+    if (!turnStartedPersisted) {
+      return { status: "failed", message: "turn could not be started (persistence failure)" };
+    }
     const turnStartedAt = this.now();
 
     // Auto-discovery index (ADR 003, phase 5). Prepended to the first user

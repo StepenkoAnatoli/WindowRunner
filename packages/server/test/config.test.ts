@@ -197,6 +197,8 @@ describe("isLoopbackHost", () => {
 
 describe("describeConfig", () => {
   it("renders every setting and flags the offline provider and non-loopback binds", () => {
+    const ipv6Loopback = describeConfig(load({ HOST: "::1" })).join("\n");
+    assert.match(ipv6Loopback, /bind: +\[::1\]:7634 \(loopback only\)/);
     const loopback = describeConfig(load({})).join("\n");
     assert.match(loopback, /bind: +127\.0\.0\.1:7634 \(loopback only\)/);
     assert.match(loopback, /provider: +mock \(offline; no model calls are made\)/);
