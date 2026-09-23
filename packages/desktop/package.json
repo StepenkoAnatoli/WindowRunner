@@ -17,7 +17,8 @@
     "smoke:electron": "tsx --test test/electron-smoke.ts",
     "e2e": "playwright test",
     "package:win": "electron-builder --win nsis --config electron-builder.yml",
-    "package:win:release": "electron-builder --win nsis --config electron-builder.yml -c.forceCodeSigning=true"
+    "package:win:release": "electron-builder --win nsis --config electron-builder.yml -c.forceCodeSigning=true",
+    "pretest": "node scripts/ensure-built.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
@@ -29,5 +30,8 @@
     "playwright-core": "^1.63.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@windows-runner/shared": "*"
   }
 }

@@ -1,16 +1,17 @@
-# The nine required checks of the merge gate — every PR run must land all nine
-# green before merge. The first eight are the B2 merge gate (plan B2.5.4); the
-# ninth (Desktop signing) was added by B5 to prove the code-signing pipeline:
+# The seven required checks of the merge gate — every PR run must land all
+# seven green before merge. WindowRunner is Windows-only: the Platform and
+# Desktop legs run on windows-latest, and macOS coverage was deliberately set
+# aside (the `CI`/`Docker`/`Browser E2E` jobs still run on ubuntu-latest
+# runners because they are cheap, fast test infrastructure for the Node
+# server, not platform support claims):
 #   1. CI
 #   2. Browser E2E
 #   3. Docker
 #   4. Platform (windows-latest)
-#   5. Platform (macos-latest)
-#   6. Desktop (ubuntu-latest)
-#   7. Desktop (windows-latest)
-#   8. Desktop installer (windows-latest)  (B5 also verifies in-place upgrade
+#   5. Desktop (windows-latest)
+#   6. Desktop installer (windows-latest)  (B5 also verifies in-place upgrade
 #      and data-surviving uninstall here)
-#   9. Desktop signing (windows-latest)
+#   7. Desktop signing (windows-latest)
 # The two inventory steps below ("Enforce B2 browser contract inventory",
 # "Enforce B2 desktop contract inventory") fail the run if the B2 spec files
 # are deleted, renamed, or stop being discovered — the coverage cannot shrink
@@ -326,10 +327,11 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # Windows/macOS validation (gap G-06): the lifecycle, the packed-tarball and
-  # startup smokes, and the native installer scripts, where shells, installers
+  # Windows validation (gap G-06): the lifecycle, the packed-tarball and
+  # startup smokes, and the native installer script, where shells, installers
   # and path behavior differ from Linux. Runs after `ci` so a broken build
-  # fails fast; fail-fast is off so one OS result never hides the other.
+  # fails fast. macOS support was deliberately set aside with the Windows-only
+  # product focus (the file-driven install.sh path was removed with it).
   platform:
     name: Platform (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -337,12 +339,12 @@ jobs:
     needs: [ci]
     env:
       # See the note in the ci job: no Electron binary needed here (covers the
-      # nested `npm run setup` install inside install.sh / install.ps1 too).
+      # nested `npm run setup` install inside install.ps1 too).
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]
 
     steps:
       - name: Checkout
@@ -390,21 +392,12 @@ jobs:
           set -o pipefail
           npm run smoke:start 2>&1 | tee smoke-start.log
 
-      # Exercises the Unix installer end to end in checkout mode (prerequisite
-      # checks, checkout detection, `npm run setup` orchestration). --no-start
-      # skips the interactive offer; there is no TTY under CI.
-      - name: Run install.sh in checkout mode
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -o pipefail
-          bash install.sh --no-start 2>&1 | tee installer.log
-
-      # Same for the Windows installer. -ExecutionPolicy Bypass is CI-only
-      # plumbing so the script is guaranteed to execute; it validates the
-      # script logic, not the policy UX (see docs/INSTALL.md troubleshooting).
+      # Exercises the Windows installer end to end in checkout mode
+      # (prerequisite checks, checkout detection, `npm run setup`
+      # orchestration). -ExecutionPolicy Bypass is CI-only plumbing so the
+      # script is guaranteed to execute; it validates the script logic, not
+      # the policy UX (see docs/INSTALL.md troubleshooting).
       - name: Run install.ps1 in checkout mode
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart 2>&1 | Tee-Object -FilePath installer.log
@@ -490,7 +483,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
 
     steps:
       - name: Checkout
@@ -522,26 +515,15 @@ jobs:
           set -o pipefail
           npm run test:desktop 2>&1 | tee test-desktop.log
 
-      # @sparticuz/chromium ships an ELF binary: Linux only.
-      - name: Page smoke (real headless Chromium at /desktop)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run smoke:page --workspace packages/desktop 2>&1 | tee smoke-page.log
-
-      # Electron opens windows; on Linux CI that needs a display. `xvfb-run -a`
-      # provides a virtual one (the ozone headless route hung the Electron
-      # launch handshake on ubuntu-latest; xvfb is the battle-tested path).
+      # Electron smoke (real unpacked Electron). The former Linux-only page
+      # smoke (sparticuz Chromium is an ELF binary) was removed with the
+      # Linux desktop leg; the Electron smoke drives the same /desktop page
+      # in the real shell, which is the surface that ships.
       - name: Electron smoke (real unpacked Electron)
         shell: bash
         run: |
           set -o pipefail
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
-          else
-            npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
-          fi
+          npm run smoke:electron --workspace packages/desktop 2>&1 | tee smoke-electron.log
 
       # B2 desktop contract: the core journey and the provider/settings journey
       # both ship — in this job against the unpacked app, and in the installer
@@ -561,11 +543,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
-          else
-            npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
-          fi
+          npm run e2e --workspace packages/desktop 2>&1 | tee e2e-desktop.log
         env:
           CI: "1"
 

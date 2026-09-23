@@ -231,6 +231,57 @@ test("cancel endpoint aborts turn", async () => {
   server.close();
 });
 
+test("cancel of an unknown turn is 404 TURN_NOT_FOUND", async () => {
+  const provider = new FakeProvider([() => ({ chunks: [{ type: "text_delta", text: "hi" }] })]);
+  const { app } = createTestDeps(provider);
+
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  const res = await fetch(`${base}/api/sessions/s1/turns/t_missing/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 404);
+  const body = (await res.json()) as { code: string };
+  assert.equal(body.code, "TURN_NOT_FOUND");
+
+  server.close();
+});
+
+test("cancel of an already finished turn is 409 TURN_NOT_ACTIVE, not a fake 202", async () => {
+  const provider = new FakeProvider([() => ({ chunks: [{ type: "text_delta", text: "hello" }] })]);
+  const { app } = createTestDeps(provider);
+
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  const started = await fetch(`${base}/api/sessions/s1/turns`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cwd: "/workspace", message: "hi" }),
+  });
+  const { turnId } = (await started.json()) as { turnId: string };
+
+  // Let the mock turn run to completion before cancelling.
+  await readSSEUntil(`${base}/api/sessions/s1/turns/${turnId}/events`, /turn_completed/, { timeoutMs: 5000 });
+
+  const cancelRes = await fetch(`${base}/api/sessions/s1/turns/${turnId}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reason: "too late" }),
+  });
+  assert.equal(cancelRes.status, 409);
+  const body = (await cancelRes.json()) as { code: string; state: string };
+  assert.equal(body.code, "TURN_NOT_ACTIVE");
+  assert.equal(body.state, "completed");
+
+  server.close();
+});
+
 test("session root pinning — second turn with different cwd rejected", async () => {
   const provider = new FakeProvider([() => ({ chunks: [{ type: "text_delta", text: "hello" }] })]);
   const { app } = createTestDeps(provider);

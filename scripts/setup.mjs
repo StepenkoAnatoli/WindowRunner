@@ -4,7 +4,7 @@
  *
  * One command for a fresh checkout: verify the toolchain, install dependencies
  * from the lockfile, build the workspaces, and print what is actually available
- * afterwards. Called by install.sh and install.ps1, and documented in README as
+ * afterwards. Called by install.ps1, and documented in README as
  * the "clone + npm run setup" path.
  *
  * This does not start anything: it prepares the checkout so that `npm start`

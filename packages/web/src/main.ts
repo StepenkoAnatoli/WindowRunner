@@ -318,6 +318,10 @@ async function cancelActive(): Promise<void> {
   try {
     await client.cancelTurn(state.session.sessionId, turn.turnId, "stopped from the web UI");
   } catch (err) {
+    // A 409 TURN_NOT_ACTIVE means the turn reached a terminal state while the
+    // request was in flight — exactly what Stop wanted. Anything else is a
+    // real failure and is reported.
+    if (err instanceof ApiRequestError && err.code === "TURN_NOT_ACTIVE") return;
     reportError(err);
   }
 }

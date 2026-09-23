@@ -251,10 +251,10 @@ describe("Packaging contract", () => {
      * so this list cannot quietly go stale in either direction: add the file and
      * the test tells you to remove it from here.
      */
-    const KNOWN_ABSENT = ["docs/THREAT_MODEL.md"];
+    const KNOWN_ABSENT: string[] = [];
 
     it("docs referenced by the installers and Dockerfile exist", () => {
-      const surfaces = ["Dockerfile", "install.sh", "install.ps1", "README.md"];
+      const surfaces = ["Dockerfile", "install.ps1", "README.md"];
       for (const surface of surfaces) {
         assert.ok(exists(surface), `${surface} is missing`);
         const text = fs.readFileSync(path.join(repoRoot, surface), "utf8");
@@ -319,7 +319,7 @@ describe("Packaging contract", () => {
       }
     });
 
-    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test, the startup smoke test, the Docker compose stack and the Windows/macOS platform matrix", () => {
+    it("runs typecheck, test, build, the packed-artifact smoke test, packed-tarball start test, the startup smoke test, the Docker compose stack and the Windows-only platform leg", () => {
       const text = fs.readFileSync(path.join(repoRoot, workflowPath), "utf8");
       for (const command of [
         "npm run typecheck",
@@ -330,12 +330,14 @@ describe("Packaging contract", () => {
         "npm run smoke:start",
         "docker compose up --build -d",
         "windows-latest",
-        "macos-latest",
-        "install.sh --no-start",
         "install.ps1 -NoStart",
       ]) {
         assert.match(text, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `CI does not run \`${command}\``);
       }
+      // Windows-only product scope: the removed legs must not come back by
+      // accident, and the macOS installer script must stay gone.
+      assert.ok(!text.includes("macos-latest"), "CI still mentions macos-latest — the macOS leg was removed with the Windows-only scope");
+      assert.ok(!text.includes("install.sh --no-start"), "CI still runs install.sh — the Unix installer was removed");
     });
 
     it("runs the startup smoke test after the build it depends on", () => {

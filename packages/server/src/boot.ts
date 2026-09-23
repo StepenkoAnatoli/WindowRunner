@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
+import type { AppHandle } from "./http/runtime.js";
 import { ConfigError, isLoopbackHost, ENV, MIN_AUTH_TOKEN_LENGTH, type ServerConfig } from "./config.js";
 import { generateAuthToken } from "./security.js";
 import { ProjectTrustRegistry } from "./agent/project-trust.js";
@@ -123,7 +124,7 @@ export interface BootDiagnostics {
 
 export interface Runtime {
   config: ServerConfig;
-  app: any;
+  app: AppHandle;
   manager: TurnManager;
   approvals: ApprovalRegistry;
   sessionManager: SessionManager;

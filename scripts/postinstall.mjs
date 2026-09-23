@@ -21,7 +21,7 @@
  * - Exits 0 when the install is healthy, so a plain `npm ci` succeeds.
  * - Exits 1 with an actionable list when the tree is broken.
  * - Honors WINDOWS_RUNNER_SKIP_POSTINSTALL=1, the escape hatch used by
- *   install.sh, install.ps1 and the Dockerfile dependency layer.
+ *   install.ps1 and the Dockerfile dependency layer.
  */
 
 import { readFileSync, existsSync } from "node:fs";
