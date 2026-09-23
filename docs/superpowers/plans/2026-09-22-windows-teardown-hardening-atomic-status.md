@@ -9,18 +9,37 @@ Chat history is not durable — this file is.
 Branch: `arena/01a0cac5-windowrunner`
 Session base: `main` @ `dc604c9` (merge of PR #36)
 This session's first PR: #37 (the PR #36 merge record) → `main` @ `cf40253`
+This session's stage PR: #38 (the hardening) → `main` @ `95a50dd`
 Plan: `docs/superpowers/plans/2026-09-22-windows-teardown-hardening.md`
+
+> **CLOSING NOTE — 2026-09-22: PR #38 is merged and both of its runs are
+> green.** The final head `6a724f5` ("fix(test): normalize repo-relative
+> paths in the teardown audit") ran all nine checks green — run
+> [35782302977](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35782302977),
+> 20:45:02Z → 20:52:19Z — `Platform (windows-latest)` included, the leg that
+> failed round 1. PR #38 merged into `main` as
+> `95a50dd61336d2b848e335ac4825623ea4609410` at 2026-09-22T20:52:41Z, and the
+> post-merge `main` run
+> [35783116241](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35783116241),
+> 20:52:44Z → 20:59:39Z, is 9/9 green on the merge commit. Recorded by the
+> next session (branch `arena/01a0ccba-windowrunner`) — per repo precedent a
+> status PR cannot contain its own final-head run, so this amendment is the
+> durable home for both. Both runs are rows in "CI status"; the evidence is
+> "What happened" item 9. `v0.1.0` is untouched: still Latest, four assets,
+> published 18:30:22Z, tag still `e06c191`.
 
 ## Status
 
-**Implemented, full local gate green, CI round 1 diagnosed and fixed, PR
-open.** The fix, the audit that keeps it fixed and the stage's paperwork are
-done and locally verified; CI round 1 came back 8/9 — `Platform
-(windows-latest)` failed the *new guard itself* (a POSIX-only path comparison,
-invisible on Linux) — and the fix plus a regression pin are in. The nine CI
-checks on the final head commit are the merge gate, and the post-merge `main`
-run is verified by the next session — per repo precedent a status PR cannot
-contain its own final-head run.
+**Merged and verified — the recorded known gap is closed on `main`.** The fix,
+the audit that keeps it fixed and the stage's paperwork are done and locally
+verified; CI round 1 came back 8/9 — `Platform (windows-latest)` failed the
+*new guard itself* (a POSIX-only path comparison, invisible on Linux) — and the
+fix plus a regression pin went in. Round 2 on the final head `6a724f5` was
+**9/9** (run 35782302977), PR #38 merged as `95a50dd`, and the post-merge
+`main` run 35783116241 is **9/9** on that merge commit. The authoring session
+could not record those two runs itself — a status PR cannot contain its own
+final-head run — so the closing note and item 9 below are that record, added
+by the next session.
 
 ## What happened, in order
 
@@ -103,6 +122,38 @@ contain its own final-head run.
    path, because the mismatch is invisible on Linux and macOS. Re-verified
    locally (guard 7/7, typechecks, suites). The fix commit creates the final
    head, which re-runs the full matrix fresh — the merge gate.
+9. **Round 2 green, PR #38 merged, post-merge `main` green (recorded by the
+   next session, 2026-09-22).** The final head `6a724f5` ran the full matrix
+   fresh: run
+   [35782302977](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35782302977)
+   (`pull_request`), 20:45:02Z → 20:52:19Z, **9/9 green** — `CI`, `Browser
+   E2E`, `Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`,
+   `Desktop (ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
+   (windows-latest)`, `Desktop signing (windows-latest)`. `Platform
+   (windows-latest)` — the round-1 casualty — passed, so the converted suites,
+   the guard and the two smoke scripts all run green on Windows; the merge gate
+   was satisfied on the head commit. PR #38 merged as
+   `95a50dd61336d2b848e335ac4825623ea4609410` at 2026-09-22T20:52:41Z, and the
+   post-merge `main` run
+   [35783116241](https://github.com/StepenkoAnatoli/WindowRunner/actions/runs/35783116241)
+   (`push`), 20:52:44Z → 20:59:39Z, is **9/9 green on the merge commit** —
+   the same nine legs. **How this was verified (two independent sources):**
+   the run/job API — nine jobs, nine `success` conclusions on each run — and
+   the public check-runs API on each commit (`6a724f5` and `95a50dd`):
+   `total_count: 9`, all nine `status: completed` / `conclusion: success`. The
+   local clone corroborates the merge: `95a50dd`'s parents are `cf40253` and
+   `6a724f5`. Handoff state re-checked at the same time: `main` is at
+   `95a50dd`, and the `v0.1.0` release is unchanged — still Latest, not a
+   draft, four assets, published 2026-09-22T18:30:22Z, tag `v0.1.0` still
+   pointing at `e06c191`. **What this amendment does not re-derive:** the
+   per-leg seconds quoted in PR #38's body (`Platform (windows-latest)` 3m12s,
+   `Desktop installer` 4m4s, and so on) — this sandbox's API returns empty
+   step timestamps and zero billable durations, so the amendment re-verified
+   the run windows (`run_duration_ms` 437000 and 415000, matching the
+   wall-clock spans above) and the conclusions, not the per-leg seconds.
+   **Docs touched by this amendment:** this file, plus the v0.1.0 record's
+   CLOSED entry and its verdict addendum, which now name the merge and both
+   runs — so the two records cannot drift apart on whether the gap is closed.
 
 ## Commits
 
@@ -110,7 +161,10 @@ contain its own final-head run.
 37cb67f — docs(status): record the PR #36 merge and post-merge runs   (PR #37 → cf40253)
 58c62e2 — docs(plan): define the Windows teardown hardening
 394c6b9 — fix(test): retry transient Windows failures when removing test temp paths
-<this>  — docs(status): record the Windows teardown hardening
+4cb00c4 — docs(status): record the Windows teardown hardening
+6a724f5 — fix(test): normalize repo-relative paths in the teardown audit   ← final head, 9/9
+          └─ PR #38 merged as 95a50dd (parents cf40253 + 6a724f5) at 2026-09-22T20:52:41Z
+<this>  — docs(status): record the PR #38 merge and post-merge runs   ← this amendment
 ```
 
 ## Files changed
@@ -167,6 +221,7 @@ Playwright specs and web e2e server helpers (their removals already
 | Guard vs. an injected regression | pass — restoring `fs.rm(dir, { recursive: true, force: true })` in `boot.test.ts` fails the audit with `packages/server/test/boot.test.ts — .rm(…` (5 pass, 1 fail); the injection was reverted and the tree is clean |
 | Guard vs. the round-1 Windows defect | pass — the `toPosix` pin feeds the normalizer a backslashed path (`packages\server\...`), the exact shape `path.relative` returns on Windows; it fails against the pre-fix comparison on any platform |
 | CI round 1 (Windows leg) | **fail, diagnosed** — the guard, not the fix (see item 8); eight legs green, including every converted suite on Windows |
+| CI round 2 (final head `6a724f5`) | **pass — 9/9** (run 35782302977, 20:45:02Z → 20:52:19Z): `Platform (windows-latest)` green with the guard, the converted suites and both smoke scripts on that leg; the post-merge `main` run 35783116241 is 9/9 on `95a50dd` (item 9) |
 | Windows legs / Electron / browser | executed by CI only (sandbox limitation, as in B3/B4/B5) |
 
 ## Acceptance criteria (from the plan)
@@ -179,10 +234,11 @@ Playwright specs and web e2e server helpers (their removals already
   ever does again).
 - Full local gate green in the corrected order: **pass** (baseline and
   after-fix, 12/12 steps each).
-- All nine CI checks green on the PR head: **pending** — round 1
-  (`4cb00c4`) was 8/9 with the guard's Windows defect, fixed in the final
-  head; that head's run is the merge gate and is recorded in the PR body and
-  below.
+- All nine CI checks green on the PR head: **pass** — round 1 (`4cb00c4`) was
+  8/9 with the guard's Windows defect; the final head `6a724f5` ran **9/9**
+  (run 35782302977), PR #38 merged as `95a50dd`, and the post-merge `main` run
+  35783116241 is **9/9** on the merge commit. Verified in item 9; both are rows
+  in "CI status".
 - v0.1.0 status file's known gap closed with the evidence + this record:
   **pass**.
 
@@ -245,19 +301,26 @@ Playwright specs and web e2e server helpers (their removals already
   the retries, so what the guard can prove is that the helper forwards
   `maxRetries`/`retryDelay` (injected `rm`) and that nothing bypasses it. The
   end-to-end proof is the Windows legs staying green on a tree whose removals
-  all go through the helper.
+  all go through the helper — now on record for two runs (35782302977 on the
+  final head, 35783116241 on the merge commit), each with `Platform
+  (windows-latest)` and `Desktop (windows-latest)` green.
 - **Residual flake risk is real but bounded.** A temp tree genuinely held
   (for example by a child process that never exits) still fails the hook after
   the retries — correct behavior, since that is a leak rather than a race.
   This stage does not add child-process fencing to every suite; the retries
   cover the observed class.
-- Standing items from the v0.1.0 record, unchanged: F-03 (production signing
-  certificate) open, owner action; auto-update gated on the certificate plus a
-  real feed; P1-01/P1-02/P1-03 residual, P1-04, G-05, installer fresh-clone and
-  interactive modes; branch protection deferred to project end by owner
-  decision.
+- **The remaining queue** — unchanged from the v0.1.0 record, whose "Windows
+  teardown flake" gap now reads **CLOSED**: auto-update (gated on the
+  production certificate *and* a real published feed), P1-01/P1-02/P1-03
+  residual, P1-04, G-05 (npm publication), and the installer fresh-clone and
+  interactive modes. F-03 (the certificate) and branch protection stay exactly
+  as the v0.1.0 record has them — an owner action, and deliberately deferred to
+  project end by owner decision — so neither is something this queue can pick
+  up as a stage on its own.
 - No release is re-cut for this stage: it is test-only, and `v0.1.0` remains
-  the published artifact.
+  the published artifact — re-verified at the amendment: still Latest, not a
+  draft, four assets, published 2026-09-22T18:30:22Z, tag `v0.1.0` still at
+  `e06c191`.
 
 ## CI status
 
@@ -266,14 +329,19 @@ Playwright specs and web e2e server helpers (their removals already
 | 35780220041 | `37cb67f` (PR #37) | 9/9 GREEN | PR #36 merge record — merge gate satisfied, merged as `cf40253` |
 | 35781014810 | `cf40253` | **9/9 GREEN** | post-merge main, PR #37 (20:33:01Z → 20:39:45Z) — the PR #36 bookkeeping is closed out |
 | 35781156495 | `4cb00c4` (PR #38, round 1) | 8/9 + diagnosed | `Platform (windows-latest)` failed the new guard's path comparison (item 8); both Windows legs of the *converted* suites were otherwise green; fix + pin added |
-| (this PR, final head) | `<head>` | pending | nine checks on the head commit — the merge gate |
+| 35782302977 | `6a724f5` (PR #38, round 2 — **final head**) | **9/9 GREEN** | the merge gate, satisfied: 20:45:02Z → 20:52:19Z, nine jobs `success`, `Platform (windows-latest)` green (the round-1 leg); check-runs API on the commit `total_count: 9`, all `success` — merged as `95a50dd` (item 9) |
+| 35783116241 | `95a50dd` | **9/9 GREEN** | post-merge main, PR #38 (20:52:44Z → 20:59:39Z) — the same nine legs green on the merge commit; the stage's bookkeeping is closed out (item 9) |
 
 ## Verdict
 
-**GO — the Windows teardown flake is fixed and guarded locally; CI round 1's
-red leg was the guard itself (diagnosed, fixed, pinned); the nine checks on
-the final head are the merge gate.** The stage closed the recorded known gap with a
-single shared helper, converted every removal that runs on Windows, and pinned
-the pattern so a new suite cannot reintroduce it. Nothing in this stage is a
-STOP; the remaining inputs are the same owner actions and candidate stages the
-v0.1.0 record lists.
+**GO — the Windows teardown flake is fixed, guarded, merged and verified.** CI
+round 1's red leg was the guard itself (diagnosed, fixed, pinned); the final
+head `6a724f5` then ran **9/9** (run 35782302977), PR #38 merged as `95a50dd`,
+and the post-merge `main` run 35783116241 is **9/9** on the merge commit — the
+merge gate was satisfied on the head commit and the fix is on `main`. The stage
+closed the recorded known gap with a single shared helper, converted every
+removal that runs on Windows, and pinned the pattern so a new suite cannot
+reintroduce it. Nothing in this stage is a STOP; the remaining inputs are the
+same owner actions and candidate stages the v0.1.0 record lists — auto-update
+(gated on the certificate plus a real feed), P1-01/P1-02/P1-03 residual,
+P1-04, G-05, and the installer fresh-clone and interactive modes.
