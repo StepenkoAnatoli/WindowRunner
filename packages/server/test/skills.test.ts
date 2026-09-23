@@ -23,6 +23,7 @@ import {
   BODY_TRUNCATED_NOTICE,
   MAX_BODY_CHARS,
   MAX_DESCRIPTION_CHARS,
+  MAX_SKILL_FILE_BYTES,
   SKILLS_DIR,
   SKILL_NAME_RE,
   loadSkills,
@@ -302,6 +303,49 @@ describe("skills loader: size limits", () => {
       assert.deepEqual(reasons(diagnostics), ["body_truncated"]);
     } finally {
       await ctx.cleanup();
+    }
+  });
+
+  it("refuses to read an oversized SKILL.md, checked by stat before the read", async () => {
+    // The cap is enforced on the file size, not on the parsed body, because
+    // MAX_BODY_CHARS only truncates once the content is already in memory —
+    // too late for a file that exists to exhaust it. Sparse allocation, so this
+    // costs no real disk.
+    const { root, cleanup } = await makeTempRoot();
+    try {
+      const dir = path.join(root, ".windowrunner", "skills", "huge-file");
+      await fs.mkdir(dir, { recursive: true });
+      const fh = await fs.open(path.join(dir, "SKILL.md"), "w");
+      try {
+        await fh.truncate(MAX_SKILL_FILE_BYTES + 1);
+      } finally {
+        await fh.close();
+      }
+      const pr = await ProjectRoot.create(root, []);
+      const { skills, diagnostics } = await loadSkills(pr);
+      assert.deepEqual(skills, []);
+      assert.deepEqual(reasons(diagnostics), ["file_too_large"]);
+      assert.match(diagnostics[0].message, /Refusing to read/);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("accepts a file at exactly the size limit", async () => {
+    const { root, cleanup } = await makeTempRoot();
+    try {
+      const dir = path.join(root, ".windowrunner", "skills", "at-limit");
+      await fs.mkdir(dir, { recursive: true });
+      const body = "---\nname: at-limit\ndescription: Right at the cap.\n---\npad\n";
+      const pad = "z".repeat(MAX_SKILL_FILE_BYTES - body.length);
+      await fs.writeFile(path.join(dir, "SKILL.md"), body + pad, "utf8");
+      const pr = await ProjectRoot.create(root, []);
+      const { skills, diagnostics } = await loadSkills(pr);
+      assert.equal(skills.length, 1, `expected the limit to be inclusive, got ${JSON.stringify(diagnostics)}`);
+      assert.equal(skills[0].name, "at-limit");
+      assert.equal(skills[0].truncated, true, "the body still exceeds MAX_BODY_CHARS and is truncated");
+    } finally {
+      await cleanup();
     }
   });
 });

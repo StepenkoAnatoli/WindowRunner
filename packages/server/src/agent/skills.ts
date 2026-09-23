@@ -50,6 +50,16 @@ export const MAX_DESCRIPTION_CHARS = 500;
 /** Body cap. A skill body is loaded into the model's context on demand. */
 export const MAX_BODY_CHARS = 32_000;
 
+/**
+ * Hard cap on the size of `SKILL.md` on disk, checked with `stat` BEFORE the
+ * file is read. `MAX_BODY_CHARS` only truncates once the content is already a
+ * string in memory, which is too late: skills are project-local, so a cloned
+ * repository authors them, and without this a 2 GB `SKILL.md` would be read
+ * into memory in full just to be thrown away. `read_file` has a `readLimit`
+ * for the same reason.
+ */
+export const MAX_SKILL_FILE_BYTES = 1024 * 1024;
+
 /** Appended to a truncated body so the model knows it is not seeing the end. */
 export const BODY_TRUNCATED_NOTICE = "\n\n[truncated: skill body exceeded the size limit]";
 
@@ -63,6 +73,7 @@ export type SkillDiagnosticReason =
   | "reserved_name"
   | "description_too_long"
   | "body_truncated"
+  | "file_too_large"
   | "path_escapes"
   | "io_error";
 
@@ -213,9 +224,15 @@ export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOp
     // Logical containment AND realpath, via ProjectRoot. A skill directory that
     // is a symlink out of the project is refused here — which is what stops a
     // cloned repository from pointing a "skill" at an arbitrary path on disk.
+    //
+    // The verified absolute path is kept and read directly, rather than handing
+    // the relative path back to `projectRoot.readFile` and paying for a third
+    // realpath per skill. That is safe precisely because `resolveReal` already
+    // resolved and contained it; skipping the check would not be.
+    let absSkillFile: string | undefined;
     try {
       await projectRoot.resolveReal(relDir);
-      await projectRoot.resolveReal(relPath);
+      absSkillFile = await projectRoot.resolveReal(relPath);
     } catch (err) {
       if (err instanceof PathError && err.code === "PATH_ESCAPES_ROOT") {
         diagnostics.push(diag("path_escapes", relDir, `not inside the project root: ${err.message}`));
@@ -227,6 +244,7 @@ export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOp
 
     let isDirectory = false;
     let hasSkillFile = false;
+    let skillFileBytes = 0;
     try {
       const absDir = projectRoot.resolve(relDir);
       // stat follows symlinks, but resolveReal above has already refused any
@@ -234,7 +252,7 @@ export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOp
       // shape-check is genuinely inside the root.
       isDirectory = (await fs.stat(absDir)).isDirectory();
       if (isDirectory) {
-        await fs.stat(projectRoot.resolve(relPath));
+        skillFileBytes = (await fs.stat(projectRoot.resolve(relPath))).size;
         hasSkillFile = true;
       }
     } catch {
@@ -246,16 +264,30 @@ export async function loadSkills(projectRoot: ProjectRoot, options: LoadSkillsOp
       diagnostics.push(diag("missing_skill_file", relDir, `no ${SKILL_FILE} in ${relDir}`));
       continue;
     }
+    // Checked before the read, not after: the point is to never hold the file
+    // in memory in the first place.
+    if (skillFileBytes > MAX_SKILL_FILE_BYTES) {
+      diagnostics.push(
+        diag(
+          "file_too_large",
+          relPath,
+          `${SKILL_FILE} is ${skillFileBytes} bytes; the limit is ${MAX_SKILL_FILE_BYTES}. Refusing to read it.`
+        )
+      );
+      continue;
+    }
 
     let raw: string;
+    if (!absSkillFile) {
+      // Unreachable given the continue above, but stated rather than asserted
+      // with `!` so a future reordering cannot turn it into a crash.
+      diagnostics.push(diag("io_error", relPath, `no resolved path for ${SKILL_FILE}`));
+      continue;
+    }
     try {
-      raw = await projectRoot.readFile(relPath);
+      raw = await fs.readFile(absSkillFile, "utf8");
     } catch (err) {
-      if (err instanceof PathError && err.code === "PATH_ESCAPES_ROOT") {
-        diagnostics.push(diag("path_escapes", relPath, `not inside the project root: ${err.message}`));
-      } else {
-        diagnostics.push(diag("io_error", relPath, `cannot read ${SKILL_FILE}: ${(err as Error)?.message ?? String(err)}`));
-      }
+      diagnostics.push(diag("io_error", relPath, `cannot read ${SKILL_FILE}: ${(err as Error)?.message ?? String(err)}`));
       continue;
     }
 
