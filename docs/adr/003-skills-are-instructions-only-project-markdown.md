@@ -66,13 +66,24 @@ Collapsing both modes onto one mechanism is deliberate: two activation paths wou
 | Case | Behaviour |
 | --- | --- |
 | No `.windowrunner/skills/` | Empty index, no diagnostic |
-| Malformed or missing frontmatter | Skill excluded; diagnostic names file and reason |
+| Stray non-directory entry in the skills dir | Ignored silently — not a skill attempt |
+| Directory with no `SKILL.md` | Excluded with a diagnostic — a half-created skill is worth reporting |
+| Missing frontmatter | Skill excluded; diagnostic names the file |
+| Malformed or non-scalar frontmatter | Skill excluded; diagnostic, scan continues |
+| Missing `description` | Excluded |
 | `name` ≠ directory name | Excluded with a diagnostic |
-| Duplicate names | The lexicographically-first path by relative directory name wins; diagnostic for each shadowed skill |
-| Name collides with a built-in tool | Excluded — ambiguity is refused, not resolved silently |
-| Invalid name (not `^[a-z0-9][a-z0-9-]*$`) | Excluded |
+| Name collides with a reserved tool name | Excluded — ambiguity is refused, not resolved silently |
+| Invalid name (not `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`) | Excluded |
+| Over-long `description` | Excluded (not silently clipped — the description ships in every turn's index) |
 | Oversized body | Truncated with a notice |
 | Path escape (`..`, absolute, symlink) | Refused by `ProjectRoot`, as for `read_file` |
+
+Two corrections made during implementation, both recorded here because each was a rule in the original design that turned out to be wrong:
+
+- **There is no duplicate-name precedence rule.** The original table specified "lexicographically-first path wins". That rule is unreachable: the name *is* the directory name and `name === dirName` is enforced, and directory entries are unique within a directory, so two skills cannot share a name. Shadowing is structurally impossible, and a test now pins that property so a future change letting frontmatter override the directory name has to confront it deliberately.
+- **`reserved_name` is defence in depth, not an active guard.** Every built-in tool uses underscores (`read_file`, `run_terminal`) and the name pattern forbids underscores, so a collision cannot occur today. The check is kept because the alternative is discovering the gap the day someone adds a dash-named tool; it is tested with a name that is pattern-valid so the assertion is not vacuous.
+
+The name pattern is also stricter than originally specified — `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` rather than `^[a-z0-9][a-z0-9-]*$`. It must start with a letter, and cannot end in a dash or contain `--`, because the name becomes a `/`-command and a `read_skill` argument.
 
 ### 7. Testing
 

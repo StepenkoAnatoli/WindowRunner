@@ -19,21 +19,24 @@ Pure module: `loadSkills(root: ProjectRoot) => Promise<{ skills: SkillMeta[]; di
 
 Scan `.windowrunner/skills/*/SKILL.md`, one directory per skill, directory name is the skill name. Parse YAML frontmatter; `name` must equal the directory name, `description` required and length-capped; unknown keys stripped, not rejected.
 
-Write the tests first, one per exclusion case from the ADR's error table:
+**DONE 2026-09-23.** `packages/server/src/agent/skills.ts` + `packages/server/test/skills.test.ts`, 16 tests, server suite 393 → 409.
 
-- [ ] Happy path: one well-formed skill returns one `SkillMeta`, no diagnostics
-- [ ] No `.windowrunner/skills/` directory → empty index, **no** diagnostic
-- [ ] Missing frontmatter → excluded, diagnostic names the file
-- [ ] Malformed YAML → excluded, diagnostic, scan continues to the next skill
-- [ ] Missing `description` → excluded
-- [ ] `name` ≠ directory name → excluded
-- [ ] Invalid name (not `^[a-z0-9][a-z0-9-]*$`) → excluded
-- [ ] Duplicate names → lexicographically-first path by relative directory name wins; one diagnostic per shadowed skill
-- [ ] Name collides with a built-in tool name → excluded
-- [ ] Body over the cap → returned truncated, with a notice in the diagnostic list
-- [ ] `..` / absolute / symlinked skill path → refused
+Types landed locally in `skills.ts` (`SkillMeta`, `SkillDiagnostic`, `SkillsIndex`) rather than in `packages/shared` — the loader has no cross-package consumer until phase 3, and hoisting them now would put types in shared with nothing importing them. Phase 3 moves them.
 
-**Verify:** `npx tsx --test packages/server/test/skills.test.ts`
+- [x] Happy path: one well-formed skill returns one `SkillMeta`, no diagnostics
+- [x] No `.windowrunner/skills/` directory → empty index, **no** diagnostic
+- [x] Stray non-directory entry → ignored; directory with no `SKILL.md` → diagnostic
+- [x] Missing frontmatter → excluded, diagnostic names the file
+- [x] Malformed / non-scalar frontmatter → excluded, diagnostic, scan continues
+- [x] Missing `description` → excluded
+- [x] `name` ≠ directory name → excluded
+- [x] Invalid name → excluded (pattern is `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`, stricter than the ADR originally specified)
+- [x] ~~Duplicate names → lexicographic precedence~~ — **rule removed as unreachable**; see the ADR. A test pins the property that makes shadowing impossible instead.
+- [x] Reserved tool name → excluded (defence in depth; tested with a pattern-valid name so the assertion is not vacuous)
+- [x] Over-long description → excluded; oversized body → truncated with a notice
+- [x] Symlinked skill directory pointing out of the project → refused with `path_escapes`
+
+**Verify:** `npx tsx --test packages/server/test/skills.test.ts` → 16/16; `npm run test --workspace packages/server` → 409/409; `npx tsc -p packages/server/tsconfig.json --noEmit` → clean.
 
 **Note — the YAML decision, resolved.** There is no YAML parser as a direct dependency: `packages/server/package.json` declares only `express` and `@windows-runner/shared` as runtime dependencies, and `js-yaml` is present in the tree transitively only.
 
