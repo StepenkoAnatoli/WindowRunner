@@ -10,9 +10,43 @@ section names below are allowed.
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- Nothing yet. Changes toward the next release accumulate here.
+- **Windows-only product scope.** The macOS and Linux user-platform claims,
+  installers and CI legs were deliberately set aside: the `Platform` and
+  `Desktop` CI legs now run only on `windows-latest`, the Unix `install.sh`
+  path was removed (`install.ps1` is the supported installer script), and the
+  README/install docs no longer advertise non-Windows platforms. Linux-based
+  `CI`/`Docker`/`Browser E2E` jobs remain as development/test infrastructure
+  for the Node server.
+
+### Fixed
+
+- The user-facing documentation told a different story than the code. Every
+  advertised-but-unimplemented feature claim was removed from `README.md` and
+  the release notes: project-context auto-discovery, a skills system
+  (SKILL.md, `/`-commands, the seven named skills, auto/manual-build modes),
+  MCP servers, crash reports (`/api/error-reports`), `delete_file` /
+  `web_fetch` / `git status` tools, `.windows-runner-ignore`, Tailwind v4
+  "glassmorphism" styling, and a "Context and spending limits" settings page.
+  None of these existed in the code; the tool list in the README is now the
+  complete list, and `AGENTS.md` now points at the real file map.
+- Cancelling a turn that does not exist now answers `404 TURN_NOT_FOUND`
+  (previously a lying `202 {"cancelled":true}`), and cancelling an
+  already-finished turn answers `409 TURN_NOT_ACTIVE` with its terminal state
+  instead of fake success. The UI Stop buttons treat the 409 race as success.
+- `npm test` no longer silently skips the desktop workspace: the desktop
+  `pretest` hook builds its shell when `dist/` is missing or stale, and the
+  root `test` script runs all four workspaces.
+- `docs/THREAT_MODEL.md` now exists (previously cited but absent) and
+  describes only shipped controls.
+
+### Removed
+
+- Process scaffolding moved out of the tree (recoverable from git history):
+  `docs/architecture/exploration-*` phase documents, `docs/superpowers/plans`,
+  `docs/research/restore-kit`, the checkout-integrity audit, and unused
+  `scripts/*.d.mts` type stubs.
 
 ## [0.1.0] - 2026-09-22
 
@@ -41,10 +75,9 @@ Windows installer) cut from this tree are the first installable ones.
 - Agent loop with sequential tool execution, approval gates (approve/deny over
   the API), project trust grants keyed by root + config hash, and process-tree
   termination on Stop/timeout (POSIX process groups, `taskkill /T` on Windows).
-- Root-confined tools — read, edit, list, terminal, git status — all going
-  through `safePath()` authorization against allowed project roots.
-- SKILL.md skill discovery with `includes:` resolution; skills ride in the
-  user turn, never the system prompt.
+- Root-confined tools — `read_file`, `write_file`, `edit_file`, `list_dir`,
+  `run_terminal` — all going through `safePath()` authorization against
+  allowed project roots.
 - File persistence with turn JSONL logs, session metadata, replay/`Last-Event-ID`
   resume, quarantine of malformed logs, retention that preserves active
   sessions, and `/api/diagnostics` observability.
@@ -61,9 +94,9 @@ Windows installer) cut from this tree are the first installable ones.
   `%LOCALAPPDATA%\Programs\WindowRunner`, silent install/uninstall (`/S`),
   user data preserved on uninstall; CI builds, installs, drives and uninstalls
   it on every push.
-- Native installers `install.sh` / `install.ps1` (checkout mode, verified in
-  CI), Docker image + compose stack, and a CLI launcher (`windows-runner`,
-  `wr`) shipped in the packed tarball.
+- Native Windows installer script `install.ps1` (checkout mode, verified in
+  CI), Docker image + compose stack (server-bundle verification), and a CLI
+  launcher (`windows-runner`, `wr`) shipped in the packed tarball.
 - Evaluation harness (`npm run eval`): scripted, keyless end-to-end runs in CI
   plus manual real-model mode.
 - Local crash diagnostics for the desktop shell (B5): Crashpad minidumps and

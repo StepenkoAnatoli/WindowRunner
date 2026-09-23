@@ -22,11 +22,13 @@ status rows were written against a repository state that had no CI at all.
 
 ### Enforced today
 
-Updated 2026-09-22 (B5). Nine jobs on every `push` to `main` and every
-`pull_request`. Concurrency cancels superseded runs on the same ref; each job
-has a 20–40-minute timeout; a diagnostics artifact is uploaded on failure.
-`CI` (`ubuntu-latest`) and `Platform` (`windows-latest` + `macos-latest`
-matrix, after `CI`) pin Node exactly to `22.23.2`; the `Docker` job (also
+Updated 2026-09-23 (Windows-only rescope). Seven jobs on every `push` to
+`main` and every `pull_request`. Concurrency cancels superseded runs on the
+same ref; each job has a 20–40-minute timeout; a diagnostics artifact is
+uploaded on failure. The product is Windows-only: the `Platform` and
+`Desktop` legs run on `windows-latest` only, and the macOS legs plus
+`install.sh` were removed on 2026-09-23. `CI` (`ubuntu-latest`) and
+`Platform` (`windows-latest`, after `CI`) pin Node exactly to `22.23.2`; the `Docker` job (also
 after `CI`) builds `node:22-alpine` images and needs no runner Node at all;
 `Browser E2E` (`ubuntu-latest`, after `CI`) installs Chromium via Playwright
 and drives the web UI against the real server with a scripted offline
@@ -45,14 +47,14 @@ checksums and changelog notes.
 | Build — emits `packages/*/dist` | `npm run build` |
 | Full test suite | `npm test` |
 | Release consistency — version single-source + changelog format (B5) | `npm run check:release` |
-| Production-dependency audit — zero runtime deps today, enforced (B5) | `npm audit --omit=dev --audit-level=high` |
+| Production-dependency audit — no known high/critical vulns in runtime deps (`express` + the workspace `shared` package are the only runtime deps), enforced (B5) | `npm audit --omit=dev --audit-level=high` |
 | Packed-artifact contents | `npm run smoke:packed` |
 | Packed-tarball startup — unpacks tarball and runs `npm start` in clean dir | `npm run smoke:packed:start` |
 | Startup smoke — boots the built server, runs a turn over SSE, restarts, clean SIGTERM | `npm run smoke:start` |
 | Evaluation harness, scripted mode — real server + `openai-compatible` adapter + built-in tools + approvals against a fake endpoint; five tasks with hidden checks; no keys | `npm run eval -- --expect-pass` |
 | Browser E2E — Playwright/Chromium against the web UI, scripted provider, fixed token, no keys (`Browser E2E` job) | `npm run e2e` (after `npm run e2e:install`) |
 | Docker image + compose — builds the image, boots the bundle, runs a mock turn over SSE, clean SIGTERM exit | `docker compose up --build -d` (plus health/turn/exit assertions inline in `ci.yml`) |
-| Windows/macOS lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` matrix (`windows-latest`, `macos-latest`): same commands as `CI`, plus `install.sh --no-start` / `install.ps1 -NoStart` |
+| Windows lifecycle — install, typecheck, build, test, packed + startup smokes, native installer in checkout mode | `Platform` (`windows-latest`): same commands as `CI`, plus `install.ps1 -NoStart` |
 | Desktop shell — typecheck, unit tests, page + Electron smokes, unpacked-app e2e | `Desktop` matrix (`ubuntu-latest`, `windows-latest`) |
 | NSIS installer — build, checksums, silent install, installed-app e2e, **in-place upgrade with data preservation (B5.6)**, silent uninstall with user-data survival | `Desktop installer` (`windows-latest`) |
 | Code-signing pipeline — self-signed test certificate → signed app exe + installer (B5.3) | `Desktop signing` (`windows-latest`) |
@@ -80,9 +82,8 @@ Branch protection on `main` is not set. The automation token used to open and
 merge these PRs is refused read *and* write access to the protection rules
 (HTTP 403, re-verified 2026-09-22 during B5), so it could not enable them and
 could not verify whether they exist.
-Until a repository admin requires the nine status checks — `CI`,
+Until a repository admin requires the seven status checks — `CI`,
 `Browser E2E`, `Docker`, `Platform (windows-latest)`,
-`Platform (macos-latest)`, `Desktop (ubuntu-latest)`,
 `Desktop (windows-latest)`, `Desktop installer (windows-latest)`, and
 `Desktop signing (windows-latest)` — and at
 least one approval on `main`, a green `CI` run is **informational**: it does not
@@ -91,8 +92,8 @@ block a merge, and "failed CI gates block release" (P1-06) is not true.
 **Admin action deferred by owner decision (2026-09-22):** branch protection
 will be configured only at the end of the project — a deliberate deferral,
 not a gap, and not an open item for status tracking before then. When
-configured: on `main`, require the nine status checks listed
-above, plus >= 1 approving review. All nine are required:
+configured: on `main`, require the seven status checks listed
+above, plus >= 1 approving review. All seven are required:
 `Browser E2E` is the only job that drives the shipped UI (including `/dashboard`)
 in a real browser, so omitting it would let a merge land that passes every unit
 and server test while breaking the page users actually open; the installer and
@@ -101,11 +102,9 @@ upgrade, uninstall and sign. This is the only
 item in this section that cannot be done from a pull request.
 
 The exact check names are the job `name:` values in `.github/workflows/ci.yml`
-(`CI`, `Browser E2E`, `Docker`, `Platform (${{ matrix.os }})`,
-`Desktop (${{ matrix.os }})`, `Desktop installer (windows-latest)`,
-`Desktop signing (windows-latest)`); the platform legs
-appear as `Platform (windows-latest)` and `Platform (macos-latest)`, the
-desktop legs as `Desktop (ubuntu-latest)` and `Desktop (windows-latest)`.
+(`CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`,
+`Desktop (windows-latest)`, `Desktop installer (windows-latest)`,
+`Desktop signing (windows-latest)`).
 
 ### Latent risk — not a defect today
 
@@ -153,7 +152,7 @@ them, so a check would be speculative and untestable against real input.
 | P1-05 | **Largely landed 2026-09-20 (Phase 3).** `src/process-tree.ts` (process group on POSIX, `taskkill /T` on Windows) and `run_terminal` in `src/agent/tools/builtin.ts`; tree kill on timeout and Stop is tested with a grandchild pid on POSIX (`builtin-tools.test.ts`); Windows leg runs the same suite minus the pid checks. Malformed/unknown tool calls are controlled errors. Automatic retry/backoff also landed (`src/providers/retry.ts`, `test/retry.test.ts`): retryable errors only, only before the first chunk of an attempt, `Retry-After` honoured, jittered exponential backoff, abort during the wait. Open: a test that asserts usage accounting across a retried step, Windows grandchild-pid coverage, Electron quit on Windows (no Electron). |
 | P1-06 | **Partly true as of 2026-09-20.** Linux CI now runs clean install (with lifecycle scripts), typecheck, build, test, a packed-contents smoke test, a startup smoke test that boots the built server, and a Docker job that builds the image via compose and runs a mock turn against it; a Windows/macOS platform matrix repeats the lifecycle plus the native installers; all enforced on `push`/`pull_request`. **Packed-CLI jobs do not exist, and no job gates merges** — branch protection is unconfigured. See "CI enforcement status". |
 | P1-07 | **Partial as of 2026-09-20.** Browser E2E (Phase 2) as before. Phase 3 added the fake-provider failure suite: `test/openai-compatible.test.ts` against an OpenAI-shaped fake covers auth, 429 (+ Retry-After), 5xx, retry/backoff (`test/retry.test.ts`), context exhaustion, dropped/garbage streams, malformed tool arguments, cancellation mid-stream; `test/anthropic.test.ts` repeats the matrix against an Anthropic-shaped fake. Real-endpoint validation: `npm run validate:provider` (manual, ordered, stops at first failure, secret-free report) — **not yet run against a paid account**. Not covered: settings, edit/diff review, reload-resume; no job gates merges. |
-| P2-01 | Partial — `docs/INSTALL.md` carries a verified/experimental status table; Phase 6 positioning work not started. |
+| P2-01 | Substantially closed 2026-09-23 — the README/CHANGELOG product-fiction pass removed every unimplemented feature claim, `docs/THREAT_MODEL.md` exists, and the support matrix states Windows-only. Remaining: real-user evaluation runs (P2-02, deliberately manual). |
 | P2-02 | **Partial as of 2026-09-20 (Phase 3).** `eval/` harness with five task categories and hidden checks; scripted mode runs in CI, real-model runs are manual and reported as JSON under `eval/results/`. Metrics recorded: completion, steps, tool calls/failures, approvals (interventions), tokens, elapsed. Not recorded: cost, regressions across releases (no real-model baseline committed yet). |
 | P2-04 | **Landed 2026-09-20; reliability pass 2026-09-20.** Multi-provider config + dashboard: profiles in `<dataDir>/provider-profiles.json` (0600, atomic), CRUD + activate + test routes behind the existing bearer auth, hot-swap of the active provider for the next turn, usage log (`usage.jsonl`, `GET /api/usage`), and the `/dashboard` page (vanilla DOM, same build pipeline). Known limitation, documented: **API keys are plaintext at rest** in the 0600 profile file — no keychain integration, no per-key spend limits. |
 
@@ -521,7 +520,7 @@ Acceptance:
 ### [ ] No open release-blocking security issues remain
 ### [x] Release artifacts are tested and verified before publication — B5 (2026-09-22): tag-driven release workflow (`.github/workflows/release.yml`) gates on the tag matching `package.json` + the changelog section, re-runs the packed smokes and the installed-app e2e journey before a DRAFT GitHub Release is created with the installer, CLI tarball, update metadata and `SHA256SUMS.txt`; per-PR the `Desktop installer` job proves install → upgrade → uninstall
 ### [ ] Packaging gaps G-01..G-05 closed, or publication explicitly abandoned (docs/INSTALL.md) — G-01, G-02, G-03, G-04 closed 2026-09-20; G-05 open
-### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, and `Platform (macos-latest)` checks + >= 1 approval (admin action) — B5 adds `Desktop signing (windows-latest)` to the intended required set (nine checks); **owner decision 2026-09-22: deferred to the end of the project** (deliberate deferral, not a gap — see "Merge gating is NOT configured")
+### [ ] Branch protection on `main`: required `CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`, `Desktop (windows-latest)`, `Desktop installer (windows-latest)`, and `Desktop signing (windows-latest)` checks + >= 1 approval (admin action) — seven checks since the 2026-09-23 Windows-only rescope; **owner decision 2026-09-22: deferred to the end of the project** (deliberate deferral, not a gap — see "Merge gating is NOT configured")
 ### [x] `engines.node` narrowed off EOL Node 20, or the support matrix states why it stays (narrowed to >=22.0.0)
 ### [x] Persistence: durable-before-notify, RESTART idempotency, root revalidation, quarantine, retention preserving active, diagnostics exposed, single-process limitation documented
 ### [x] Versioning: single source of truth — B5 (2026-09-22): `npm run check:release` (CI-enforced) requires the root `package.json` version to be valid semver and all four workspaces to match it; release tags are bound to the tree via `--require-version`
@@ -531,9 +530,8 @@ Acceptance:
 
 ## Cutting a release (B5 procedure)
 
-1. Land everything on `main` through a PR with all nine checks green
+1. Land everything on `main` through a PR with all seven checks green
    (`CI`, `Browser E2E`, `Docker`, `Platform (windows-latest)`,
-   `Platform (macos-latest)`, `Desktop (ubuntu-latest)`,
    `Desktop (windows-latest)`, `Desktop installer (windows-latest)`,
    `Desktop signing (windows-latest)`).
 2. Bump the version: edit the ROOT `package.json` `version` only, then copy
@@ -590,7 +588,7 @@ green" survive unchecked.
 - `PROJECT_HARDENING_PLAN.md` — **absent**
 - `README.md` — present (install/packaging sections corrected 2026-09-20)
 - `docs/BASELINE.md` — **absent** (the Dockerfile used to cite it for the F11 finding)
-- `docs/THREAT_MODEL.md` — **absent**
+- `docs/THREAT_MODEL.md` — present (written 2026-09-23; previously cited but absent)
 - `docs/INSTALL.md` — present; authoritative for install-path status and gaps G-01..G-06
 - `.github/workflows/ci.yml` — present; authoritative for what CI enforces
 - `docs/research/2026-09-19-checkout-integrity-audit.md` — present; the audit that

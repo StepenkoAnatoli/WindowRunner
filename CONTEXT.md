@@ -1,6 +1,6 @@
 # CONTEXT.md — WindowsRunner Domain Vocabulary
 
-> Seeded during exploration of #3 (Turn reducer + seq) + #6 (scripted fake provider). Terms are taken from README.md, AGENTS.md, and the Robust Turn Execution plan, sharpened by Phases 1-7.
+> Domain vocabulary for WindowsRunner. Terms are taken from README.md and AGENTS.md, sharpened by the turn-execution architecture work (Phases 1-7) that produced the current server design.
 
 ## Server boot
 
@@ -20,7 +20,7 @@
 
 ## Core lifecycle
 
-- **Session**: A conversation bound to one project folder. The unit the user creates, pins skills to, and stops. Owns project root (pinned ProjectRoot capability), concurrency policy (at most one active Turn), and history that seeds next LLMRequest. Session selects its authorized ProjectRoot once at creation, validated against allowedRoots, pinned. Later turns cannot silently change root — ROOT_MISMATCH 400. At most one active turn per session — second concurrent start rejected deterministically 409 TURN_ALREADY_ACTIVE with activeTurnId. Session cleanup releases pinned root and active-turn bookkeeping via finishTurn (on completion/cancel/failure) and DELETE /sessions (cancels active and deletes). Session metadata persisted via FileSessionStore meta.json with versioned schema, atomic temp+rename, activeTurnId cleared on boot, re-validated against current allowedRoots (never trust persisted roots for authorization).
+- **Session**: A conversation bound to one project folder. The unit the user creates, attaches context to, and stops. Owns project root (pinned ProjectRoot capability), concurrency policy (at most one active Turn), and history that seeds next LLMRequest. Session selects its authorized ProjectRoot once at creation, validated against allowedRoots, pinned. Later turns cannot silently change root — ROOT_MISMATCH 400. At most one active turn per session — second concurrent start rejected deterministically 409 TURN_ALREADY_ACTIVE with activeTurnId. Session cleanup releases pinned root and active-turn bookkeeping via finishTurn (on completion/cancel/failure) and DELETE /sessions (cancels active and deletes). Session metadata persisted via FileSessionStore meta.json with versioned schema, atomic temp+rename, activeTurnId cleared on boot, re-validated against current allowedRoots (never trust persisted roots for authorization).
 - **Turn**: One user message and everything the agent does in response. Up to `maxSteps` model calls. Has `sessionId`, `turnId`, `limits`, `seq` counter, and a `TurnState`. Emits `StreamEvent`s with monotonic `seq`. Turn receives pinned ProjectRoot from session, not per-turn reconstruction. Turn events persisted via FileTurnLogStore JSONL per turn.
 - **Step**: One model call within a Turn. Scripted in fake provider as `ProviderStep = (request) => result`. Each Step can assert on `LLMRequest` it was sent.
 - **TurnState**: Authoritative state after folding events via `reduceTurnState(state, event)`. Fields: `sessionId`, `turnId`, `status`, `seq` (last applied), `limits`, `startedAt`, `updatedAt`, `stepsCompleted`, `pendingApprovals`, `activeTools`, `error`, `usage`, `isTerminal`. Pure, in `@windows-runner/shared`, used by server and UI.

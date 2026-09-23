@@ -7,21 +7,21 @@ current `main`. Notable changes between versions are in
 **Verification environment:** Node `v22.22.3`, npm `10.9.8`, git `2.39.5`,
 Linux x86_64, 2026-09-20. Every row below was produced by running the command
 listed, not inferred from source. The `CI` job re-enforces the lifecycle rows
-on Linux; the `Platform` matrix re-enforces install/typecheck/build/test/smokes
-on `windows-latest` and `macos-latest`. See
+on Linux; the `Platform` leg re-enforces install/typecheck/build/test/smokes
+on `windows-latest`. The product is Windows-only; macOS coverage was
+deliberately set aside (see the 2026-09-23 Unreleased changelog entry). See
 [`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md) → "CI enforcement status" for
 which platform checks exist and which do not.
 
-**PR checks (all nine required green before merge):** `CI`, `Browser E2E`,
-`Docker`, `Platform (windows-latest)`, `Platform (macos-latest)`, `Desktop
-(ubuntu-latest)`, `Desktop (windows-latest)`, `Desktop installer
-(windows-latest)` (which also verifies in-place upgrade and uninstall data
-survival), and `Desktop signing (windows-latest)` — named in
+**PR checks (all seven required green before merge):** `CI`, `Browser E2E`,
+`Docker`, `Platform (windows-latest)`, `Desktop (windows-latest)`,
+`Desktop installer (windows-latest)` (which also verifies in-place upgrade and
+uninstall data survival), and `Desktop signing (windows-latest)` — named in
 `.github/workflows/ci.yml`, whose two B2
 inventory steps fail the run if the browser or desktop E2E specs are deleted,
 renamed, or stop being discovered. Per-phase B2 evidence (run ids and commit
 index) lives in
-[`docs/superpowers/plans/2026-09-21-b2-atomic-status.md`](./superpowers/plans/2026-09-21-b2-atomic-status.md).
+the B2 plan's atomic checklist (removed from the tree with the other process scaffolding; recoverable from git history).
 
 **Historical note — one permanently red run on `main`:** the post-merge run
 **35618145045** failed at `Desktop (windows-latest)` → "Electron smoke (real
@@ -48,19 +48,19 @@ not read that single red run as a broken `main`.
 | Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
 | `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped** | Bin launchers exist; publication to npm registry is open (gap G-05) |
-| `install.sh` | **Experimental** | Executed on macOS CI in checkout mode (`--no-start`); fresh-clone and interactive-prompt modes untested |
 | `install.ps1` | **Experimental** | Executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive-prompt modes untested |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Superseded** | Replaced by the `packages/desktop` workspace — see the desktop rows below (gap G-04 closed; G-07 for the installer) |
 | `npm run build:desktop` | **Verified** (Linux + `Desktop` CI jobs) | Compiles the Electron shell and stages the packaged payload under `packages/desktop/dist/` |
-| `npm run smoke:page` (desktop) | **Verified** (Linux) | Real headless Chromium against the served `/desktop` page: auto-auth, same-origin API |
-| `npm run smoke:electron` (desktop) | **Verified** (`Desktop` CI jobs, windows + ubuntu) | Real unpacked Electron via Playwright `_electron`: `/desktop` same-origin, in-memory token, clean shutdown |
+| `npm run smoke:electron` (desktop) | **Verified** (`Desktop` CI job, windows-latest) | Real unpacked Electron via Playwright `_electron`: `/desktop` same-origin, in-memory token, clean shutdown |
 | `npm run e2e` (web) | **Verified** (`Browser E2E` CI job) | Playwright/Chromium against fixture servers: auth flow, workspace, the B2 provider/usage/settings routes, `/dashboard` compatibility, and B2 accessibility semantics (`packages/web/e2e/`) |
 | `npm run e2e:desktop` | **Verified** (`Desktop` + `Desktop installer` CI jobs) | Two journeys against the real Electron shell — core (boot → auto-auth → mock turn → clean shutdown) and B2 providers/settings (create/mask/test/activate providers, settings sections, `/dashboard` token flow, no token or key leakage); the installer job repeats both against the installed app |
 | `npm run package:desktop:win` | **Verified** (`Desktop installer` CI job, windows-latest) | Builds `WindowRunner-Setup-<version>.exe`; the job installs silently, runs the journey against the installed app, then uninstalls |
 
 "Verified" means the command succeeded on the environment above. It is not a
-claim about Windows, macOS, or any packaged/distributed artifact.
+claim about any packaged/distributed artifact beyond what the named CI job
+exercises. Windows end-user paths are verified by the Windows CI legs; macOS
+and Linux are not supported end-user platforms.
 
 ---
 
@@ -93,7 +93,7 @@ npm start           # http://127.0.0.1:7634
 ```
 
 `npm run setup` performs install → typecheck → build in one step and is what
-`install.sh` / `install.ps1` call. `npm start` does not need it: its `prestart`
+`install.ps1` calls. `npm start` does not need it: its `prestart`
 hook (`scripts/ensure-built.mjs`) builds when `packages/*/dist` is missing or
 older than `src/`, and is silent otherwise.
 
@@ -504,13 +504,15 @@ and by `npm run smoke:packed:start`.
 sentence presenting the npm/npx path as verified describes a state that does not
 exist today.
 
-**G-06 — no Windows or macOS verification. Closed 2026-09-20.** The `Platform`
-CI matrix runs the full lifecycle (install, typecheck, build, test, packed and
-startup smokes) on `windows-latest` and `macos-latest`, and executes both
-installers in checkout mode with `--no-start`/`-NoStart`. There is still no
-Electron build in this repository's CI, so the desktop path is untested rather
-than passing. Residuals: installer fresh-clone mode and the interactive start
-prompt are untested on every OS.
+**G-06 — no Windows or macOS verification. Closed 2026-09-20; rescoped 2026-09-23.**
+The `Platform` CI leg runs the full lifecycle (install, typecheck, build, test,
+packed and startup smokes) on `windows-latest` and executes `install.ps1` in
+checkout mode with `-NoStart`; the macOS leg and `install.sh` were removed with
+the Windows-only product scope. The `Desktop` and `Desktop installer` CI jobs
+additionally build, launch, drive and uninstall the real Electron app and the
+NSIS installer on `windows-latest` (the "no desktop CI" note above predates
+them). Residuals: installer fresh-clone mode and the interactive start prompt
+are untested on Windows.
 
 ---
 
@@ -633,7 +635,7 @@ Get-FileHash .\WindowRunner-Setup-<version>.exe -Algorithm SHA256
 ```
 
 ```bash
-# Linux / macOS / Git Bash
+# Git Bash (Windows) / other POSIX shells
 sha256sum -c SHA256SUMS.txt   # from the directory holding the artifacts
 ```
 

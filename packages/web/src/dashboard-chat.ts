@@ -153,6 +153,9 @@ export async function stopChat(): Promise<void> {
       render();
     }
   } catch (err) {
+    // A 409 TURN_NOT_ACTIVE race means the turn finished first — the Stop
+    // goal is already met and the terminal event has arrived on the stream.
+    if (err instanceof ApiRequestError && err.code === "TURN_NOT_ACTIVE") return;
     reportError(err);
   }
 }
