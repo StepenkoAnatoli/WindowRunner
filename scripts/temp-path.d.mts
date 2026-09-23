@@ -1,5 +1,5 @@
 /**
- * Types for scripts/temp-path.mjs (see check-release.d.mts for the pattern).
+ * Types for scripts/temp-path.mjs (its only consumers are the server tests).
  */
 
 export type TempPathRmOptions = {
