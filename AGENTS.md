@@ -85,7 +85,13 @@ claims.
   `docs/INSTALL.md` already verifies and add no install path of their own.
   Plain ASCII, CRLF, no BOM (a BOM makes `cmd.exe` execute it as a command),
   pinned by `packages/server/test/packaging.test.ts`, which also fails if
-  `README.md` or `docs/INSTALL.md` stop naming them. When you change an install
+  `README.md` or `docs/INSTALL.md` stop naming them. That test also pins the
+  checkout guard (both wrappers check for `packages\server\package.json` before
+  running anything, so a ZIP preview window or an npm-installed copy gets plain
+  language instead of an npm error) and the batch control flow in **both**
+  directions — every `goto`/`call` must resolve to a label and every label must
+  be jumped to, since an unreferenced label is a dead error path and batch code
+  cannot be executed on a non-Windows machine. When you change an install
   or start step, update the README, `docs/INSTALL.md` (its status table is the
   authority on what has actually been executed, and by which platform) and, if
   it is user-visible copy, the changelog.

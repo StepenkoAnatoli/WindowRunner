@@ -28,7 +28,15 @@ echo This window prepares WindowRunner for you. It takes about a
 echo minute and you only have to do it once.
 echo.
 
-rem ---- 1. Is Node.js installed and new enough? ------------------------------
+rem ---- 1. Is this a WindowRunner folder? ----------------------------------
+rem `npm run setup` needs the source tree, so refuse anything that is not an
+rem extracted ZIP or a clone. The usual beginner mistake is running the file
+rem from inside the ZIP preview window; an npm-installed copy ships compiled
+rem output only (no packages\server\package.json) and cannot be set up here.
+if not exist "package.json" goto not_checkout
+if not exist "packages\server\package.json" goto not_checkout
+
+rem ---- 2. Is Node.js installed and new enough? ----------------------------
 where node >nul 2>nul
 if errorlevel 1 goto no_node
 
@@ -37,7 +45,7 @@ node -e "process.exit(parseInt(process.versions.node, 10) >= 22 ? 0 : 1)"
 if errorlevel 1 goto old_node
 echo [1/2] Node.js %NODE_VERSION% is installed. OK
 
-rem ---- 2. Install everything and build -------------------------------------
+rem ---- 3. Install everything and build -----------------------------------
 echo [2/2] Downloading and building WindowRunner. Please wait...
 echo.
 call npm run setup
@@ -53,6 +61,26 @@ echo.
 call :finish
 endlocal
 exit /b 0
+
+:not_checkout
+echo ------------------------------------------------------------
+echo   This is not a WindowRunner folder
+echo ------------------------------------------------------------
+echo.
+echo Setup-WindowRunner.cmd has to stay inside the WindowRunner
+echo folder - the one that also contains package.json.
+echo.
+echo The usual reason is running it from inside the ZIP preview
+echo window instead of the extracted folder. Please:
+echo.
+echo Step 1: right-click the ZIP you downloaded and choose
+echo         "Extract All..." then "Extract".
+echo Step 2: open the new WindowRunner folder.
+echo Step 3: double-click Setup-WindowRunner.cmd in that folder.
+echo.
+call :finish
+endlocal
+exit /b 1
 
 :no_node
 echo ------------------------------------------------------------

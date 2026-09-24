@@ -19,6 +19,7 @@ set "NOPAUSE="
 if /i "%~1"=="-NoPause" set "NOPAUSE=1"
 
 if not exist "package.json" goto wrong_folder
+if not exist "packages\server\package.json" goto wrong_folder
 where node >nul 2>nul
 if errorlevel 1 goto no_node
 if not exist "node_modules" goto needs_setup
@@ -72,8 +73,9 @@ echo ------------------------------------------------------------
 echo   Wrong folder
 echo ------------------------------------------------------------
 echo.
-echo Please keep Start-WindowRunner.cmd inside the WindowRunner
-echo folder - the one that also contains package.json.
+echo Please keep Start-WindowRunner.cmd inside the extracted
+echo WindowRunner folder - the one that also contains
+echo package.json and packages\server.
 echo.
 call :finish
 endlocal

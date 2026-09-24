@@ -50,7 +50,7 @@ not read that single red run as a broken `main`.
 | `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped, not yet published** | Bin launchers exist and `.github/workflows/npm-publish.yml` can publish them; nothing is on the registry yet, so `npx windows-runner` still 404s (gap G-05) |
 | `install.ps1` | **Experimental, all three modes executed on Windows CI** | Checkout mode (`install.ps1 -NoStart`), fresh-clone mode (a local bare mirror via `WINDOWS_RUNNER_REPO_URL`, asserted to produce a built checkout in `WINDOWS_RUNNER_HOME`), and the start prompt answered `n` (must exit 0 without starting anything). All three green on run 35951799435 (2026-09-24). The `irm … \| iex` invocation still has no coverage, and these rows describe script logic, not the `-ExecutionPolicy` UX |
-| `Setup-WindowRunner.cmd` (double-click) | **Executed by CI** (`Platform (windows-latest)` → `npm run smoke:launchers`) | Thin wrapper: Node >= 22 check, then `npm run setup` — the verified row above. `npm run smoke:launchers` runs the wrapper itself under `cmd.exe` with `-NoPause` and asserts the success banner; `packages/server/test/packaging.test.ts` pins ASCII/CRLF/no BOM and that it still calls the verified command. Green on run 35951799435 (2026-09-24) |
+| `Setup-WindowRunner.cmd` (double-click) | **Executed by CI** (`Platform (windows-latest)` → `npm run smoke:launchers`) | Thin wrapper: refuses a folder that is not a checkout, Node >= 22 check, then `npm run setup` — the verified rows above. `npm run smoke:launchers` runs the wrapper itself under `cmd.exe` with `-NoPause` and asserts the success banner; `packages/server/test/packaging.test.ts` pins ASCII/CRLF/no BOM, the commands it calls, the checkout guard and the batch control flow (every `goto`/`call` resolves to a label, no dead label, one `cd /d "%~dp0"`, an explicit exit code per path). Green on run 35951799435 (2026-09-24) |
 | `Start-WindowRunner.cmd` (double-click) | **Executed by CI** (`Platform (windows-latest)` → `npm run smoke:launchers`) | Thin wrapper around `npm start` (verified row above): the smoke test boots it, waits for the ready line, checks `/healthz`, then tears the process tree down. Same encoding/command contract test; it adds no second start path at runtime. Green on run 35951799435 (2026-09-24) |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Superseded** | Replaced by the `packages/desktop` workspace — see the desktop rows below (gap G-04 closed; G-07 for the installer) |
@@ -112,9 +112,20 @@ the block above.
 2. `Start-WindowRunner.cmd` — runs `npm start` and tells you to Ctrl-click the
    `ui:` address it prints.
 
+Both refuse a folder that is not a WindowRunner checkout before they run
+anything: they check for `packages\server\package.json`, which exists in an
+extracted ZIP and a clone but not in an npm-installed copy (that ships compiled
+output only). The three wrong-folder cases a beginner actually hits — the file
+opened from inside the ZIP preview window, a stray folder, a global
+`node_modules` install — therefore get the script's own plain-language
+instructions instead of an npm error they cannot act on.
+
 Both are pinned by `packages/server/test/packaging.test.ts` (plain ASCII, CRLF,
-no BOM — a BOM makes `cmd.exe` try to execute the first line — and they must
-still call `npm run setup` / `npm start`), shipped in the npm tarball's `files`
+no BOM — a BOM makes `cmd.exe` try to execute the first line — the commands they
+must still call, the checkout guard, and the batch control flow: every
+`goto`/`call` resolves to a label, no label is left with no jump to it,
+exactly one `cd /d "%~dp0"`, and each path ends with an explicit exit code),
+shipped in the npm tarball's `files`
 list, and **executed** on every `Platform (windows-latest)` CI run by
 `npm run smoke:launchers`: the wrapper runs the full setup under `cmd.exe`
 (`-NoPause`), then starts the app through the second wrapper, waits for the

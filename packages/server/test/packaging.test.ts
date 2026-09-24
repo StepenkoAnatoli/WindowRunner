@@ -338,6 +338,49 @@ describe("Packaging contract", () => {
       }
     });
 
+    it("keeps batch control flow resolvable and refuses folders that are not a checkout", () => {
+      // Batch control flow cannot be executed on any machine that is not
+      // Windows, so it is pinned statically here — and in *both* directions,
+      // because both halves have already gone wrong once while editing these
+      // files by hand: a `goto` with no matching label makes cmd.exe fall
+      // through into the happy path (or exit silently), and a label nothing
+      // jumps to is a dead error message, which is the same as no error
+      // handling at all.
+      for (const { file } of LAUNCHERS) {
+        const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        assert.equal(
+          (text.match(/\r?\ncd \/d "%~dp0"/g) ?? []).length,
+          1,
+          `${file} must switch to its own folder exactly once, so double-clicking works from any directory`
+        );
+        // `goto :eof` is a built-in return, not a label this file defines.
+        const refs = [
+          ...new Set([
+            ...[...text.matchAll(/goto\s+:?([A-Za-z_]\w*)/gi)].map((m) => m[1]),
+            ...[...text.matchAll(/call\s+:([A-Za-z_]\w*)/gi)].map((m) => m[1]),
+          ]),
+        ].filter((r) => r.toLowerCase() !== "eof");
+        const labels = [...new Set([...text.matchAll(/^:([A-Za-z_]\w*)/gm)].map((m) => m[1]))];
+        assert.deepEqual(refs.filter((r) => !labels.includes(r)), [], `${file} jumps to a label it never defines`);
+        assert.deepEqual(labels.filter((l) => !refs.includes(l)), [], `${file} defines a label nothing jumps to (dead error path)`);
+        const errorPaths = labels.filter((l) => l !== "finish");
+        assert.equal((text.match(/^exit \/b 0/gm) ?? []).length, 1, `${file} must have exactly one success exit`);
+        assert.equal(
+          (text.match(/^exit \/b 1/gm) ?? []).length,
+          errorPaths.length,
+          `${file} must end every error label with an explicit exit /b 1 (a bare call :finish falls through into the next label)`
+        );
+        // `npm run setup` needs the source tree, so a stray folder, a ZIP
+        // preview window, or an npm-installed copy (compiled output only) must
+        // get the script's own plain-language message instead of an npm error
+        // the user cannot act on.
+        assert.ok(
+          text.includes(String.raw`if not exist "packages\server\package.json"`),
+          `${file} must verify it is inside a WindowRunner checkout before running npm`
+        );
+      }
+    });
+
     it("ships inside the npm tarball and is smoke-tested where it belongs", () => {
       // The wrappers are part of the beginner kit: they must stay in the
       // published `files` list, in the packed-artifact required list, and be

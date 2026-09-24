@@ -101,6 +101,23 @@ section names below are allowed.
   `scripts/smoke-packed.mjs`'s required list; `packages/server/test/packaging.test.ts`
   fails if either the manifest or the packed-artifact contract drops them.
 
+- **The wrappers refuse a folder that is not a checkout, and their control flow
+  is pinned.** Both `.cmd` files now verify `packages\server\package.json` before
+  running anything — present in an extracted ZIP or a clone, absent from an
+  npm-installed copy, which ships compiled output only — so the three
+  wrong-folder cases a beginner actually hits (the file opened from inside the
+  ZIP preview window, a stray folder, a global `node_modules` install) get the
+  script's own plain-language instructions instead of an npm error they cannot
+  act on. Since batch control flow cannot be executed on any machine that is not
+  Windows, `packages/server/test/packaging.test.ts` also pins it statically and
+  in **both** directions: every `goto`/`call` must resolve to a label and every
+  label must be jumped to (an unreferenced label is a dead error message, which
+  is the same as no error handling), exactly one `cd /d "%~dp0"` so
+  double-clicking works from any directory, and one explicit exit code per path.
+  Both new assertions were verified by mutation — deleting the guard, and
+  deleting the jumps while keeping the label, each fail the suite with the
+  intended message.
+
 ### Changed
 
 - **File persistence now keeps an advisory instance lock.** Booting a server
