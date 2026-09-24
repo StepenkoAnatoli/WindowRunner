@@ -1,6 +1,6 @@
 # WindowRunner — Complete Project Prompt
 
-> **For AI assistants and maintainers:** copy/paste this entire document into a new chat to give the agent full context on WindowRunner's current state, architecture, and how to run it. It is self-contained and up to date as of 2026-09-23.
+> **For AI assistants and maintainers:** copy/paste this entire document into a new chat to give the agent full context on WindowRunner's current state, architecture, and how to run it. It is self-contained and up to date as of 2026-09-24.
 
 ---
 
