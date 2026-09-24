@@ -1,6 +1,6 @@
 # WindowRunner — Complete Project Prompt
 
-> **For AI assistants and maintainers:** copy/paste this entire document into a new chat to give the agent full context on WindowRunner's current state, architecture, and how to run it. It is self-contained and up to date as of 2026-09-23.
+> **For AI assistants and maintainers:** copy/paste this entire document into a new chat to give the agent full context on WindowRunner's current state, architecture, and how to run it. It is self-contained and up to date as of 2026-09-24.
 
 ---
 
@@ -33,7 +33,7 @@
 ## 3. Exact Current Folder Structure
 
 ```
-WindowRunner/                           # repo root — branch arena/01a0cf06-windowrunner
+WindowRunner/                           # repo root — branch arena/01a0cf17-windowrunner
 ├─ .github/workflows/
 │  ├─ ci.yml                            # 7 required checks: CI, Browser E2E, Docker, Platform/win, Desktop/win, Desktop installer, Desktop signing
 │  ├─ npm-publish.yml                   # manual dry-run publish, computes dist-tag, checks NPM_TOKEN
@@ -107,9 +107,10 @@ WindowRunner/                           # repo root — branch arena/01a0cf06-wi
 │  ├─ INSTALL.md                         # full status matrix, prerequisites, running server, config table, troubleshooting
 │  ├─ THREAT_MODEL.md                    # trust boundaries
 │  ├─ adr/001..003                       # turn reducer seq, approval identity, skills-instructions-only
-│  ├─ plans/2026-09-23-skills-implementation-plan.md
-│  └─ research/2026-09-22-b5-security-review.md
-├─ install.ps1                           # Windows PowerShell installer (CRLF, checkout + fresh-clone modes)
+│  └─ research/2026-09-22-b5-security-review.md   # cited by SECURITY.md; the only file left in research/
+├─ Setup-WindowRunner.cmd                # double-click one-time setup (ASCII, CRLF, no BOM)
+├─ Start-WindowRunner.cmd                # double-click start (ASCII, CRLF, no BOM)
+├─ install.ps1                           # Windows PowerShell installer (BOM + CRLF, checkout + fresh-clone modes)
 ├─ Dockerfile / docker-compose.yml       # server-bundle verification (CI/dev, not user platform)
 ├─ package.json                          # root workspaces, scripts (build, test, start, eval), bin, files, engines
 ├─ package-lock.json
@@ -126,20 +127,20 @@ Ignored at runtime (not in zip, not in Git): `node_modules/`, `packages/*/dist/`
 
 **Prerequisite (once):** Install **Node.js LTS 22.x** from https://nodejs.org (Next → Next → Finish) and optionally **Git** from https://git-scm.com/download/win. Verify in PowerShell: `node -v` → `v22.x.x`, `git --version`.
 
-### Option A — From the ZIP (recommended, easiest offline)
+### Option A — From the ZIP (recommended, easiest offline, no typing)
 
-1. Right-click `WindowRunner-clean.zip` → **Extract All…** → **Extract**. Open the `WindowRunner` folder (you should see `package.json`).
-2. Click the address bar, type `powershell`, press **Enter** (opens PowerShell in that folder).
-3. Run:
-   ```powershell
-   npm ci
-   ```
-   Wait ~30 s until `windows-runner: install verified`.
-4. Run:
-   ```powershell
-   npm start
-   ```
-   Open the `ui:` link it prints (`http://127.0.0.1:7634/#token=…`) — already signed in. Press **Ctrl + C** to stop.
+1. Right-click `WindowRunner-clean.zip` → **Extract All…** → **Extract**. Open the `WindowRunner` folder (you should see `package.json` and the two `.cmd` files).
+2. Double-click **`Setup-WindowRunner.cmd`** (once, ~1 min). It checks Node ≥ 22 — opening https://nodejs.org/en/download and printing plain instructions when it is missing or too old — then runs `npm run setup`. It ends with "Setup finished — WindowRunner is ready to use." and pauses so the window cannot vanish.
+3. Double-click **`Start-WindowRunner.cmd`** (every time). It runs `npm start` and tells the user to Ctrl-click the printed `ui:` address.
+
+Both wrappers are pinned by `packages/server/test/packaging.test.ts` (plain ASCII, CRLF, no BOM, must still call `npm run setup` / `npm start`, must `pause` unless `-NoPause`), shipped in the npm tarball, and **executed on every Windows CI run** by `npm run smoke:launchers` (the wrapper runs the full setup; the second wrapper starts the app and is probed on `/healthz` before its process tree is torn down). A human double-click on a desktop has still not been observed — `docs/INSTALL.md` is the authority on exactly which modes are covered.
+
+Command-line equivalent (same commands, typed):
+
+```powershell
+npm ci      # or: npm run setup  (install + typecheck + build)
+npm start
+```
 
 `install.ps1` alternative: `powershell -ExecutionPolicy Bypass -File .\install.ps1` does install+build+offer start.
 
@@ -188,6 +189,7 @@ npm run build                         # shared + server (incl. bundle) + web
 npm run check:release                 # version single-source + changelog format (B5 gate)
 npm run smoke:packed                  # tarball content matches files manifest
 npm run smoke:packed:start            # unpack tarball outside repo, boot npm start, hit /healthz & /api/health, check web UI served
+npm run smoke:launchers               # Windows only: drives Setup-/Start-WindowRunner.cmd under cmd.exe (skips elsewhere)
 npm run smoke:start                   # boot built server on PORT=0 file mode, mock turn over SSE (contiguous seq, JSONL+meta persisted), PATH_ESCAPES_ROOT, token enforcement, SIGTERM, reboot recovery, HOST refusal
 npm run eval -- --expect-pass         # 6 scripted tasks (bug-fix, build-failure, feature, multi-file, refactor, skills) via fake OpenAI endpoint — 0 spend, deterministic
 npm run eval -- --expect-pass --task skills   # single task
@@ -251,8 +253,11 @@ No API keys required for `npm test` or eval scripted — fakes in `packages/serv
 | `packages/desktop/src/preload.ts` | Sandboxed bridge: allowlisted `window.desktop` methods (pick folder, catalog IPC, etc.) |
 | `packages/desktop/src/paths.ts` | Per-user paths: `%APPDATA%\WindowRunner` for data, logs, catalog |
 | `packages/web/public/app.css` | Full B1+B2 styles: CSS vars, light/dark, grid, cards, diff, provider/usage/settings, responsive 1100/900/800/700 |
-| `install.ps1` | Windows installer PowerShell script (BOM CRLF): Node/git checks, checkout vs fresh-clone, `npm run setup`, offers `npm start` |
-| `scripts/*.mjs` | `setup.mjs`, `postinstall.mjs`, `ensure-built.mjs`, `smoke-*.mjs`, `check-release.mjs` — build/lifecycle/verification |
+| `install.ps1` | Windows installer PowerShell script (BOM + CRLF): Node/git checks, checkout vs fresh-clone, `npm run setup`, offers `npm start` |
+| `Setup-WindowRunner.cmd` | Beginner path, step 1: refuses a folder that is not a checkout (`packages\server\package.json`; ZIP-preview windows, stray folders and npm-installed copies get plain-language instructions instead of an npm error) → Node ≥ 22 check (opens the download page and explains Next-Next-Finish when missing/old) → `npm run setup` → "ready" message + `pause`. Plain ASCII, CRLF, no BOM (a BOM makes cmd.exe execute it as a command); `-NoPause` for automation; contract-pinned in `packages/server/test/packaging.test.ts` (encoding, commands, checkout guard, and bidirectional control-flow: every `goto`/`call` resolves, no dead label, one `cd /d "%~dp0"`, one exit code per path), executed for real by `npm run smoke:launchers` on Windows CI, and shipped in the npm tarball |
+| `Start-WindowRunner.cmd` | Beginner path, step 2: verifies the folder and `node_modules`, then `npm start` with a plain-language "Ctrl-click the `ui:` address" instruction and `pause`. Same encoding contract, same `-NoPause` switch, same CI execution and tarball membership |
+| `scripts/*.mjs` | `setup.mjs`, `postinstall.mjs`, `ensure-built.mjs`, `smoke-start.mjs`, `smoke-packed.mjs`, `smoke-packed-start.mjs`, `smoke-launchers.mjs`, `check-release.mjs`, `checksums.mjs`, `release-notes.mjs`, `temp-path.mjs` — build/lifecycle/verification |
+| `scripts/smoke-launchers.mjs` | Windows-only proof that the beginner path works: runs `Setup-WindowRunner.cmd -NoPause` (asserts the Node check and the setup banner through the wrapper) and `Start-WindowRunner.cmd -NoPause` (ready line + `/healthz` 200 + process-tree teardown). Skips with a note on other platforms; the `Platform (windows-latest)` CI leg runs it. `packages/server/test/packaging.test.ts` fails if CI stops running it on Windows |
 | `docs/INSTALL.md` | Install-path status matrix (verified rows), prerequisites, The path that works, build outputs, Running the server, config table, auth, provider management, troubleshooting |
 | `eval/run.mts` | Eval harness: boots real server per task, fake provider runs `solution.mjs`, checks hidden `check.js`, writes JSON report |
 | `eval/validate-provider.mts` | Single-endpoint validation probe (text→cancel→failures→tools) before spending on full eval |
@@ -281,7 +286,8 @@ Not implemented (explicitly): MCP, project-context auto-discovery, web search �
 ## 9. UI/UX Decisions and Why They Are Beginner-Friendly
 
 - **Plain language everywhere:** Buttons say **Send, Stop, Approve, Deny, Trust this project, Use this, Choose folder…** — never “dispatch”, “invoke”, or “execute”. Inline `hint` text explains each card.
-- **Obvious primary actions:** `Send` is `primary` (blue), `Stop`/`Deny` is `danger` (red), secondary actions muted. Aprproval cards are `role=alertdialog` with stable `data-testid` so E2E (and a new user) can find them instantly.
+- **Obvious primary actions:** `Send` is `primary` (blue), `Stop`/`Deny` is `danger` (red), secondary actions muted. Approval cards are `role=alertdialog` with stable `data-testid` so E2E (and a new user) can find them instantly.
+- **Windows-first wording (2026-09-23 finisher pass):** every example path is a Windows path (`C:\Users\me\my-project`), the sidebar adds the reassurance "the agent can only read and change files inside the folder you choose", the empty conversation says "Pick a project on the left, then click New session", and the browser token screen is titled **Sign in** with instructions to Ctrl-click the `ui:` address the server printed (the `token:` line is the fallback), instead of the old "API token"/"Bearer token" jargon.
 - **Three-column that collapses gracefully:** Desktop ≥1100: 280 | 1fr | 360; ≤1100: 220 | 1fr | 300; ≤800: single column with sidebar/inspector as fixed overlays (z-index, shadow) with collapse toggles always on top. A novice at narrow width still sees the chat centered (max 880 px) while the rails overlay, never causing horizontal scroll.
 - **Notices never trap focus:** Success/error/info banners are static (`position: static`) — they don't cover the composer or trap the tab order. A failed turn notes the code (MODEL_AUTH, PATH_ESCAPES_ROOT) with a one-sentence human hint.
 - **Two views, one preview:** Center approval and inspector approval share `renderApprovalPreview` — the diff/command/json preview is byte-identical in both places, so a user moving eyes left↔right sees the same thing.
@@ -304,6 +310,8 @@ Not implemented (explicitly): MCP, project-context auto-discovery, web search �
 - **macOS/Linux not user platforms:** Windows-only product; Linux runners/Docker are dev/CI infra, no end-user installers/CI legs.
 - **Transcript not persisted across refresh:** Sidebar catalog survives refresh; live transcript does not — reattach session to continue. Deep refresh only for `/providers`, `/usage`, `/settings/{security,storage,about}`.
 - **Model costs not computed:** Usage logs tokens only; multiply by provider's price (dashboard `—` unless price table entry). Bundled price table empty by design.
+- **Beginner wrappers are CI-executed, not yet human-tested:** `Setup-WindowRunner.cmd` / `Start-WindowRunner.cmd` are run for real by `npm run smoke:launchers` on the `Platform (windows-latest)` leg (setup banner through the wrapper, ready line, `/healthz` 200, process-tree teardown; green on run 35951799435, 2026-09-24) and contract-tested for encoding (ASCII/CRLF/no BOM), `-NoPause`, the commands they call, the checkout guard, and batch control flow in both directions (every `goto`/`call` resolves, no dead label, one `cd /d "%~dp0"`, one exit code per path). What has never happened is a human double-clicking them in Explorer on a desktop, and `install.ps1` fresh-clone/prompt modes are CI-executed while `irm | iex` still has no coverage (docs/INSTALL.md is the authority).
+- **E2E binaries need an unrestricted network:** Playwrights CDN and Electrons GitHub release assets are blocked in some sandboxes. The browser suite still runs there via the documented override `E2E_CHROMIUM_EXECUTABLE=<chromium> E2E_CHROMIUM_LD_LIBRARY_PATH=<libdir> npm run e2e` (a self-contained source is the `@sparticuz/chromium` npm package: extract `al2023.tar.br` for the shared libraries; this is how the 42-spec suite was verified on a CDN-less machine). The Electron journeys (`smoke:desktop`, `e2e:desktop`) have no substitute on such a machine and stay CI evidence.
 - **Branding:** Default Electron icon; per-user data survives uninstall by design (intentional, not TODO).
 
 ---
@@ -335,7 +343,7 @@ npm run build                  # shared → server (bundle → dist/index.cjs) �
 npm test                       # node:test via tsx across all workspaces
 
 # Ship verification (what to run before releasing)
-npm run smoke:packed            # tarball manifest contract (170 entries)
+npm run smoke:packed            # tarball manifest contract (172 entries — includes the two .cmd launchers)
 npm run smoke:packed:start      # unpack outside repo → npm start → /healthz & /api/health & web at /
 npm run smoke:start             # mock turn SSE contiguous seq, persistence, Host/Origin/token enforcement, SIGTERM, recovery
 npm run check:release           # version single-source + changelog format
@@ -357,6 +365,10 @@ docker compose up --build       # server-bundle verification (CI job), not user 
 # PowerShell installer
 .\install.ps1                  # from checkout (or irm https://raw.githubusercontent.com/StepenkoAnatoli/WindowRunner/main/install.ps1 | iex)
 .\install.ps1 -NoStart         # clone+setup without offering to start (CI mode)
+
+# Beginner double-click path (Explorer; not runnable from a POSIX shell)
+Setup-WindowRunner.cmd         # one time: Node check + npm run setup
+Start-WindowRunner.cmd         # every time: npm start
 ```
 
 Environment variables you may set: see `packages/server/src/config.ts` `ENV` — `HOST`, `PORT`, `WINDOWS_RUNNER_ALLOW_REMOTE`, `WINDOWS_RUNNER_AUTH`/`_TOKEN`, `WINDOWS_RUNNER_ALLOWED_HOSTS`/`_ORIGINS`, `WINDOWS_RUNNER_PROVIDER`/`_MODEL`/`_BASE_URL`/`_API_KEY`/`_MAX_RETRIES`/`_MAX_STEPS`/`_CALL_TIMEOUT_MS`, `WINDOWS_RUNNER_TOOLS`, `WINDOWS_RUNNER_TERMINAL_*`, `WINDOWS_RUNNER_PERSISTENCE_MODE`/`_DATA_DIR`/`_DURABLE_BEFORE_NOTIFY`/`_FSYNC`, `WINDOWS_RUNNER_ALLOWED_ROOTS`/`HOME`, `WINDOWS_RUNNER_SHUTDOWN_GRACE_MS`.

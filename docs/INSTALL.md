@@ -46,9 +46,12 @@ not read that single red run as a broken `main`.
 | Clone + `npm run setup` | **Verified** (Linux) | install + typecheck + build, in that order |
 | Clone + `npm start` | **Verified** (Linux) | Boots `packages/server/dist/index.cjs` on `127.0.0.1:7634` (builds first when `dist/` is missing or stale); see "Running the server" |
 | Clone + `npm run smoke:start` | **Verified** (Linux) | Boots the built server as a child process, runs a turn over SSE, restarts it, checks a clean SIGTERM exit |
+| Clone + `npm run smoke:launchers` | **Windows only** (skips on Linux/macOS with a printed note) | Runs `Setup-WindowRunner.cmd -NoPause` and `Start-WindowRunner.cmd -NoPause` under `cmd.exe`, asserts the setup banner, the ready line, and `/healthz`; CI runs it in the `Platform (windows-latest)` leg |
 | `npm run dev` | **Server only** | `tsx watch` on the server entry. There is still no web dev server or bundler (gap G-03 web residual) |
 | `npx windows-runner` / `npm i -g windows-runner` / `wr` | **CLI entry shipped, not yet published** | Bin launchers exist and `.github/workflows/npm-publish.yml` can publish them; nothing is on the registry yet, so `npx windows-runner` still 404s (gap G-05) |
-| `install.ps1` | **Experimental** | Executed on Windows CI in checkout mode (`-NoStart`); fresh-clone and interactive-prompt modes untested |
+| `install.ps1` | **Experimental, all three modes executed on Windows CI** | Checkout mode (`install.ps1 -NoStart`), fresh-clone mode (a local bare mirror via `WINDOWS_RUNNER_REPO_URL`, asserted to produce a built checkout in `WINDOWS_RUNNER_HOME`), and the start prompt answered `n` (must exit 0 without starting anything). All three green on run 35951799435 (2026-09-24). The `irm … \| iex` invocation still has no coverage, and these rows describe script logic, not the `-ExecutionPolicy` UX |
+| `Setup-WindowRunner.cmd` (double-click) | **Executed by CI** (`Platform (windows-latest)` → `npm run smoke:launchers`) | Thin wrapper: refuses a folder that is not a checkout, Node >= 22 check, then `npm run setup` — the verified rows above. `npm run smoke:launchers` runs the wrapper itself under `cmd.exe` with `-NoPause` and asserts the success banner; `packages/server/test/packaging.test.ts` pins ASCII/CRLF/no BOM, the commands it calls, the checkout guard and the batch control flow (every `goto`/`call` resolves to a label, no dead label, one `cd /d "%~dp0"`, an explicit exit code per path). Green on run 35951799435 (2026-09-24) |
+| `Start-WindowRunner.cmd` (double-click) | **Executed by CI** (`Platform (windows-latest)` → `npm run smoke:launchers`) | Thin wrapper around `npm start` (verified row above): the smoke test boots it, waits for the ready line, checks `/healthz`, then tears the process tree down. Same encoding/command contract test; it adds no second start path at runtime. Green on run 35951799435 (2026-09-24) |
 | `docker compose up --build` | **Verified** (Linux CI) | `Docker` job builds the image, boots the bundle, runs a mock turn over SSE, asserts SIGTERM → 0 |
 | `npm run desktop` | **Superseded** | Replaced by the `packages/desktop` workspace — see the desktop rows below (gap G-04 closed; G-07 for the installer) |
 | `npm run build:desktop` | **Verified** (Linux + `Desktop` CI jobs) | Compiles the Electron shell and stages the packaged payload under `packages/desktop/dist/` |
@@ -89,6 +92,7 @@ npm test            # full suite across all three workspaces
 npm run build       # emits packages/*/dist
 npm run smoke:packed
 npm run smoke:start # boots the built server and runs a turn against it
+npm run smoke:launchers # Windows only: drives the double-click setup/start wrappers
 npm start           # http://127.0.0.1:7634
 ```
 
@@ -96,6 +100,38 @@ npm start           # http://127.0.0.1:7634
 `install.ps1` calls. `npm start` does not need it: its `prestart`
 hook (`scripts/ensure-built.mjs`) builds when `packages/*/dist` is missing or
 older than `src/`, and is silent otherwise.
+
+### Windows quick start (no command line)
+
+For a downloaded ZIP, two double-clicks are enough. Neither file adds a new
+install path: they check that Node is present and then run the same commands as
+the block above.
+
+1. `Setup-WindowRunner.cmd` — verifies Node >= 22 (offering the download page and
+   plain instructions if it is missing) and runs `npm run setup`.
+2. `Start-WindowRunner.cmd` — runs `npm start` and tells you to Ctrl-click the
+   `ui:` address it prints.
+
+Both refuse a folder that is not a WindowRunner checkout before they run
+anything: they check for `packages\server\package.json`, which exists in an
+extracted ZIP and a clone but not in an npm-installed copy (that ships compiled
+output only). The three wrong-folder cases a beginner actually hits — the file
+opened from inside the ZIP preview window, a stray folder, a global
+`node_modules` install — therefore get the script's own plain-language
+instructions instead of an npm error they cannot act on.
+
+Both are pinned by `packages/server/test/packaging.test.ts` (plain ASCII, CRLF,
+no BOM — a BOM makes `cmd.exe` try to execute the first line — the commands they
+must still call, the checkout guard, and the batch control flow: every
+`goto`/`call` resolves to a label, no label is left with no jump to it,
+exactly one `cd /d "%~dp0"`, and each path ends with an explicit exit code),
+shipped in the npm tarball's `files`
+list, and **executed** on every `Platform (windows-latest)` CI run by
+`npm run smoke:launchers`: the wrapper runs the full setup under `cmd.exe`
+(`-NoPause`), then starts the app through the second wrapper, waits for the
+ready line and probes `/healthz` before tearing the process tree down. The
+`-NoPause` switch exists only so a runner can drive the wrappers; a double-click
+behaves exactly as described above.
 
 ### What the build produces
 
@@ -135,23 +171,30 @@ to finish, then exits 0. A second signal exits immediately.
 
 ### What the server is in this checkout
 
-Be precise about what starts, because the README's product narrative describes
-more than this repository contains (that reconciliation is P2-01):
+Be precise about what starts; the README is written to match this list:
 
-- **HTTP API plus a minimal web UI.** `packages/web` builds to
-  `packages/web/dist/app` and the server serves it at `/` when present (static
-  files never answer under `/api/`; `/api` keeps requiring the bearer token).
-  Open the `ui:` URL from the banner; in memory mode it includes
-  `#token=<generated token>`, which the page stores in `sessionStorage` and
-  strips from the address bar. In file mode paste the contents of
-  `<dataDir>/auth-token` into the token field. The UI covers: session
-  create/delete, sending a turn, streamed text, Stop, approval cards, the
-  project-trust prompt and error display — nothing more yet. The API
-  endpoints are the ones `createApp()` defines: `POST /api/sessions/:id`,
-  `POST /api/sessions/:id/turns`, `GET /api/sessions/:id/turns/:turnId/events`
-  (SSE), `POST …/cancel`, `POST /api/sessions/:id/approve`, `GET /api/health`,
-  `GET /api/metrics`, `GET /api/diagnostics/persistence`, and `GET /healthz`
-  (liveness only).
+- **HTTP API plus a web UI.** `packages/web` builds to `packages/web/dist/app`
+  and the server serves it at `/` when present (static files never answer under
+  `/api/`; `/api` keeps requiring the bearer token). Open the `ui:` URL from the
+  banner; in memory mode it includes `#token=<generated token>`, which the page
+  stores in `sessionStorage` and strips from the address bar. In file mode paste
+  the contents of `<dataDir>/auth-token` into the sign-in field. The UI covers:
+  the three-panel workspace (project/session sidebar, conversation with
+  streamed text, Stop, approval cards with diffs and commands, project-trust
+  prompt, `/`-palette for project skills), provider management
+  (`/providers`: add, test, discover models, activate, delete), usage history
+  (`/usage`), settings (`/settings/security|storage|about`), and the legacy
+  `/dashboard` compatibility page. `/desktop` is the Electron shell.
+  The API endpoints are the ones `createApp()` defines:
+  `POST /api/sessions/:id`, `DELETE /api/sessions/:id`,
+  `GET|POST|DELETE /api/sessions/:id/trust`, `GET /api/sessions/:id/skills`,
+  `POST /api/sessions/:id/turns`,
+  `GET /api/sessions/:id/turns/:turnId/events` (SSE), `POST …/cancel`,
+  `POST /api/sessions/:id/approve`, `GET|POST /api/providers`,
+  `DELETE /api/providers/:id`, `POST /api/providers/:id/activate`,
+  `POST /api/providers/:id/test`, `POST /api/providers/discover-models`,
+  `GET /api/usage`, `GET /api/health`, `GET /api/metrics`,
+  `GET /api/diagnostics/persistence`, and `GET /healthz` (liveness only).
 - **Three providers.** `mock` (default) is offline, makes no model calls, and
   prefixes every reply with `[mock]`. `anthropic` talks to the Anthropic
   Messages API (`WINDOWS_RUNNER_PROVIDER=anthropic`, `WINDOWS_RUNNER_MODEL=claude-…`,
@@ -163,7 +206,8 @@ more than this repository contains (that reconciliation is P2-01):
   (default `https://api.openai.com/v1`) and `WINDOWS_RUNNER_MODEL_API_KEY`
   (or `OPENAI_API_KEY`; local servers need none). The key is never printed and
   is redacted from error messages. Naming any other provider is a boot error
-  that lists what is available; there is no Anthropic adapter yet.
+  that lists what is available. `mock`, `openai-compatible` and `anthropic` are
+  the complete registry; there is no plugin provider discovery.
 - **Six built-in tools, all confined to the session root** (`WINDOWS_RUNNER_TOOLS=0`
   disables them): `read_file`, `list_dir` and `read_skill` never ask;
   `write_file`, `edit_file` and `run_terminal` ask for approval on every call.

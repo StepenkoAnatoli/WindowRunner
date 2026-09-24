@@ -233,7 +233,7 @@ describe("startServer — memory mode", () => {
     assert.equal(missing.body.code, "PATH_NOT_FOUND");
   });
 
-  it("uses no tools in this checkout and exposes that in the runtime", async () => {
+  it("exposes the configured tool set — empty when the config disables tools", async () => {
     const handle = await start(baseConfig());
     assert.equal(handle.tools.size, 0);
     assert.ok(handle.provider instanceof MockProvider);

@@ -246,7 +246,13 @@ describe("Packaging contract", () => {
 
   describe("documentation references", () => {
     it("docs referenced by the installers and Dockerfile exist", () => {
-      const surfaces = ["Dockerfile", "install.ps1", "README.md"];
+      const surfaces = [
+        "Dockerfile",
+        "install.ps1",
+        "Setup-WindowRunner.cmd",
+        "Start-WindowRunner.cmd",
+        "README.md",
+      ];
       for (const surface of surfaces) {
         assert.ok(exists(surface), `${surface} is missing`);
         const text = fs.readFileSync(path.join(repoRoot, surface), "utf8");
@@ -277,6 +283,127 @@ describe("Packaging contract", () => {
         bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf,
         "install.ps1 must start with the UTF-8 BOM (EF BB BF)"
       );
+    });
+  });
+
+  describe("Windows one-click launchers", () => {
+    // The beginner path: extract the ZIP, double-click Setup-WindowRunner.cmd,
+    // then double-click Start-WindowRunner.cmd. They are thin wrappers around
+    // the verified `npm run setup` / `npm start` rows in docs/INSTALL.md, so
+    // these tests pin three things that break silently on Windows: the file
+    // encoding cmd.exe needs, that they still call those exact commands, and
+    // that the README/INSTALL instructions still name them.
+    const LAUNCHERS: Array<{ file: string; mustCall: string }> = [
+      { file: "Setup-WindowRunner.cmd", mustCall: "call npm run setup" },
+      { file: "Start-WindowRunner.cmd", mustCall: "call npm start" },
+    ];
+
+    for (const { file, mustCall } of LAUNCHERS) {
+      it(`${file} is a plain-ASCII CRLF batch file without a BOM and calls the verified command`, () => {
+        const bytes = fs.readFileSync(path.join(repoRoot, file));
+        assert.ok(
+          !(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf),
+          `${file} must not start with a UTF-8 BOM — cmd.exe would try to execute it as the first command`
+        );
+        const text = bytes.toString("utf8");
+        const nonAscii = [...text].filter((c) => c.charCodeAt(0) > 126);
+        assert.deepEqual(nonAscii, [], `${file} must stay plain ASCII so it renders in any Windows console`);
+        assert.equal(
+          (text.match(/(?<!\r)\n/g) ?? []).length,
+          0,
+          `${file} must use CRLF line endings (a lone LF breaks label/goto handling in cmd.exe)`
+        );
+        assert.ok(text.includes(mustCall), `${file} must call \`${mustCall.slice("call ".length)}\``);
+        assert.ok(text.includes("pause"), `${file} must pause so a double-clicked window cannot vanish before the user reads it`);
+      });
+    }
+
+    it("README and docs/INSTALL.md point beginners at the launchers", () => {
+      for (const doc of ["README.md", "docs/INSTALL.md"]) {
+        const text = fs.readFileSync(path.join(repoRoot, doc), "utf8");
+        for (const { file } of LAUNCHERS) {
+          assert.ok(text.includes(file), `${doc} must name ${file}`);
+        }
+      }
+    });
+
+    it("supports -NoPause so the wrappers can be driven non-interactively", () => {
+      // Without this switch CI cannot execute the launchers (pause would block
+      // a runner forever), which is what makes the Windows launcher smoke test
+      // possible at all.
+      for (const { file } of LAUNCHERS) {
+        const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        assert.ok(text.includes("-NoPause"), `${file} must document and accept -NoPause`);
+        assert.ok(text.includes("if defined NOPAUSE goto :eof"), `${file} must skip pause under -NoPause`);
+      }
+    });
+
+    it("keeps batch control flow resolvable and refuses folders that are not a checkout", () => {
+      // Batch control flow cannot be executed on any machine that is not
+      // Windows, so it is pinned statically here — and in *both* directions,
+      // because both halves have already gone wrong once while editing these
+      // files by hand: a `goto` with no matching label makes cmd.exe fall
+      // through into the happy path (or exit silently), and a label nothing
+      // jumps to is a dead error message, which is the same as no error
+      // handling at all.
+      for (const { file } of LAUNCHERS) {
+        const text = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        assert.equal(
+          (text.match(/\r?\ncd \/d "%~dp0"/g) ?? []).length,
+          1,
+          `${file} must switch to its own folder exactly once, so double-clicking works from any directory`
+        );
+        // `goto :eof` is a built-in return, not a label this file defines.
+        const refs = [
+          ...new Set([
+            ...[...text.matchAll(/goto\s+:?([A-Za-z_]\w*)/gi)].map((m) => m[1]),
+            ...[...text.matchAll(/call\s+:([A-Za-z_]\w*)/gi)].map((m) => m[1]),
+          ]),
+        ].filter((r) => r.toLowerCase() !== "eof");
+        const labels = [...new Set([...text.matchAll(/^:([A-Za-z_]\w*)/gm)].map((m) => m[1]))];
+        assert.deepEqual(refs.filter((r) => !labels.includes(r)), [], `${file} jumps to a label it never defines`);
+        assert.deepEqual(labels.filter((l) => !refs.includes(l)), [], `${file} defines a label nothing jumps to (dead error path)`);
+        const errorPaths = labels.filter((l) => l !== "finish");
+        assert.equal((text.match(/^exit \/b 0/gm) ?? []).length, 1, `${file} must have exactly one success exit`);
+        assert.equal(
+          (text.match(/^exit \/b 1/gm) ?? []).length,
+          errorPaths.length,
+          `${file} must end every error label with an explicit exit /b 1 (a bare call :finish falls through into the next label)`
+        );
+        // `npm run setup` needs the source tree, so a stray folder, a ZIP
+        // preview window, or an npm-installed copy (compiled output only) must
+        // get the script's own plain-language message instead of an npm error
+        // the user cannot act on.
+        assert.ok(
+          text.includes(String.raw`if not exist "packages\server\package.json"`),
+          `${file} must verify it is inside a WindowRunner checkout before running npm`
+        );
+      }
+    });
+
+    it("ships inside the npm tarball and is smoke-tested where it belongs", () => {
+      // The wrappers are part of the beginner kit: they must stay in the
+      // published `files` list, in the packed-artifact required list, and be
+      // executed on a real Windows runner instead of trusted by contract alone.
+      const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { files?: string[] };
+      for (const { file } of LAUNCHERS) {
+        assert.ok(pkg.files?.includes(file), `package.json files[] must ship ${file}`);
+      }
+      const packedSmoke = fs.readFileSync(path.join(repoRoot, "scripts", "smoke-packed.mjs"), "utf8");
+      for (const { file } of LAUNCHERS) {
+        assert.ok(packedSmoke.includes(`"${file}"`), `scripts/smoke-packed.mjs must require ${file}`);
+      }
+      const ci = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8");
+      assert.match(ci, /npm run smoke:launchers/, "CI must run the launcher smoke test");
+      // …and it must run on the Windows leg specifically: the script skips on
+      // other platforms, so a Linux job would prove nothing. The platform job
+      // selects its OS through a matrix, so assert on the job body rather than
+      // on a "runs-on: windows-latest" literal that never appears there.
+      const platformJob = ci.slice(ci.indexOf("\n  platform:"));
+      const platformBody = platformJob.slice(0, platformJob.indexOf("\n  desktop:"));
+      assert.match(platformBody, /os:\s*\[windows-latest\]/, "the platform job must run on windows-latest");
+      assert.match(platformBody, /npm run smoke:launchers/, "the platform (windows-latest) leg must run the launcher smoke test");
+      assert.ok(fs.existsSync(path.join(repoRoot, "scripts", "smoke-launchers.mjs")), "scripts/smoke-launchers.mjs is missing");
     });
   });
 

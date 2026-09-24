@@ -41,8 +41,10 @@ keys; nothing phones home. The security boundaries we defend are:
 - the local API boundary: bearer token on every `/api` route, loopback-only
   bind by default, Host/Origin validation, explicit opt-in for remote binds
   (`packages/server/src/security.ts`);
-- the filesystem boundary: every path goes through `safePath()` authorization
-  against canonicalized allowed roots (`packages/server/src/access.ts`);
+- the filesystem boundary: every path is authorized against canonicalized
+  allowed roots — logical containment first, then a realpath check so a
+  symlink cannot escape — and no tool touches the filesystem any other way
+  (`packages/server/src/project-root.ts`);
 - the provider-key boundary: keys are redacted from responses, errors, logs
   and the UI; provider test/discovery paths scrub them defensively
   (`packages/server/src/provider-profiles.ts`, `provider-discovery.ts`);

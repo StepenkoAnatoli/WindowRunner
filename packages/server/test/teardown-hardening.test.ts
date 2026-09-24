@@ -1,7 +1,8 @@
 /**
  * Windows teardown hardening (2026-09-22) — pins the fix for the CI flake
- * recorded in `docs/superpowers/plans/2026-09-22-v0.1.0-release-atomic-status.md`
- * (follow-up item 9) and implemented in `scripts/temp-path.mjs`.
+ * recorded in that day's atomic-status plans (removed from the tree with the
+ * other process scaffolding, recoverable from git history; follow-up item 9)
+ * and implemented in `scripts/temp-path.mjs`.
  *
  * The incident: on PR #36's first run the `Platform (windows-latest)` leg
  * failed the whole of `packages/server/test/builtin-tools.test.ts` as
@@ -164,7 +165,7 @@ describe("teardown hardening: the audit", () => {
       violations,
       [],
       `temp-path removals in the Windows suites must go through scripts/temp-path.mjs ` +
-        `(maxRetries/retryDelay; see docs/superpowers/plans/2026-09-22-windows-teardown-hardening-atomic-status.md):\n` +
+        `(maxRetries/retryDelay; its header comment records why):\n` +
         violations.join("\n")
     );
   });

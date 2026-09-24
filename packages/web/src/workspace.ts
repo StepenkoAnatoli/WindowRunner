@@ -48,7 +48,7 @@ export function renderConversationWorkspace(props: ConversationWorkspaceProps): 
     return el(
       "main",
       { class: "conversation-workspace", "data-testid": "conversation-workspace" },
-      el("p", { class: "hint", "data-testid": "no-session" }, "Create or open a session to start.")
+      el("p", { class: "hint", "data-testid": "no-session" }, "No session open yet. Pick a project on the left, then click New session.")
     );
   }
   const form = el(

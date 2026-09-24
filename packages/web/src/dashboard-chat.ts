@@ -24,7 +24,7 @@ export function chatPanel(active: ProviderProfileView | null): HTMLElement {
       "label",
       {},
       "Project folder (absolute path inside an allowed root)",
-      el("input", { "data-testid": "dash-cwd", value: c.cwd, placeholder: "/home/me/project", required: "true" })
+      el("input", { "data-testid": "dash-cwd", value: c.cwd, placeholder: "C:\\Users\\me\\my-project", required: "true" })
     ),
     el("textarea", { "data-testid": "dash-message", rows: "2", placeholder: "Ask the agent…", ...(c.busy ? { disabled: "true" } : {}) }),
     el(

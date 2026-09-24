@@ -63,6 +63,61 @@ section names below are allowed.
   certificate gate it degrades to a skip when absent, and a mismatch names
   certificate renewal as the likely cause.
 
+- **One-click setup and start for Windows beginners.** `Setup-WindowRunner.cmd`
+  and `Start-WindowRunner.cmd` at the repository root turn installation into
+  two double-clicks: the first checks that Node >= 22 is installed (opening the
+  download page and spelling out Next-Next-Finish when it is missing or too
+  old) and then runs `npm run setup`; the second runs `npm start` and points at
+  the `ui:` address. They add no new install path — they wrap the commands
+  `docs/INSTALL.md` already verifies — and both are contract-pinned in
+  `packages/server/test/packaging.test.ts` (plain ASCII, CRLF, no BOM, must
+  still call `npm run setup` / `npm start`, must `pause` so a double-clicked
+  window cannot vanish). `docs/INSTALL.md` records their status honestly: the
+  commands are verified, the wrappers have not yet been double-clicked on a
+  Windows desktop.
+
+- **The double-click wrappers are now executed, not just contract-tested.**
+  `npm run smoke:launchers` (`scripts/smoke-launchers.mjs`) drives both `.cmd`
+  files under `cmd.exe` on Windows: it runs `Setup-WindowRunner.cmd -NoPause`
+  (asserting the Node gate reports the installed version and `npm run setup`
+  reaches its success banner through the wrapper), then starts
+  `Start-WindowRunner.cmd -NoPause`, waits for the banner's ready line, checks
+  `/healthz`, and tears the process tree down. A new `-NoPause` switch on both
+  wrappers exists solely so a runner can drive them — a double-click is
+  unchanged. The script skips with a printed note on non-Windows platforms, and
+  the `Platform (windows-latest)` CI leg runs it — green on run 35951799435
+  (2026-09-24) — so the beginner path can no longer regress silently.
+
+- **`install.ps1`'s two untested modes are covered.** The Windows CI leg now
+  also executes fresh-clone mode — against a local bare mirror injected through
+  `WINDOWS_RUNNER_REPO_URL`, asserting that a full checkout with a built server
+  bundle appears in `WINDOWS_RUNNER_HOME` — and the interactive start prompt
+  answered with `n` (must exit 0 without starting anything, so a runner cannot
+  hang on `Read-Host`). The three modes are named in `docs/INSTALL.md` instead
+  of the previous blanket "fresh-clone and interactive-prompt modes untested".
+
+- **The `.cmd` wrappers ship in the npm tarball.** They are part of the
+  beginner kit, so they are in `package.json` → `files` and in
+  `scripts/smoke-packed.mjs`'s required list; `packages/server/test/packaging.test.ts`
+  fails if either the manifest or the packed-artifact contract drops them.
+
+- **The wrappers refuse a folder that is not a checkout, and their control flow
+  is pinned.** Both `.cmd` files now verify `packages\server\package.json` before
+  running anything — present in an extracted ZIP or a clone, absent from an
+  npm-installed copy, which ships compiled output only — so the three
+  wrong-folder cases a beginner actually hits (the file opened from inside the
+  ZIP preview window, a stray folder, a global `node_modules` install) get the
+  script's own plain-language instructions instead of an npm error they cannot
+  act on. Since batch control flow cannot be executed on any machine that is not
+  Windows, `packages/server/test/packaging.test.ts` also pins it statically and
+  in **both** directions: every `goto`/`call` must resolve to a label and every
+  label must be jumped to (an unreferenced label is a dead error message, which
+  is the same as no error handling), exactly one `cd /d "%~dp0"` so
+  double-clicking works from any directory, and one explicit exit code per path.
+  Both new assertions were verified by mutation — deleting the guard, and
+  deleting the jumps while keeping the label, each fail the suite with the
+  intended message.
+
 ### Changed
 
 - **File persistence now keeps an advisory instance lock.** Booting a server
@@ -98,6 +153,24 @@ section names below are allowed.
   README/install docs no longer advertise non-Windows platforms. Linux-based
   `CI`/`Docker`/`Browser E2E` jobs remain as development/test infrastructure
   for the Node server.
+
+- **Beginner-facing wording in the UI.** The browser sign-in screen no longer
+  opens with "API token" / "Bearer token": it is titled **Sign in** and says to
+  Ctrl-click the `ui:` address the server printed, with the `token:` line as the
+  fallback. Both project-path fields now show a Windows example
+  (`C:\Users\me\my-project`) in a Windows-only product, the sidebar states that
+  the agent can only read and change files inside the folder you choose, and
+  the empty conversation says "Pick a project on the left, then click New
+  session" instead of "Create or open a session to start."
+
+- **README rewritten as the public front page** with the same structure the
+  project ships: features, screenshots to capture, a numbered Windows install
+  for people who have never used a command line (double-click path first, typed
+  commands and the desktop installer after), run/use guides, tech stack, a
+  trimmed project tree, the full test command list, an advanced-settings
+  `<details>` table that mirrors `config.ts` → `ENV`, limitations, contributing
+  and license. `docs/INSTALL.md` gained a "Windows quick start (no command
+  line)" section plus status rows for the two launchers.
 
 ### Fixed
 
@@ -177,6 +250,33 @@ section names below are allowed.
   (previously a lying `202 {"cancelled":true}`), and cancelling an
   already-finished turn answers `409 TURN_NOT_ACTIVE` with its terminal state
   instead of fake success. The UI Stop buttons treat the 409 race as success.
+- **Three documents described a product that no longer exists.** `SECURITY.md`
+  still located the filesystem boundary in `packages/server/src/access.ts` and
+  its `safePath()` helper, both removed with the `ProjectRoot` rewrite — it now
+  names `packages/server/src/project-root.ts` and the containment-then-realpath
+  check. `install.ps1` and `scripts/setup.mjs` told the user a fresh checkout
+  runs with "no tools" while the boot path registers all six built-in tools;
+  both now describe the read tools and the approval-gated write/terminal tools.
+  `docs/INSTALL.md` claimed "there is no Anthropic adapter yet" one paragraph
+  after documenting the adapter, and listed a UI/endpoint surface that stopped
+  at sessions and turns — it now lists the shipped routes, pages and the
+  `/desktop` shell. `RELEASE_CHECKLIST.md` also presented the removed
+  checkout-integrity audit as "present"; the source-of-truth list now says
+  absent and names the B5 review that actually exists.
+- A `packages/server/test/boot.test.ts` test was titled "uses no tools in this
+  checkout" while its fixture disables tools explicitly; it is now titled for
+  what it asserts (the configured tool set is exposed, empty when disabled).
+- **The install-directory assertion in `packages/desktop/test/packaging.test.ts`
+  could pass for the wrong reason.** It compared each document against a
+  needle built with `String.raw` and two escaped backslashes, which does not
+  match the single-backslash form the markdown actually contains — so the
+  check ran against a literal that only the escaping convention could produce.
+  It is now a regex accepting one or two backslashes *and* requiring
+  `%LOCALAPPDATA%` in the same document, and it was verified to reject both a
+  missing path and a renamed directory.
+- **`install.ps1` had mixed line endings** (124 CRLF with 24 bare LF lines from
+  an earlier partial edit) even though `.gitattributes` documents it as a CRLF
+  file. It is uniformly CRLF again, with its required UTF-8 BOM intact.
 - `npm test` no longer silently skips the desktop workspace: the desktop
   `pretest` hook builds its shell when `dist/` is missing or stale, and the
   root `test` script runs all four workspaces.
@@ -188,7 +288,12 @@ section names below are allowed.
 - Process scaffolding moved out of the tree (recoverable from git history):
   `docs/architecture/exploration-*` phase documents, `docs/superpowers/plans`,
   `docs/research/restore-kit`, the checkout-integrity audit, and unused
-  `scripts/*.d.mts` type stubs.
+  `scripts/*.d.mts` type stubs. The 2026-09-23 skills implementation plan
+  (`docs/plans/`) followed it out: it is marked complete and its decisions live
+  in `docs/adr/003-skills-are-instructions-only-project-markdown.md`, so the
+  remaining citations to the removed `docs/superpowers/plans` tree in
+  `scripts/temp-path.mjs` and `packages/server/test/teardown-hardening.test.ts`
+  now describe the plans instead of linking to files that no longer exist.
 
 ## [0.1.0] - 2026-09-22
 

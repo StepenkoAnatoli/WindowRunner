@@ -591,5 +591,8 @@ green" survive unchecked.
 - `docs/THREAT_MODEL.md` — present (written 2026-09-23; previously cited but absent)
 - `docs/INSTALL.md` — present; authoritative for install-path status and gaps G-01..G-06
 - `.github/workflows/ci.yml` — present; authoritative for what CI enforces
-- `docs/research/2026-09-19-checkout-integrity-audit.md` — present; the audit that
-  established which documented paths are missing
+- `docs/research/2026-09-19-checkout-integrity-audit.md` — **absent** (removed
+  from the tree with the other process scaffolding; the audit that established
+  which documented paths are missing, recoverable from git history)
+- `docs/research/2026-09-22-b5-security-review.md` — present; the B5 security
+  review cited by `SECURITY.md`

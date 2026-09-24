@@ -76,15 +76,21 @@ describe("installer packaging contract (electron-builder.yml)", () => {
       "the installer gate must use the explicit product path, not search-based discovery"
     );
     // Docs and the builder comment must name the same directory the CI gate
-    // installs into. The files write the Windows path with escaped
-    // backslashes, so the literal is Programs\\WindowRunner.
-    const repoRoot = path.resolve(desktopRoot, "..", "..");
-    const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
-    const install = fs.readFileSync(path.join(repoRoot, "docs", "INSTALL.md"), "utf8");
-    const needle = String.raw`Programs\WindowRunner`;
-    assert.ok(yml.includes(needle), "electron-builder.yml must name %LOCALAPPDATA%\\Programs\\WindowRunner");
-    assert.ok(readme.includes(needle), "README must name the same install directory");
-    assert.ok(install.includes(needle), "docs/INSTALL.md must name the same install directory");
+    // installs into. Two spellings are legitimate in these files — a markdown
+    // code span writes one backslash (Programs\WindowRunner) while a YAML or
+    // prose mention of the literal may escape both — so accept either form and
+    // also require %LOCALAPPDATA%, the part that names the user-visible
+    // location. Written as a regex on purpose: an escaped needle compared with
+    // includes() is easy to get subtly wrong, which is how a previous revision
+    // of this assertion passed for the wrong reason.
+    const namesInstallDir = (text: string): boolean =>
+      /Programs[\\]{1,2}WindowRunner/.test(text) && text.includes("%LOCALAPPDATA%");
+    const repo = path.resolve(desktopRoot, "..", "..");
+    const readme = fs.readFileSync(path.join(repo, "README.md"), "utf8");
+    const install = fs.readFileSync(path.join(repo, "docs", "INSTALL.md"), "utf8");
+    assert.ok(namesInstallDir(yml), "electron-builder.yml must name %LOCALAPPDATA%\\Programs\\WindowRunner");
+    assert.ok(namesInstallDir(readme), "README must name the same install directory");
+    assert.ok(namesInstallDir(install), "docs/INSTALL.md must name the same install directory");
     assert.ok(readme.includes("WindowRunner-Setup-"), "README must name the installer artifact");
     assert.ok(install.includes("WindowRunner-Setup-"), "docs/INSTALL.md must name the installer artifact");
   });

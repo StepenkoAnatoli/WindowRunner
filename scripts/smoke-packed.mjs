@@ -29,6 +29,12 @@ const REQUIRED = [
   "bin/windows-runner.js",
   "scripts/postinstall.mjs",
   "scripts/ensure-built.mjs",
+  // The double-click setup path. They cannot run from a tarball install (there
+  // is no repo folder to double-click in), but a consumer who unpacks the
+  // tarball into a folder gets the same beginner path as the ZIP — and keeping
+  // them in `files` means they cannot quietly fall out of the kit.
+  "Setup-WindowRunner.cmd",
+  "Start-WindowRunner.cmd",
   "packages/shared/dist/index.js",
   "packages/server/dist/app.js",
   "packages/server/dist/index.js",

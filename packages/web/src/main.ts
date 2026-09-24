@@ -710,10 +710,18 @@ function tokenPanel(): HTMLElement {
   const form = el(
     "form",
     { class: "panel", "data-testid": "token-form" },
-    el("h2", {}, "API token"),
-    el("p", { class: "hint" }, "The server prints the token in its banner (memory mode) or stores it at <data dir>/auth-token (file mode). It is kept in this tab only."),
-    el("input", { type: "password", "data-testid": "token-input", placeholder: "Bearer token", autocomplete: "off", required: "true" }),
-    button("token-submit", state.auth === "checking" ? "Checking…" : "Connect", undefined, "primary", state.auth === "checking"),
+    el("h2", {}, "Sign in"),
+    el(
+      "p",
+      { class: "hint" },
+      "WindowRunner prints a code when it starts. In the window that is running it, find the line that begins with ",
+      el("code", {}, "ui:"),
+      " and open that address — it signs you in automatically. If you are asked for the code instead, copy the line that begins with ",
+      el("code", {}, "token:"),
+      " and paste it below. It is kept in this tab only."
+    ),
+    el("input", { type: "password", "data-testid": "token-input", placeholder: "Paste the code here", autocomplete: "off", required: "true" }),
+    button("token-submit", state.auth === "checking" ? "Checking…" : "Sign in", undefined, "primary", state.auth === "checking"),
     state.auth === "invalid" ? el("p", { class: "error", role: "alert", "data-testid": "auth-error" }, state.authError ?? "invalid token") : null
   );
   form.addEventListener("submit", (e) => {

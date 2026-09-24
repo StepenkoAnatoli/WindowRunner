@@ -47,12 +47,19 @@ export function renderProjectSidebar(props: ProjectSidebarProps): HTMLElement {
           "Project folder",
           el("input", {
             "data-testid": "project-path-input",
-            placeholder: "/home/me/project",
+            placeholder: "C:\\Users\\me\\my-project",
             autocomplete: "off",
             ...(blocked ? { disabled: "true" } : {}),
           })
         ),
-        button("open-project", "Open project", undefined, "secondary", blocked || props.busy)
+        button("open-project", "Open project", undefined, "secondary", blocked || props.busy),
+        // Beginner reassurance: the boundary is the reason this app is safe to
+        // point at a real project, and it is invisible unless it is stated.
+        el(
+          "p",
+          { class: "hint", "data-testid": "project-path-hint" },
+          "Copy the full folder path, for example C:\\Users\\me\\my-project. The agent can only read and change files inside the folder you choose."
+        )
       );
   if (!props.desktopAvailable) {
     const form = openRow as HTMLElement;
