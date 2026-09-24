@@ -85,8 +85,8 @@ section names below are allowed.
   `/healthz`, and tears the process tree down. A new `-NoPause` switch on both
   wrappers exists solely so a runner can drive them — a double-click is
   unchanged. The script skips with a printed note on non-Windows platforms, and
-  the `Platform (windows-latest)` CI leg runs it, so the beginner path can no
-  longer regress silently.
+  the `Platform (windows-latest)` CI leg runs it — green on run 35951799435
+  (2026-09-24) — so the beginner path can no longer regress silently.
 
 - **`install.ps1`'s two untested modes are covered.** The Windows CI leg now
   also executes fresh-clone mode — against a local bare mirror injected through
