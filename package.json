@@ -41,7 +41,9 @@
     "docs/INSTALL.md",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "Setup-WindowRunner.cmd",
+    "Start-WindowRunner.cmd"
   ],
   "workspaces": [
     "packages/shared",
@@ -74,6 +76,7 @@
     "eval": "tsx eval/run.mts",
     "validate:provider": "tsx eval/validate-provider.mts",
     "e2e": "npm run e2e --workspace packages/web",
-    "e2e:install": "npm run e2e:install --workspace packages/web"
+    "e2e:install": "npm run e2e:install --workspace packages/web",
+    "smoke:launchers": "node scripts/smoke-launchers.mjs"
   }
 }

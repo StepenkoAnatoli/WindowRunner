@@ -13,10 +13,10 @@
  * leg failed all of `packages/server/test/builtin-tools.test.ts` as
  * `hookFailed` after 4.5 ms — `EBUSY … rmdir …\Temp\wr-tools-XXXX\project`
  * from its `after` hook — with every real assertion passing (380/386, 5
- * skipped). Diagnosis and decision:
- * `docs/superpowers/plans/2026-09-22-v0.1.0-release-atomic-status.md`
- * follow-up item 9; the fix, its audit and its evidence:
- * `docs/superpowers/plans/2026-09-22-windows-teardown-hardening-atomic-status.md`.
+ * skipped). The diagnosis, the decision and the fix's evidence lived in the
+ * 2026-09-22 atomic-status plans, which were removed from the tree with the
+ * other process scaffolding (recoverable from git history); this helper and
+ * `packages/server/test/teardown-hardening.test.ts` are what remain.
  *
  * `maxRetries`/`retryDelay` apply to exactly the transient codes (EBUSY,
  * EMFILE, ENFILE, ENOTEMPTY, EPERM) and are ignored for real failures, so a

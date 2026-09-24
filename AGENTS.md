@@ -79,6 +79,16 @@ claims.
   as a pure reducer; `providers/`, `settings/`, `usage/` are route-local view
   modules; `workspace-catalog.ts` re-exports the shared catalog core plus the
   browser stores. The desktop shell reuses this UI at `/desktop`.
+- Root `Setup-WindowRunner.cmd` / `Start-WindowRunner.cmd` — the no-command-line
+  beginner path: double-click setup (Node >= 22 check, then `npm run setup`)
+  and double-click start (`npm start`). They wrap the commands
+  `docs/INSTALL.md` already verifies and add no install path of their own.
+  Plain ASCII, CRLF, no BOM (a BOM makes `cmd.exe` execute it as a command),
+  pinned by `packages/server/test/packaging.test.ts`, which also fails if
+  `README.md` or `docs/INSTALL.md` stop naming them. When you change an install
+  or start step, update the README, `docs/INSTALL.md` (its status table is the
+  authority on what has actually been executed, and by which platform) and, if
+  it is user-visible copy, the changelog.
 - `packages/desktop/src/` — Electron main process: spawns the bundled server
   (`server-process.ts`), sandboxed preload bridge (`desktop-bridge.ts`,
   allowlisted methods only), per-user paths (`paths.ts`), crash diagnostics.
@@ -112,6 +122,7 @@ npm run e2e:desktop                             # desktop user journey (real Ele
 npm run smoke:packed                            # tarball contents against manifest
 npm run smoke:packed:start                      # unpack tarball and boot npm start outside repo
 npm run smoke:start                             # boot the built server, run a turn, restart, SIGTERM
+npm run smoke:launchers                         # Windows only: run Setup-/Start-WindowRunner.cmd for real
 npm start                                       # http://127.0.0.1:7634 (mock provider, offline)
 npm run check:release                           # version + changelog consistency gate
 npm run eval -- --expect-pass                   # scripted end-to-end tasks against the real server

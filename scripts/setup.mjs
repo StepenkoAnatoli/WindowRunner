@@ -76,8 +76,9 @@ function main() {
   console.log("  npm test          run the test suite");
   console.log("  npm run build     rebuild packages/*/dist");
   console.log("");
-  console.log("The server runs with the offline mock provider and no tools in this");
-  console.log("checkout. Read docs/INSTALL.md before relying on any install path.");
+  console.log("The server starts with the offline mock provider (replies are prefixed");
+  console.log("\"[mock]\"), and every file or terminal action asks for your approval first.");
+  console.log("Read docs/INSTALL.md before relying on any install path.");
   return 0;
 }
 

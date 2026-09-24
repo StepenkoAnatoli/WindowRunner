@@ -412,6 +412,56 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoStart 2>&1 | Tee-Object -FilePath installer.log
           exit $LASTEXITCODE
 
+      # Fresh-clone mode: install.ps1 normally clones from GitHub, so this
+      # points it at a local bare mirror of the checked-out tree (no network,
+      # and it exercises the branch CI had never run). It must be started from
+      # a directory that is NOT a checkout — $PSScriptRoot is what makes the
+      # script pick checkout mode — so the copy runs from RUNNER_TEMP, which is
+      # equivalent to the documented `irm … | iex` invocation from a neutral
+      # folder. WINDOWS_RUNNER_HOME keeps the clone out of the runner's home.
+      - name: Run install.ps1 in fresh-clone mode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $mirror = Join-Path $env:RUNNER_TEMP "wr-mirror.git"
+          $home_ = Join-Path $env:RUNNER_TEMP "wr-home"
+          $script = Join-Path $env:RUNNER_TEMP "install.ps1"
+          git clone --bare "$env:GITHUB_WORKSPACE" $mirror
+          Copy-Item "$env:GITHUB_WORKSPACE\install.ps1" $script
+          $env:WINDOWS_RUNNER_REPO_URL = "file:///$($mirror -replace '\\','/')"
+          $env:WINDOWS_RUNNER_HOME = $home_
+          Push-Location $env:RUNNER_TEMP
+          try {
+            powershell -NoProfile -ExecutionPolicy Bypass -File $script -NoStart 2>&1 |
+              Tee-Object -FilePath "$env:GITHUB_WORKSPACE\installer-fresh-clone.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+          if (-not (Test-Path (Join-Path $home_ "package.json"))) { throw "fresh-clone mode did not produce a checkout in WINDOWS_RUNNER_HOME" }
+          if (-not (Test-Path (Join-Path $home_ "packages\server\dist\index.cjs"))) { throw "fresh-clone mode did not build the server bundle" }
+
+      # Interactive-prompt branch: with a console attached the installer offers
+      # to start the server. Answering "n" must exit 0 without starting
+      # anything. Piping the answer is what makes this deterministic on a
+      # runner, where a real keypress is impossible.
+      - name: Run install.ps1 and decline the start prompt
+        shell: cmd
+        run: |
+          echo n| powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 > installer-prompt.log 2>&1
+          set EXITCODE=%ERRORLEVEL%
+          type installer-prompt.log
+          exit /b %EXITCODE%
+
+      # The double-click beginner path, executed rather than contract-tested:
+      # Setup-WindowRunner.cmd -NoPause runs the full setup through the wrapper,
+      # Start-WindowRunner.cmd -NoPause boots the app and is probed on /healthz.
+      - name: Launcher smoke test (double-click path)
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run smoke:launchers 2>&1 | tee smoke-launchers.log
+
       # Surfaces the failure from the most recent step log as run annotations (and
       # keeps every step log in the diagnostics artifact), so a red matrix leg
       # is diagnosable without downloading and grepping the whole log. The last
@@ -472,7 +522,10 @@ jobs:
             smoke-packed.log
             smoke-packed-start.log
             smoke-start.log
+            smoke-launchers.log
             installer.log
+            installer-fresh-clone.log
+            installer-prompt.log
             npm-logs/
           if-no-files-found: ignore
           retention-days: 7
